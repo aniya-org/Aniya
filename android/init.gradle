@@ -1,0 +1,15 @@
+// Workaround for install_plugin missing namespace and manifest package attribute
+gradle.beforeProject { project ->
+    if (project.name == 'install_plugin') {
+        // Patch the AndroidManifest.xml BEFORE gradle processes it
+        def manifestFile = project.file('src/main/AndroidManifest.xml')
+        if (manifestFile.exists()) {
+            def manifest = manifestFile.text
+            if (manifest.contains('package=')) {
+                manifest = manifest.replaceAll(/\s+package="[^"]*"/, '')
+                manifestFile.text = manifest
+            }
+        }
+    }
+}
+
