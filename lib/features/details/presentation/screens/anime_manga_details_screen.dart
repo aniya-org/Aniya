@@ -1,0 +1,1101 @@
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import '../../../../core/domain/entities/entities.dart';
+import '../../../../core/data/datasources/external_remote_data_source.dart';
+import '../../../../core/di/injection_container.dart';
+
+/// Details screen for Anime and Manga from external sources
+class AnimeMangaDetailsScreen extends StatefulWidget {
+  final MediaEntity media;
+
+  const AnimeMangaDetailsScreen({required this.media, super.key});
+
+  @override
+  State<AnimeMangaDetailsScreen> createState() =>
+      _AnimeMangaDetailsScreenState();
+}
+
+class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
+    with SingleTickerProviderStateMixin {
+  late final ExternalRemoteDataSource _dataSource;
+  late TabController _tabController;
+
+  MediaDetailsEntity? _fullDetails;
+  bool _isLoading = true;
+  bool _hasError = false;
+
+  // Episodes state
+  List<EpisodeEntity> _episodes = [];
+  bool _isLoadingEpisodes = false;
+
+  // Chapters state
+  List<ChapterEntity> _chapters = [];
+  bool _isLoadingChapters = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _dataSource = sl<ExternalRemoteDataSource>();
+    // 3 tabs for Anime/Manga (Overview, Episodes/Chapters, More Info)
+    final isAnime = widget.media.type == MediaType.anime;
+    _tabController = TabController(length: 3, vsync: this);
+    _fetchFullDetails();
+    if (isAnime) {
+      _fetchEpisodes();
+    } else {
+      _fetchChapters();
+    }
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _fetchFullDetails() async {
+    try {
+      final result = await _dataSource.getMediaDetails(
+        widget.media.id,
+        widget.media.sourceId,
+        widget.media.type,
+      );
+
+      if (mounted) {
+        setState(() {
+          _fullDetails = result;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _hasError = true;
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _fetchEpisodes() async {
+    if (widget.media.type != MediaType.anime) return;
+
+    setState(() {
+      _isLoadingEpisodes = true;
+    });
+
+    try {
+      final episodes = await _dataSource.getEpisodes(widget.media);
+      if (mounted) {
+        setState(() {
+          _episodes = episodes;
+          _isLoadingEpisodes = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoadingEpisodes = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _fetchChapters() async {
+    if (widget.media.type != MediaType.manga) return;
+
+    setState(() {
+      _isLoadingChapters = true;
+    });
+
+    try {
+      final chapters = await _dataSource.getChapters(widget.media);
+      if (mounted) {
+        setState(() {
+          _chapters = chapters;
+          _isLoadingChapters = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoadingChapters = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Use full details if available, otherwise fallback to initial data
+    final title = _fullDetails?.title ?? widget.media.title;
+    final bannerImage = _fullDetails?.bannerImage ?? widget.media.bannerImage;
+    final coverImage = _fullDetails?.coverImage ?? widget.media.coverImage;
+    final description = _fullDetails?.description ?? widget.media.description;
+    final rating = _fullDetails?.rating ?? widget.media.rating;
+    final status = _fullDetails?.status ?? widget.media.status;
+    final genres = _fullDetails?.genres ?? widget.media.genres;
+
+    // Use banner if available, otherwise use cover as fallback
+    final backdropImage = bannerImage ?? coverImage;
+
+    final isAnime = widget.media.type == MediaType.anime;
+
+    return Scaffold(
+      body: NestedScrollView(
+        headerSliverBuilder: (BuildContext context, bool innerBoxIsScrolled) {
+          return <Widget>[
+            // 1. Sliver App Bar with Backdrop and Gradient
+            SliverAppBar(
+              expandedHeight: 400,
+              pinned: true,
+              stretch: true,
+              backgroundColor: Theme.of(context).colorScheme.surface,
+              flexibleSpace: FlexibleSpaceBar(
+                stretchModes: const [
+                  StretchMode.zoomBackground,
+                  StretchMode.blurBackground,
+                ],
+                background: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    // Backdrop Image
+                    if (backdropImage != null)
+                      Image.network(
+                        backdropImage,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) =>
+                            Container(color: Colors.black),
+                      )
+                    else
+                      Container(color: Colors.black),
+
+                    // Gradient Overlay (Bottom to Top)
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.transparent,
+                            Colors.black.withValues(alpha: 0.3),
+                            Theme.of(context).colorScheme.surface,
+                          ],
+                          stops: const [0.0, 0.6, 1.0],
+                        ),
+                      ),
+                    ),
+
+                    // Content Overlay (Poster & Title)
+                    Positioned(
+                      bottom: 20,
+                      left: 20,
+                      right: 20,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          // Poster
+                          Hero(
+                            tag: 'poster_${widget.media.id}',
+                            child: Container(
+                              width: 120,
+                              height: 180,
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(12),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.5),
+                                    blurRadius: 10,
+                                    offset: const Offset(0, 5),
+                                  ),
+                                ],
+                              ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: coverImage != null
+                                    ? Image.network(
+                                        coverImage,
+                                        fit: BoxFit.cover,
+                                      )
+                                    : Container(
+                                        color: Colors.grey[800],
+                                        child: Icon(
+                                          isAnime ? Icons.movie : Icons.book,
+                                          size: 40,
+                                        ),
+                                      ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+
+                          // Title & Basic Info
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  title,
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .headlineSmall
+                                      ?.copyWith(
+                                        fontWeight: FontWeight.bold,
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.onSurface,
+                                      ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                const SizedBox(height: 8),
+                                Row(
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 4,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.primaryContainer,
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        _getStatusText(status),
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.bold,
+                                          color: Theme.of(
+                                            context,
+                                          ).colorScheme.onPrimaryContainer,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    const Icon(
+                                      Icons.star,
+                                      color: Colors.amber,
+                                      size: 16,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      (rating ?? 0.0).toStringAsFixed(1),
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            // 2. Action Buttons
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: () {
+                          // TODO: Implement Add to Library
+                        },
+                        icon: const Icon(Icons.add),
+                        label: const Text('Add to Library'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          // TODO: Implement Custom List
+                        },
+                        icon: const Icon(Icons.playlist_add),
+                        label: const Text('Custom List'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            // 3. Tabs
+            SliverPersistentHeader(
+              delegate: _SliverAppBarDelegate(
+                TabBar(
+                  controller: _tabController,
+                  labelColor: Theme.of(context).colorScheme.primary,
+                  unselectedLabelColor: Theme.of(
+                    context,
+                  ).colorScheme.onSurfaceVariant,
+                  indicatorColor: Theme.of(context).colorScheme.primary,
+                  tabs: [
+                    const Tab(text: 'Overview'),
+                    Tab(text: isAnime ? 'Episodes' : 'Chapters'),
+                    const Tab(text: 'More Info'),
+                  ],
+                ),
+              ),
+              pinned: true,
+            ),
+          ];
+        },
+        body: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : _hasError
+            ? Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(
+                      Icons.error_outline,
+                      size: 48,
+                      color: Colors.red,
+                    ),
+                    const SizedBox(height: 16),
+                    const Text('Failed to load details'),
+                    TextButton(
+                      onPressed: _fetchFullDetails,
+                      child: const Text('Retry'),
+                    ),
+                  ],
+                ),
+              )
+            : TabBarView(
+                controller: _tabController,
+                children: [
+                  // Overview Tab
+                  _buildOverviewTab(_fullDetails, genres, description),
+
+                  // Episodes/Chapters Tab
+                  if (isAnime)
+                    _buildEpisodesTab(_fullDetails)
+                  else
+                    _buildChaptersTab(_fullDetails),
+
+                  // More Info Tab
+                  _buildMoreInfoTab(_fullDetails),
+                ],
+              ),
+      ),
+    );
+  }
+
+  Widget _buildOverviewTab(
+    MediaDetailsEntity? details,
+    List<String> genres,
+    String? description,
+  ) {
+    final recommendations = details?.recommendations ?? [];
+
+    return Builder(
+      builder: (context) {
+        return CustomScrollView(
+          key: const PageStorageKey<String>('overview'),
+          slivers: [
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Stats Grid
+                    _buildStatsGrid(context, details),
+                    const SizedBox(height: 24),
+
+                    // Synopsis
+                    Text(
+                      'Synopsis',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      description ?? 'No description available.',
+                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                        height: 1.5,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+
+                    // Genres
+                    if (genres.isNotEmpty) ...[
+                      Text(
+                        'Genres',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: genres
+                            .map(
+                              (genre) => Chip(
+                                label: Text(genre),
+                                backgroundColor: Theme.of(
+                                  context,
+                                ).colorScheme.surfaceContainerHighest,
+                                labelStyle: TextStyle(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                                ),
+                                side: BorderSide.none,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                              ),
+                            )
+                            .toList(),
+                      ),
+                      const SizedBox(height: 24),
+                    ],
+
+                    // Recommendations
+                    if (recommendations.isNotEmpty) ...[
+                      Text(
+                        'You might also like',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        height: 200,
+                        child: ListView.builder(
+                          scrollDirection: Axis.horizontal,
+                          itemCount: recommendations.length,
+                          itemBuilder: (context, index) {
+                            final item = recommendations[index];
+                            return Container(
+                              width: 120,
+                              margin: const EdgeInsets.only(right: 12),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(8),
+                                      child: Image.network(
+                                        item.coverImage,
+                                        fit: BoxFit.cover,
+                                        width: double.infinity,
+                                        errorBuilder:
+                                            (context, error, stackTrace) =>
+                                                Container(
+                                                  color: Colors.grey[800],
+                                                  child: const Icon(
+                                                    Icons.movie,
+                                                  ),
+                                                ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    item.title,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall,
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildEpisodesTab(MediaDetailsEntity? details) {
+    if (_isLoadingEpisodes) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_episodes.isEmpty) {
+      return CustomScrollView(
+        key: const PageStorageKey<String>('episodes_empty'),
+        slivers: [
+          SliverFillRemaining(
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.tv_off,
+                    size: 64,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'No episodes found',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  if (details?.episodes != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        'Expected: ${details!.episodes} episodes',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return CustomScrollView(
+      key: const PageStorageKey<String>('episodes'),
+      slivers: [
+        SliverPadding(
+          padding: const EdgeInsets.all(16),
+          sliver: SliverList(
+            delegate: SliverChildBuilderDelegate((context, index) {
+              final episode = _episodes[index];
+              return Card(
+                margin: const EdgeInsets.only(bottom: 12),
+                clipBehavior: Clip.antiAlias,
+                elevation: 2,
+                child: InkWell(
+                  onTap: () {
+                    // TODO: Implement episode playback
+                  },
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Thumbnail
+                      SizedBox(
+                        width: 140,
+                        height: 80,
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            episode.thumbnail != null
+                                ? Image.network(
+                                    episode.thumbnail!,
+                                    fit: BoxFit.cover,
+                                    errorBuilder:
+                                        (context, error, stackTrace) =>
+                                            Container(
+                                              color: Colors.grey[800],
+                                              child: const Icon(
+                                                Icons.image_not_supported,
+                                              ),
+                                            ),
+                                  )
+                                : Container(
+                                    color: Colors.grey[800],
+                                    child: const Icon(Icons.tv),
+                                  ),
+                            // Play icon overlay
+                            Center(
+                              child: Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.5),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.play_arrow,
+                                  color: Colors.white,
+                                  size: 20,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Info
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Episode ${episode.number}',
+                                style: Theme.of(context).textTheme.labelSmall
+                                    ?.copyWith(
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.primary,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                episode.title.isNotEmpty
+                                    ? episode.title
+                                    : 'Episode ${episode.number}',
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14,
+                                ),
+                              ),
+                              if (episode.releaseDate != null) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  DateFormat(
+                                    'MMM d, y',
+                                  ).format(episode.releaseDate!),
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.onSurfaceVariant,
+                                      ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }, childCount: _episodes.length),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildChaptersTab(MediaDetailsEntity? details) {
+    if (_isLoadingChapters) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_chapters.isEmpty) {
+      return CustomScrollView(
+        key: const PageStorageKey<String>('chapters_empty'),
+        slivers: [
+          SliverFillRemaining(
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.book_outlined,
+                    size: 64,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'No chapters found',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  if (details?.chapters != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        'Expected: ${details!.chapters} chapters',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return CustomScrollView(
+      key: const PageStorageKey<String>('chapters'),
+      slivers: [
+        SliverPadding(
+          padding: const EdgeInsets.all(16),
+          sliver: SliverList(
+            delegate: SliverChildBuilderDelegate((context, index) {
+              final chapter = _chapters[index];
+              return Card(
+                margin: const EdgeInsets.only(bottom: 12),
+                elevation: 2,
+                child: ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor: Theme.of(
+                      context,
+                    ).colorScheme.primaryContainer,
+                    child: Text(
+                      '${chapter.number.toInt()}',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onPrimaryContainer,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  title: Text(
+                    chapter.title.isNotEmpty
+                        ? chapter.title
+                        : 'Chapter ${chapter.number}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  subtitle: chapter.releaseDate != null
+                      ? Text(
+                          DateFormat('MMM d, y').format(chapter.releaseDate!),
+                        )
+                      : null,
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    // TODO: Implement chapter reading
+                  },
+                ),
+              );
+            }, childCount: _chapters.length),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMoreInfoTab(MediaDetailsEntity? details) {
+    final characters = details?.characters ?? [];
+    final staff = details?.staff ?? [];
+    final studios = details?.studios ?? [];
+
+    return Builder(
+      builder: (context) {
+        return CustomScrollView(
+          key: const PageStorageKey<String>('more_info'),
+          slivers: [
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Characters
+                    if (characters.isNotEmpty) ...[
+                      Text(
+                        'Characters',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        height: 160,
+                        child: ListView.builder(
+                          scrollDirection: Axis.horizontal,
+                          itemCount: characters.length,
+                          itemBuilder: (context, index) {
+                            final character = characters[index];
+                            return Container(
+                              width: 100,
+                              margin: const EdgeInsets.only(right: 12),
+                              child: Column(
+                                children: [
+                                  CircleAvatar(
+                                    radius: 40,
+                                    backgroundImage: character.image != null
+                                        ? NetworkImage(character.image!)
+                                        : null,
+                                    child: character.image == null
+                                        ? const Icon(Icons.person)
+                                        : null,
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    character.name,
+                                    maxLines: 2,
+                                    textAlign: TextAlign.center,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  Text(
+                                    character.role,
+                                    maxLines: 1,
+                                    textAlign: TextAlign.center,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall,
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                    ],
+
+                    // Staff
+                    if (staff.isNotEmpty) ...[
+                      Text(
+                        'Staff',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 16,
+                        runSpacing: 16,
+                        children: staff
+                            .map(
+                              (person) => SizedBox(
+                                width: 150,
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      person.name,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    Text(
+                                      person.role,
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.bodySmall,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                            .toList(),
+                      ),
+                      const SizedBox(height: 24),
+                    ],
+
+                    // Studios (Anime Only)
+                    if (studios.isNotEmpty) ...[
+                      Text(
+                        'Studios',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: studios
+                            .map(
+                              (studio) => Chip(
+                                label: Text(studio.name),
+                                backgroundColor: studio.isMain
+                                    ? Theme.of(
+                                        context,
+                                      ).colorScheme.primaryContainer
+                                    : Theme.of(
+                                        context,
+                                      ).colorScheme.surfaceContainerHighest,
+                                labelStyle: TextStyle(
+                                  color: studio.isMain
+                                      ? Theme.of(
+                                          context,
+                                        ).colorScheme.onPrimaryContainer
+                                      : Theme.of(
+                                          context,
+                                        ).colorScheme.onSurfaceVariant,
+                                ),
+                                side: BorderSide.none,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                              ),
+                            )
+                            .toList(),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildStatsGrid(BuildContext context, MediaDetailsEntity? details) {
+    final stats = <MapEntry<String, String>>[];
+
+    // Rating
+    final score = details?.averageScore ?? details?.meanScore;
+    if (score != null) {
+      stats.add(MapEntry('Score', '$score / 100'));
+    }
+
+    // Episodes/Chapters
+    if (widget.media.type == MediaType.anime && details?.episodes != null) {
+      stats.add(MapEntry('Episodes', '${details!.episodes}'));
+    } else if (widget.media.type == MediaType.manga) {
+      if (details?.chapters != null) {
+        stats.add(MapEntry('Chapters', '${details!.chapters}'));
+      }
+      if (details?.volumes != null) {
+        stats.add(MapEntry('Volumes', '${details!.volumes}'));
+      }
+    }
+
+    // Duration (Anime Only)
+    if (widget.media.type == MediaType.anime && details?.duration != null) {
+      stats.add(MapEntry('Duration', '${details!.duration} min'));
+    }
+
+    // Popularity
+    if (details?.popularity != null) {
+      stats.add(MapEntry('Popularity', _formatNumber(details!.popularity!)));
+    }
+
+    // Favorites
+    if (details?.favorites != null) {
+      stats.add(MapEntry('Favorites', _formatNumber(details!.favorites!)));
+    }
+
+    // Start Date
+    if (details?.startDate != null) {
+      stats.add(
+        MapEntry('Started', DateFormat('MMM d, y').format(details!.startDate!)),
+      );
+    }
+
+    // Season (Anime Only)
+    if (widget.media.type == MediaType.anime && details?.season != null) {
+      final seasonText = '${details!.season} ${details.seasonYear ?? ''}';
+      stats.add(MapEntry('Season', seasonText.trim()));
+    }
+
+    // Data Source
+    stats.add(MapEntry('Source', widget.media.sourceName));
+
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        childAspectRatio: 2.6,
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 12,
+      ),
+      itemCount: stats.length,
+      itemBuilder: (context, index) {
+        final stat = stats[index];
+        return _buildStatRow(context, stat.key, stat.value);
+      },
+    );
+  }
+
+  Widget _buildStatRow(BuildContext context, String label, String value) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _getStatusText(MediaStatus status) {
+    switch (status) {
+      case MediaStatus.ongoing:
+        return 'AIRING';
+      case MediaStatus.completed:
+        return 'FINISHED';
+      case MediaStatus.upcoming:
+        return 'NOT YET AIRED';
+    }
+  }
+
+  String _formatNumber(int number) {
+    if (number >= 1000000) {
+      return '${(number / 1000000).toStringAsFixed(1)}M';
+    } else if (number >= 1000) {
+      return '${(number / 1000).toStringAsFixed(1)}K';
+    }
+    return number.toString();
+  }
+}
+
+// Custom delegate for pinned tab bar
+class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
+  final TabBar _tabBar;
+
+  _SliverAppBarDelegate(this._tabBar);
+
+  @override
+  double get minExtent => _tabBar.preferredSize.height;
+
+  @override
+  double get maxExtent => _tabBar.preferredSize.height;
+
+  @override
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) {
+    return Container(
+      color: Theme.of(context).colorScheme.surface,
+      child: _tabBar,
+    );
+  }
+
+  @override
+  bool shouldRebuild(_SliverAppBarDelegate oldDelegate) {
+    return false;
+  }
+}

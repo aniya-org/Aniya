@@ -44,32 +44,6 @@ class HomeViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // Load trending anime
-      final animeResult = await getTrendingMedia(
-        GetTrendingMediaParams(type: MediaType.anime, page: 1),
-      );
-      animeResult.fold((failure) {
-        _error = ErrorMessageMapper.mapFailureToMessage(failure);
-        Logger.error(
-          'Failed to load trending anime',
-          tag: 'HomeViewModel',
-          error: failure,
-        );
-      }, (anime) => _trendingAnime = anime);
-
-      // Load trending manga
-      final mangaResult = await getTrendingMedia(
-        GetTrendingMediaParams(type: MediaType.manga, page: 1),
-      );
-      mangaResult.fold((failure) {
-        _error = ErrorMessageMapper.mapFailureToMessage(failure);
-        Logger.error(
-          'Failed to load trending manga',
-          tag: 'HomeViewModel',
-          error: failure,
-        );
-      }, (manga) => _trendingManga = manga);
-
       // Load continue watching (library items with status watching)
       final libraryResult = await getLibraryItems(
         GetLibraryItemsParams(status: LibraryStatus.watching),

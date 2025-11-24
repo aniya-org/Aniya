@@ -167,8 +167,10 @@ class LibraryLocalDataSourceImpl implements LibraryLocalDataSource {
       }
 
       final updatedItem = item.copyWith(
-        currentEpisode: currentEpisode,
-        currentChapter: currentChapter,
+        progress: (item.progress ?? const WatchProgress()).copyWith(
+          currentEpisode: currentEpisode,
+          currentChapter: currentChapter,
+        ),
         lastUpdated: DateTime.now(),
       );
 

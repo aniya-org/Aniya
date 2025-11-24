@@ -34,6 +34,8 @@ class TrackingAuthService {
         return _authenticateMal();
       case TrackingService.simkl:
         return _authenticateSimkl();
+      case TrackingService.jikan:
+        return true; // Jikan doesn't require authentication
     }
   }
 
@@ -302,6 +304,9 @@ class TrackingAuthService {
       case TrackingService.simkl:
         await _secureStorage.delete(key: 'simkl_token');
         break;
+      case TrackingService.jikan:
+        // No auth to logout from
+        break;
     }
   }
 
@@ -313,6 +318,8 @@ class TrackingAuthService {
         return await _secureStorage.containsKey(key: 'mal_token');
       case TrackingService.simkl:
         return await _secureStorage.containsKey(key: 'simkl_token');
+      case TrackingService.jikan:
+        return true; // Jikan is a public API, no auth required
     }
   }
 }

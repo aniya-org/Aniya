@@ -1,5 +1,6 @@
 // Domain Entities Barrel File
 export 'media_entity.dart';
+export 'media_details_entity.dart';
 export 'episode_entity.dart';
 export 'chapter_entity.dart';
 export 'extension_entity.dart';

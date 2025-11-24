@@ -13,6 +13,7 @@ class SearchViewModel extends ChangeNotifier {
   List<MediaEntity> _searchResults = [];
   String _query = '';
   MediaType? _typeFilter;
+  String? _sourceFilter;
   bool _isLoading = false;
   String? _error;
   Timer? _debounceTimer;
@@ -20,6 +21,7 @@ class SearchViewModel extends ChangeNotifier {
   List<MediaEntity> get searchResults => _searchResults;
   String get query => _query;
   MediaType? get typeFilter => _typeFilter;
+  String? get sourceFilter => _sourceFilter;
   bool get isLoading => _isLoading;
   String? get error => _error;
 
@@ -79,7 +81,11 @@ class SearchViewModel extends ChangeNotifier {
       } else {
         // Search with specific type filter
         final result = await searchMedia(
-          SearchMediaParams(query: _query, type: _typeFilter!),
+          SearchMediaParams(
+            query: _query,
+            type: _typeFilter!,
+            sourceId: _sourceFilter,
+          ),
         );
 
         result.fold((failure) {
@@ -107,6 +113,16 @@ class SearchViewModel extends ChangeNotifier {
 
   void setTypeFilter(MediaType? type) {
     _typeFilter = type;
+    // Re-run search with new filter if there's a query
+    if (_query.isNotEmpty) {
+      search(_query);
+    } else {
+      notifyListeners();
+    }
+  }
+
+  void setSourceFilter(String? source) {
+    _sourceFilter = source;
     // Re-run search with new filter if there's a query
     if (_query.isNotEmpty) {
       search(_query);

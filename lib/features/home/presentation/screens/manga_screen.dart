@@ -7,6 +7,7 @@ import '../../../../core/widgets/source_selector.dart';
 import '../../../../core/widgets/app_settings_menu.dart';
 import '../../../../core/navigation/navigation_controller.dart';
 import '../../../../core/navigation/app_navigation.dart';
+import '../../../details/presentation/screens/anime_manga_details_screen.dart';
 import '../viewmodels/browse_viewmodel.dart';
 
 /// Screen for browsing manga content from extensions
@@ -28,6 +29,7 @@ class _MangaScreenState extends State<MangaScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final viewModel = context.read<BrowseViewModel>();
       viewModel.setMediaType(MediaType.manga);
+      viewModel.setSourceId(_selectedSource);
       viewModel.loadMedia();
     });
 
@@ -56,8 +58,38 @@ class _MangaScreenState extends State<MangaScreen> {
         return Scaffold(
           body: Consumer<BrowseViewModel>(
             builder: (context, viewModel, child) {
+              final padding = ResponsiveLayoutManager.getPadding(
+                MediaQuery.of(context).size.width,
+              );
+              final columnCount = ResponsiveLayoutManager.getGridColumns(
+                MediaQuery.of(context).size.width,
+              );
+
               if (viewModel.isLoading && viewModel.mediaList.isEmpty) {
-                return const LoadingIndicator(message: 'Loading manga...');
+                // Show skeleton grid while loading
+                return CustomScrollView(
+                  slivers: [
+                    // App Bar
+                    SliverAppBar(title: const Text('Manga'), floating: true),
+                    // Skeleton Grid
+                    SliverPadding(
+                      padding: EdgeInsets.all(padding.left),
+                      sliver: SliverGrid(
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: columnCount,
+                          childAspectRatio: 0.7,
+                          crossAxisSpacing: 12,
+                          mainAxisSpacing: 12,
+                          mainAxisExtent: 300,
+                        ),
+                        delegate: SliverChildBuilderDelegate(
+                          (context, index) => const MediaSkeletonCard(),
+                          childCount: 12, // Show 12 skeleton cards
+                        ),
+                      ),
+                    ),
+                  ],
+                );
               }
 
               if (viewModel.error != null && viewModel.mediaList.isEmpty) {
@@ -66,13 +98,6 @@ class _MangaScreenState extends State<MangaScreen> {
                   onRetry: () => viewModel.loadMedia(),
                 );
               }
-
-              final padding = ResponsiveLayoutManager.getPadding(
-                MediaQuery.of(context).size.width,
-              );
-              final columnCount = ResponsiveLayoutManager.getGridColumns(
-                MediaQuery.of(context).size.width,
-              );
 
               return CustomScrollView(
                 controller: _scrollController,
@@ -156,18 +181,20 @@ class _MangaScreenState extends State<MangaScreen> {
                           icon: const Icon(Icons.list, size: 16),
                         ),
                         SourceOption(
-                          id: 'myanimelist',
-                          name: 'MyAnimeList',
+                          id: 'jikan',
+                          name: 'MyAnimeList (Jikan)',
                           icon: const Icon(Icons.list, size: 16),
                         ),
                         SourceOption(
-                          id: 'simkl',
-                          name: 'Simkl',
-                          icon: const Icon(Icons.list, size: 16),
+                          id: 'kitsu',
+                          name: 'Kitsu',
+                          icon: const Icon(Icons.explore, size: 16),
                         ),
+                        // Simkl removed: API doesn't support browsing/discovery endpoints
                       ],
                       onSourceChanged: (source) {
                         setState(() => _selectedSource = source);
+                        context.read<BrowseViewModel>().setSourceId(source);
                       },
                     ),
                   ),
@@ -188,6 +215,7 @@ class _MangaScreenState extends State<MangaScreen> {
                           childAspectRatio: 0.7,
                           crossAxisSpacing: 12,
                           mainAxisSpacing: 12,
+                          mainAxisExtent: 300,
                         ),
                         delegate: SliverChildBuilderDelegate((context, index) {
                           final media = viewModel.mediaList[index];
@@ -259,7 +287,12 @@ class _MangaScreenState extends State<MangaScreen> {
   }
 
   void _navigateToMediaDetails(BuildContext context, MediaEntity media) {
-    Navigator.pushNamed(context, '/media-details', arguments: media);
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AnimeMangaDetailsScreen(media: media),
+      ),
+    );
   }
 }
 

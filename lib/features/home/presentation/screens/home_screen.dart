@@ -262,21 +262,26 @@ class _HomeScreenState extends State<HomeScreen> with HomeScreenTmdbMethods {
     );
     final itemWidth = screenType == ScreenType.mobile ? 140.0 : 180.0;
 
+    // Filter out items where media is null
+    final validItems = viewModel.continueWatching
+        .where((item) => item.media != null)
+        .toList();
+
     return SliverToBoxAdapter(
       child: SizedBox(
         height: screenType == ScreenType.mobile ? 200 : 240,
         child: ListView.builder(
           scrollDirection: Axis.horizontal,
           padding: EdgeInsets.symmetric(horizontal: padding.left),
-          itemCount: viewModel.continueWatching.length,
+          itemCount: validItems.length,
           itemBuilder: (context, index) {
-            final item = viewModel.continueWatching[index];
+            final item = validItems[index];
             return Container(
               width: itemWidth,
               margin: const EdgeInsets.only(right: 12),
               child: MediaCard(
-                media: item.media,
-                onTap: () => _navigateToMediaDetails(context, item.media),
+                media: item.media!,
+                onTap: () => _navigateToMediaDetails(context, item.media!),
               ),
             );
           },
@@ -305,6 +310,7 @@ class _HomeScreenState extends State<HomeScreen> with HomeScreenTmdbMethods {
           childAspectRatio: 0.7,
           crossAxisSpacing: 12,
           mainAxisSpacing: 12,
+          mainAxisExtent: 300,
         ),
         delegate: SliverChildBuilderDelegate((context, index) {
           final media = mediaList[index];

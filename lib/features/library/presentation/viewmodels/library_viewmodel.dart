@@ -82,10 +82,13 @@ class LibraryViewModel extends ChangeNotifier {
       final item = _libraryItems[itemIndex];
       final updatedItem = LibraryItemEntity(
         id: item.id,
+        mediaId: item.mediaId,
+        userService: item.userService,
         media: item.media,
         status: status,
-        currentEpisode: item.currentEpisode,
-        currentChapter: item.currentChapter,
+        progress: item.progress,
+        score: item.score,
+        notes: item.notes,
         addedAt: item.addedAt,
         lastUpdated: DateTime.now(),
       );

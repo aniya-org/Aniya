@@ -9,3 +9,4 @@ export 'library_local_data_source.dart';
 export 'tracking_data_source.dart';
 export 'tmdb_data_source.dart';
 export 'download_local_data_source.dart';
+export 'kitsu_external_data_source.dart';

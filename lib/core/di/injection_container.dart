@@ -24,6 +24,7 @@ import '../data/datasources/media_remote_data_source.dart';
 import '../data/datasources/media_local_data_source.dart';
 import '../data/datasources/library_local_data_source.dart';
 import '../data/datasources/extension_data_source.dart';
+import '../data/datasources/external_remote_data_source.dart';
 import '../data/datasources/tracking_data_source.dart';
 import '../domain/usecases/get_trending_media_usecase.dart';
 import '../domain/usecases/get_popular_media_usecase.dart';
@@ -82,6 +83,10 @@ Future<void> initializeDependencies() async {
     () => MediaRemoteDataSourceImpl(extensionManager: _getExtensionManager()),
   );
 
+  sl.registerLazySingleton<ExternalRemoteDataSource>(
+    () => ExternalRemoteDataSource(),
+  );
+
   // MediaLocalDataSource requires async initialization
   // For now, we'll use a placeholder that will be initialized later
   sl.registerLazySingleton<MediaLocalDataSource>(
@@ -129,6 +134,7 @@ Future<void> initializeDependencies() async {
       remoteDataSource: sl<MediaRemoteDataSource>(),
       localDataSource: sl<MediaLocalDataSource>(),
       extensionDataSource: sl<ExtensionDataSource>(),
+      externalDataSource: sl<ExternalRemoteDataSource>(),
     ),
   );
 

@@ -271,7 +271,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
           builder: (context) => AlertDialog(
             title: const Text('Remove from Library'),
             content: Text(
-              'Are you sure you want to remove "${item.media.title}" from your library?',
+              'Are you sure you want to remove "${item.media?.title ?? 'Unknown Media'}" from your library?',
             ),
             actions: [
               TextButton(
@@ -289,14 +289,18 @@ class _LibraryScreenState extends State<LibraryScreen> {
       onDismissed: (direction) {
         viewModel.removeItem(item.id);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${item.media.title} removed from library')),
+          SnackBar(
+            content: Text(
+              '${item.media?.title ?? 'Unknown Media'} removed from library',
+            ),
+          ),
         );
       },
       child: GestureDetector(
         onLongPress: () => _showQuickActions(context, item, viewModel),
         child: MediaCard(
-          media: item.media,
-          onTap: () => _navigateToMediaDetails(context, item.media),
+          media: item.media!,
+          onTap: () => _navigateToMediaDetails(context, item.media!),
         ),
       ),
     );
@@ -316,7 +320,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              item.media.title,
+              item.media?.title ?? 'Unknown Media',
               style: Theme.of(
                 context,
               ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
@@ -368,16 +372,21 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   String _getStatusLabel(LibraryStatus status) {
     switch (status) {
+      case LibraryStatus.currentlyWatching:
       case LibraryStatus.watching:
         return 'Watching';
       case LibraryStatus.completed:
+      case LibraryStatus.finished:
         return 'Completed';
       case LibraryStatus.onHold:
         return 'On Hold';
       case LibraryStatus.dropped:
         return 'Dropped';
       case LibraryStatus.planToWatch:
+      case LibraryStatus.wantToWatch:
         return 'Plan to Watch';
+      case LibraryStatus.watched:
+        return 'Watched';
     }
   }
 

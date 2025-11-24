@@ -1,1 +1,1 @@
-enum TrackingService { anilist, mal, simkl }
+enum TrackingService { anilist, mal, simkl, jikan }

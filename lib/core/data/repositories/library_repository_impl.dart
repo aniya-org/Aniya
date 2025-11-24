@@ -51,10 +51,14 @@ class LibraryRepositoryImpl implements LibraryRepository {
       // Convert entity to model and add to library
       final model = LibraryItemModel(
         id: item.id,
+        mediaId: item.mediaId,
+        userService: item.userService,
         media: item.media,
         status: item.status,
-        currentEpisode: item.currentEpisode,
-        currentChapter: item.currentChapter,
+        progress: WatchProgress(
+          currentEpisode: item.progress?.currentEpisode,
+          currentChapter: item.progress?.currentChapter,
+        ),
         addedAt: item.addedAt,
         lastUpdated: item.lastUpdated,
       );
@@ -86,10 +90,14 @@ class LibraryRepositoryImpl implements LibraryRepository {
       // Convert entity to model and update
       final model = LibraryItemModel(
         id: item.id,
+        mediaId: item.mediaId,
+        userService: item.userService,
         media: item.media,
         status: item.status,
-        currentEpisode: item.currentEpisode,
-        currentChapter: item.currentChapter,
+        progress: WatchProgress(
+          currentEpisode: item.progress?.currentEpisode,
+          currentChapter: item.progress?.currentChapter,
+        ),
         addedAt: item.addedAt,
         lastUpdated: item.lastUpdated,
       );

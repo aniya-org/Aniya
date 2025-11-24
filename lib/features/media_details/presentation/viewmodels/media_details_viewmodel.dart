@@ -3,6 +3,7 @@ import '../../../../core/domain/entities/media_entity.dart';
 import '../../../../core/domain/entities/episode_entity.dart';
 import '../../../../core/domain/entities/chapter_entity.dart';
 import '../../../../core/domain/entities/library_item_entity.dart';
+import '../../../../core/enums/tracking_service.dart';
 import '../../../../core/domain/usecases/get_media_details_usecase.dart';
 import '../../../../core/domain/usecases/get_episodes_usecase.dart';
 import '../../../../core/domain/usecases/get_chapters_usecase.dart';
@@ -29,6 +30,7 @@ class MediaDetailsViewModel extends ChangeNotifier {
   bool _isLoading = false;
   bool _isInLibrary = false;
   String? _error;
+  String? _sourceId;
 
   MediaEntity? get media => _media;
   List<EpisodeEntity> get episodes => _episodes;
@@ -40,6 +42,7 @@ class MediaDetailsViewModel extends ChangeNotifier {
   Future<void> loadMediaDetails(String id, String sourceId) async {
     _isLoading = true;
     _error = null;
+    _sourceId = sourceId;
     notifyListeners();
 
     try {
@@ -115,12 +118,18 @@ class MediaDetailsViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
+      final userService = TrackingService.values.firstWhere(
+        (service) => service.name == _sourceId!,
+        orElse: () => throw ArgumentError('Unknown source: $_sourceId'),
+      );
+
       final libraryItem = LibraryItemEntity(
-        id: _media!.id,
+        id: '${_media!.id}_${userService.name}',
+        mediaId: _media!.id,
+        userService: userService,
         media: _media!,
         status: status,
-        currentEpisode: 0,
-        currentChapter: 0,
+        progress: WatchProgress(currentEpisode: 0, currentChapter: 0),
         addedAt: DateTime.now(),
       );
 

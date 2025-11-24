@@ -20,7 +20,11 @@ class GetPopularMediaUseCase {
   Future<Either<Failure, List<MediaEntity>>> call(
     GetPopularMediaParams params,
   ) {
-    return repository.getPopular(params.type, params.page);
+    return repository.getPopular(
+      params.type,
+      params.page,
+      sourceId: params.sourceId,
+    );
   }
 }
 
@@ -28,6 +32,11 @@ class GetPopularMediaUseCase {
 class GetPopularMediaParams {
   final MediaType type;
   final int page;
+  final String? sourceId;
 
-  GetPopularMediaParams({required this.type, required this.page});
+  GetPopularMediaParams({
+    required this.type,
+    required this.page,
+    this.sourceId,
+  });
 }

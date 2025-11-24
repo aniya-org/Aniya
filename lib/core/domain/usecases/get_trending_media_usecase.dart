@@ -20,7 +20,11 @@ class GetTrendingMediaUseCase {
   Future<Either<Failure, List<MediaEntity>>> call(
     GetTrendingMediaParams params,
   ) {
-    return repository.getTrending(params.type, params.page);
+    return repository.getTrending(
+      params.type,
+      params.page,
+      sourceId: params.sourceId,
+    );
   }
 }
 
@@ -28,6 +32,11 @@ class GetTrendingMediaUseCase {
 class GetTrendingMediaParams {
   final MediaType type;
   final int page;
+  final String? sourceId;
 
-  GetTrendingMediaParams({required this.type, required this.page});
+  GetTrendingMediaParams({
+    required this.type,
+    required this.page,
+    this.sourceId,
+  });
 }

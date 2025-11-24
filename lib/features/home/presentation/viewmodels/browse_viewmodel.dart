@@ -24,6 +24,7 @@ class BrowseViewModel extends ChangeNotifier {
   SortOption _sortOption = SortOption.popularity;
   List<String> _genreFilters = [];
   MediaStatus? _statusFilter;
+  String? _sourceId;
 
   List<MediaEntity> get mediaList => _mediaList;
   MediaType get mediaType => _mediaType;
@@ -33,6 +34,7 @@ class BrowseViewModel extends ChangeNotifier {
   SortOption get sortOption => _sortOption;
   List<String> get genreFilters => _genreFilters;
   MediaStatus? get statusFilter => _statusFilter;
+  String? get sourceId => _sourceId;
 
   void setMediaType(MediaType type) {
     if (_mediaType != type) {
@@ -58,6 +60,13 @@ class BrowseViewModel extends ChangeNotifier {
     _resetAndLoad();
   }
 
+  void setSourceId(String? sourceId) {
+    if (_sourceId != sourceId) {
+      _sourceId = sourceId;
+      _resetAndLoad();
+    }
+  }
+
   Future<void> loadMedia({bool loadMore = false}) async {
     if (_isLoading) return;
 
@@ -78,10 +87,18 @@ class BrowseViewModel extends ChangeNotifier {
       // Use trending or popular based on sort option
       final result = _sortOption == SortOption.popularity
           ? await getPopularMedia(
-              GetPopularMediaParams(type: _mediaType, page: _currentPage),
+              GetPopularMediaParams(
+                type: _mediaType,
+                page: _currentPage,
+                sourceId: _sourceId,
+              ),
             )
           : await getTrendingMedia(
-              GetTrendingMediaParams(type: _mediaType, page: _currentPage),
+              GetTrendingMediaParams(
+                type: _mediaType,
+                page: _currentPage,
+                sourceId: _sourceId,
+              ),
             );
 
       result.fold(

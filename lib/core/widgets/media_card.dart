@@ -27,8 +27,9 @@ class MediaCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Cover Image
-            Expanded(
+            // Cover Image - Flexible to prevent overflow
+            SizedBox(
+              height: 200,
               child: Stack(
                 fit: StackFit.expand,
                 children: [
@@ -116,11 +117,12 @@ class MediaCard extends StatelessWidget {
               ),
             ),
 
-            // Media Info
+            // Media Info - Fixed height
             Padding(
               padding: const EdgeInsets.all(12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
                     media.title,

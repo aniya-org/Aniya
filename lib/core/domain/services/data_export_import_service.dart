@@ -32,27 +32,32 @@ class DataExportImportServiceImpl implements DataExportImportService {
           return item.toJson();
         }
         // Fallback for non-model entities
+        if (item.media == null) {
+          throw FormatException(
+            'Cannot export library item without media data',
+          );
+        }
         return {
           'id': item.id,
           'media': {
-            'id': item.media.id,
-            'title': item.media.title,
-            'coverImage': item.media.coverImage,
-            'bannerImage': item.media.bannerImage,
-            'description': item.media.description,
-            'type': item.media.type.name,
-            'rating': item.media.rating,
-            'genres': item.media.genres,
-            'status': item.media.status.name,
-            'totalEpisodes': item.media.totalEpisodes,
-            'totalChapters': item.media.totalChapters,
-            'sourceId': item.media.sourceId,
-            'sourceName': item.media.sourceName,
+            'id': item.media!.id,
+            'title': item.media!.title,
+            'coverImage': item.media!.coverImage,
+            'bannerImage': item.media!.bannerImage,
+            'description': item.media!.description,
+            'type': item.media!.type.name,
+            'rating': item.media!.rating,
+            'genres': item.media!.genres,
+            'status': item.media!.status.name,
+            'totalEpisodes': item.media!.totalEpisodes,
+            'totalChapters': item.media!.totalChapters,
+            'sourceId': item.media!.sourceId,
+            'sourceName': item.media!.sourceName,
           },
           'status': item.status.name,
-          'currentEpisode': item.currentEpisode,
-          'currentChapter': item.currentChapter,
-          'addedAt': item.addedAt.toIso8601String(),
+          'currentEpisode': item.progress?.currentEpisode,
+          'currentChapter': item.progress?.currentChapter,
+          'addedAt': item.addedAt?.toIso8601String(),
           'lastUpdated': item.lastUpdated?.toIso8601String(),
         };
       }).toList();

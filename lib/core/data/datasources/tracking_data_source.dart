@@ -439,30 +439,38 @@ class TrackingDataSourceImpl implements TrackingDataSource {
 
   String _mapStatusToAniList(LibraryStatus status) {
     switch (status) {
+      case LibraryStatus.currentlyWatching:
       case LibraryStatus.watching:
         return 'CURRENT';
       case LibraryStatus.completed:
+      case LibraryStatus.finished:
+      case LibraryStatus.watched:
         return 'COMPLETED';
       case LibraryStatus.onHold:
         return 'PAUSED';
       case LibraryStatus.dropped:
         return 'DROPPED';
       case LibraryStatus.planToWatch:
+      case LibraryStatus.wantToWatch:
         return 'PLANNING';
     }
   }
 
   String _mapStatusToMAL(LibraryStatus status) {
     switch (status) {
+      case LibraryStatus.currentlyWatching:
       case LibraryStatus.watching:
         return 'watching';
       case LibraryStatus.completed:
+      case LibraryStatus.finished:
+      case LibraryStatus.watched:
         return 'completed';
       case LibraryStatus.onHold:
         return 'on_hold';
       case LibraryStatus.dropped:
         return 'dropped';
       case LibraryStatus.planToWatch:
+      case LibraryStatus.wantToWatch:
         return 'plan_to_watch';
     }
   }

@@ -4,6 +4,7 @@ import 'package:dartotsu_extension_bridge/Models/Source.dart';
 import '../../domain/entities/media_entity.dart';
 import '../../domain/entities/episode_entity.dart';
 import '../../domain/entities/chapter_entity.dart';
+import '../../domain/entities/search_result_entity.dart';
 import '../../domain/repositories/media_repository.dart';
 import '../../error/failures.dart';
 import '../../error/exceptions.dart';
@@ -12,6 +13,7 @@ import '../../constants/app_constants.dart';
 import '../datasources/media_remote_data_source.dart';
 import '../datasources/media_local_data_source.dart';
 import '../datasources/extension_data_source.dart';
+import '../datasources/external_remote_data_source.dart';
 
 /// Implementation of MediaRepository
 /// Handles media operations with error handling and failure conversion
@@ -19,20 +21,35 @@ class MediaRepositoryImpl implements MediaRepository {
   final MediaRemoteDataSource remoteDataSource;
   final MediaLocalDataSource localDataSource;
   final ExtensionDataSource extensionDataSource;
+  final ExternalRemoteDataSource externalDataSource;
 
   MediaRepositoryImpl({
     required this.remoteDataSource,
     required this.localDataSource,
     required this.extensionDataSource,
+    required this.externalDataSource,
   });
 
   @override
   Future<Either<Failure, List<MediaEntity>>> searchMedia(
     String query,
-    MediaType type,
-  ) async {
+    MediaType type, {
+    String? sourceId,
+  }) async {
     try {
-      // Get all installed extensions for the media type
+      // If sourceId is provided, search from external source
+      if (sourceId != null) {
+        final result = await externalDataSource.searchMediaAdvanced(
+          query,
+          sourceId,
+          type,
+          page: 1,
+          perPage: AppConstants.maxPageSize,
+        );
+        return Right(result.items);
+      }
+
+      // Otherwise, search across all installed extensions for the media type
       final ItemType itemType = _mapMediaTypeToItemType(type);
       final installedExtensions = <MediaEntity>[];
 
@@ -166,9 +183,19 @@ class MediaRepositoryImpl implements MediaRepository {
   @override
   Future<Either<Failure, List<MediaEntity>>> getTrending(
     MediaType type,
-    int page,
-  ) async {
+    int page, {
+    String? sourceId,
+  }) async {
     try {
+      // If sourceId is provided, get trending from external source
+      if (sourceId != null) {
+        final results = await externalDataSource.getTrending(
+          sourceId,
+          type,
+          page: page,
+        );
+        return Right(results);
+      }
       final ItemType itemType = _mapMediaTypeToItemType(type);
       final trendingMedia = <MediaEntity>[];
 
@@ -241,9 +268,20 @@ class MediaRepositoryImpl implements MediaRepository {
   @override
   Future<Either<Failure, List<MediaEntity>>> getPopular(
     MediaType type,
-    int page,
-  ) async {
+    int page, {
+    String? sourceId,
+  }) async {
     try {
+      // If sourceId is provided, get popular from external source
+      if (sourceId != null) {
+        final results = await externalDataSource.getPopular(
+          sourceId,
+          type,
+          page: page,
+        );
+        return Right(results);
+      }
+
       final ItemType itemType = _mapMediaTypeToItemType(type);
       final popularMedia = <MediaEntity>[];
 
@@ -411,6 +449,72 @@ class MediaRepositoryImpl implements MediaRepository {
       return Left(
         UnknownFailure('Failed to get chapter pages: ${e.toString()}'),
       );
+    }
+  }
+
+  @override
+  /// Advanced search for media with filtering and pagination (external sources only)
+  Future<Either<Failure, SearchResult<List<MediaEntity>>>> searchMediaAdvanced(
+    String query,
+    MediaType type,
+    String sourceId, {
+    List<String>? genres,
+    int? year,
+    String? season,
+    String? status,
+    String? format,
+    int? minScore,
+    int? maxScore,
+    String? sort,
+    int page = 1,
+    int perPage = 20,
+  }) async {
+    try {
+      final result = await externalDataSource.searchMediaAdvanced(
+        query,
+        sourceId,
+        type,
+        genres: genres,
+        year: year,
+        season: season,
+        status: status,
+        format: format,
+        minScore: minScore,
+        maxScore: maxScore,
+        sort: sort,
+        page: page,
+        perPage: perPage,
+      );
+      return Right(result);
+    } on ServerException catch (e) {
+      Logger.error(
+        'Server exception in searchMediaAdvanced',
+        tag: 'MediaRepositoryImpl',
+        error: e,
+      );
+      return Left(ServerFailure(e.message));
+    } on NetworkException catch (e) {
+      Logger.error(
+        'Network exception in searchMediaAdvanced',
+        tag: 'MediaRepositoryImpl',
+        error: e,
+      );
+      return Left(NetworkFailure(e.message));
+    } on ExtensionException catch (e) {
+      Logger.error(
+        'Extension exception in searchMediaAdvanced',
+        tag: 'MediaRepositoryImpl',
+        error: e,
+      );
+      return Left(ExtensionFailure(e.message));
+    } catch (e, stackTrace) {
+      Logger.error(
+        'Unexpected error in searchMediaAdvanced',
+        tag: 'MediaRepositoryImpl',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      return Left(UnknownFailure('Failed to search media: ${e.toString()}'));
     }
   }
 

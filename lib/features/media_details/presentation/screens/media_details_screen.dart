@@ -506,6 +506,10 @@ class _MediaDetailsScreenState extends State<MediaDetailsScreen> {
     switch (status) {
       case LibraryStatus.watching:
         return 'Watching';
+      case LibraryStatus.currentlyWatching:
+        return 'Currently Watching';
+      case LibraryStatus.watched:
+        return 'Watched';
       case LibraryStatus.completed:
         return 'Completed';
       case LibraryStatus.onHold:
@@ -514,6 +518,10 @@ class _MediaDetailsScreenState extends State<MediaDetailsScreen> {
         return 'Dropped';
       case LibraryStatus.planToWatch:
         return 'Plan to Watch';
+      case LibraryStatus.wantToWatch:
+        return 'Want to Watch';
+      case LibraryStatus.finished:
+        return 'Finished';
     }
   }
 
