@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import '../../../../core/domain/entities/entities.dart';
 import '../../../../core/data/datasources/external_remote_data_source.dart';
 import '../../../../core/di/injection_container.dart';
+import '../../../media_details/presentation/screens/episode_source_selection_sheet.dart';
 
 /// Details screen for Anime and Manga from external sources
 class AnimeMangaDetailsScreen extends StatefulWidget {
@@ -588,7 +589,7 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
                 elevation: 2,
                 child: InkWell(
                   onTap: () {
-                    // TODO: Implement episode playback
+                    _showEpisodeSourceSelection(context, episode);
                   },
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -774,7 +775,7 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
                       : null,
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () {
-                    // TODO: Implement chapter reading
+                    _showChapterSourceSelection(context, chapter);
                   },
                 ),
               );
@@ -1067,6 +1068,68 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
       return '${(number / 1000).toStringAsFixed(1)}K';
     }
     return number.toString();
+  }
+
+  /// Show episode source selection bottom sheet
+  /// Requirements: 1.1
+  void _showEpisodeSourceSelection(
+    BuildContext context,
+    EpisodeEntity episode,
+  ) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) {
+        return EpisodeSourceSelectionSheet(
+          media: widget.media,
+          episode: episode,
+          isChapter: false,
+          onSourceSelected: (source) {
+            // TODO: Navigate to video player with source
+            // Navigator.of(context).push(
+            //   MaterialPageRoute(
+            //     builder: (context) => VideoPlayerScreen(
+            //       episode: episode,
+            //       source: source,
+            //     ),
+            //   ),
+            // );
+          },
+        );
+      },
+    );
+  }
+
+  /// Show chapter source selection bottom sheet
+  /// Requirements: 1.2
+  void _showChapterSourceSelection(
+    BuildContext context,
+    ChapterEntity chapter,
+  ) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) {
+        return EpisodeSourceSelectionSheet(
+          media: widget.media,
+          episode: chapter as EpisodeEntity, // Cast chapter to episode for now
+          isChapter: true,
+          onSourceSelected: (source) {
+            // TODO: Navigate to manga reader with source
+            // Navigator.of(context).push(
+            //   MaterialPageRoute(
+            //     builder: (context) => MangaReaderScreen(
+            //       chapter: chapter,
+            //       source: source,
+            //     ),
+            //   ),
+            // );
+          },
+        );
+      },
+    );
   }
 }
 

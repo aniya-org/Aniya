@@ -174,6 +174,26 @@ class EpisodeCard extends StatelessWidget {
                         ),
                       ),
                     ],
+                    // Show source provider if available
+                    if (episode.sourceProvider != null) ...[
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.source,
+                            size: 12,
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            _getProviderName(episode.sourceProvider!),
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -217,6 +237,23 @@ class EpisodeCard extends StatelessWidget {
       return '${difference.inDays} days ago';
     } else {
       return '${date.day}/${date.month}/${date.year}';
+    }
+  }
+
+  String _getProviderName(String providerId) {
+    switch (providerId.toLowerCase()) {
+      case 'tmdb':
+        return 'TMDB';
+      case 'anilist':
+        return 'AniList';
+      case 'jikan':
+        return 'MAL';
+      case 'kitsu':
+        return 'Kitsu';
+      case 'simkl':
+        return 'Simkl';
+      default:
+        return providerId.toUpperCase();
     }
   }
 }

@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import '../../domain/entities/media_entity.dart';
+import '../../domain/entities/search_result_entity.dart';
 import '../../error/exceptions.dart';
 import '../../utils/logger.dart';
 
@@ -18,33 +19,83 @@ class TmdbExternalDataSourceImpl {
     _dio.options.queryParameters = {'api_key': _apiKey};
   }
 
-  Future<List<MediaEntity>> searchMedia(
+  Future<SearchResult<List<MediaEntity>>> searchMedia(
     String query,
     MediaType type, {
     int page = 1,
+    int perPage = 20,
+    List<String>? genres,
+    int? year,
+    String? season,
+    String? status,
+    String? format,
+    int? minScore,
+    int? maxScore,
+    String? sort,
   }) async {
     try {
+      Logger.info(
+        'TMDB search: query="$query", type=$type, page=$page',
+        tag: 'TmdbDataSource',
+      );
+
       List<dynamic> results = [];
+      int totalResults = 0;
+      int totalPages = 1;
+
       if (type == MediaType.movie) {
         final response = await _dio.get(
           '/search/movie',
-          queryParameters: {'query': query},
+          queryParameters: {'query': query, 'page': page},
         );
         results = response.data['results'] ?? [];
+        totalResults = response.data['total_results'] ?? 0;
+        totalPages = response.data['total_pages'] ?? 1;
       } else if (type == MediaType.tvShow) {
         final response = await _dio.get(
           '/search/tv',
-          queryParameters: {'query': query},
+          queryParameters: {'query': query, 'page': page},
         );
         results = response.data['results'] ?? [];
+        totalResults = response.data['total_results'] ?? 0;
+        totalPages = response.data['total_pages'] ?? 1;
       } else {
-        return [];
+        Logger.debug(
+          'TMDB does not support type: $type',
+          tag: 'TmdbDataSource',
+        );
+        return SearchResult<List<MediaEntity>>(
+          items: [],
+          totalCount: 0,
+          currentPage: page,
+          hasNextPage: false,
+          perPage: perPage,
+        );
       }
-      return results
+
+      final mappedResults = results
           .map((r) => _mapToMediaEntity(r, type, 'tmdb', 'TMDB'))
           .toList();
-    } catch (e) {
-      Logger.error('TMDB search failed', error: e);
+
+      Logger.info(
+        'TMDB search completed: ${mappedResults.length} results',
+        tag: 'TmdbDataSource',
+      );
+
+      return SearchResult<List<MediaEntity>>(
+        items: mappedResults,
+        totalCount: totalResults,
+        currentPage: page,
+        hasNextPage: page < totalPages,
+        perPage: perPage,
+      );
+    } catch (e, stackTrace) {
+      Logger.error(
+        'TMDB search failed',
+        tag: 'TmdbDataSource',
+        error: e,
+        stackTrace: stackTrace,
+      );
       throw ServerException('Failed to search TMDB: $e');
     }
   }

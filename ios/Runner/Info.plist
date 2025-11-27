@@ -50,11 +50,71 @@
 		<dict>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>OAuth Callback</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>aniya</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLName</key>
+			<string>Aniyomi Repository</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>aniyomi</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLName</key>
+			<string>Tachiyomi Repository</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>tachiyomi</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLName</key>
+			<string>Mangayomi Repository</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>mangayomi</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLName</key>
+			<string>Dar Repository</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>dar</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLName</key>
+			<string>CloudStream Repository</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>cloudstreamrepo</string>
+			</array>
+		</dict>
+	</array>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>aniyomi</string>
+		<string>tachiyomi</string>
+		<string>mangayomi</string>
+		<string>dar</string>
+		<string>cloudstreamrepo</string>
 	</array>
 </dict>
 </plist>

@@ -20,24 +20,22 @@ abstract class Failure {
 
 /// Network-related failures
 class NetworkFailure extends Failure {
-  const NetworkFailure(String message) : super(message, code: 'NETWORK_ERROR');
+  const NetworkFailure(super.message) : super(code: 'NETWORK_ERROR');
 }
 
 /// Extension-related failures
 class ExtensionFailure extends Failure {
-  const ExtensionFailure(String message)
-    : super(message, code: 'EXTENSION_ERROR');
+  const ExtensionFailure(super.message) : super(code: 'EXTENSION_ERROR');
 }
 
 /// Storage-related failures
 class StorageFailure extends Failure {
-  const StorageFailure(String message) : super(message, code: 'STORAGE_ERROR');
+  const StorageFailure(super.message) : super(code: 'STORAGE_ERROR');
 }
 
 /// Authentication-related failures
 class AuthenticationFailure extends Failure {
-  const AuthenticationFailure(String message)
-    : super(message, code: 'AUTH_ERROR');
+  const AuthenticationFailure(super.message) : super(code: 'AUTH_ERROR');
 }
 
 /// Alias for backward compatibility
@@ -47,21 +45,20 @@ class AuthFailure extends AuthenticationFailure {
 
 /// Validation-related failures
 class ValidationFailure extends Failure {
-  const ValidationFailure(String message)
-    : super(message, code: 'VALIDATION_ERROR');
+  const ValidationFailure(super.message) : super(code: 'VALIDATION_ERROR');
 }
 
 /// Server-related failures
 class ServerFailure extends Failure {
-  const ServerFailure(String message) : super(message, code: 'SERVER_ERROR');
+  const ServerFailure(super.message) : super(code: 'SERVER_ERROR');
 }
 
 /// Cache-related failures
 class CacheFailure extends Failure {
-  const CacheFailure(String message) : super(message, code: 'CACHE_ERROR');
+  const CacheFailure(super.message) : super(code: 'CACHE_ERROR');
 }
 
 /// Unknown failures
 class UnknownFailure extends Failure {
-  const UnknownFailure(String message) : super(message, code: 'UNKNOWN_ERROR');
+  const UnknownFailure(super.message) : super(code: 'UNKNOWN_ERROR');
 }

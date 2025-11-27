@@ -6,6 +6,7 @@ import '../../domain/entities/extension_entity.dart' as domain;
 import '../../domain/repositories/extension_repository.dart';
 import '../../error/failures.dart';
 import '../../error/exceptions.dart';
+import '../../constants/default_repositories.dart';
 import '../datasources/extension_data_source.dart';
 
 /// Implementation of ExtensionRepository
@@ -17,18 +18,27 @@ class ExtensionRepositoryImpl implements ExtensionRepository {
 
   @override
   Future<Either<Failure, List<domain.ExtensionEntity>>> getAvailableExtensions(
-    domain.ExtensionType type,
-  ) async {
+    domain.ExtensionType type, {
+    List<String>? repos,
+  }) async {
     try {
       final extensions = <domain.ExtensionEntity>[];
       final bridgeType = _mapEntityTypeToBridgeType(type);
 
+      // Use default repository URLs for Aniyomi if none provided
+      List<String>? reposToUse = repos;
+      if ((repos == null || repos.isEmpty) && type == domain.ExtensionType.aniyomi) {
+        reposToUse = [DefaultRepositories.aniyomiAnimeRepo];
+      }
+
       // Get available extensions for all item types
+      // Pass repository URLs to fetch extensions from configured repos
       for (final itemType in ItemType.values) {
         try {
           final results = await dataSource.getAvailableExtensions(
             bridgeType,
             itemType,
+            repos: reposToUse,
           );
           extensions.addAll(results.map((e) => e.toEntity()));
         } catch (e) {
@@ -97,7 +107,7 @@ class ExtensionRepositoryImpl implements ExtensionRepository {
         return Left(validationResult);
       }
 
-      // Find the extension source
+      // Find the extension source with repository URLs
       final source = await _findExtensionSource(extensionId, type);
       if (source == null) {
         return Left(ExtensionFailure('Extension not found: $extensionId'));
@@ -262,19 +272,23 @@ class ExtensionRepositoryImpl implements ExtensionRepository {
   ) async {
     try {
       final bridgeType = _mapEntityTypeToBridgeType(type);
+      
+      // Use default repository URLs for Aniyomi if none configured
+      List<String>? repos;
+      if (type == domain.ExtensionType.aniyomi) {
+        repos = [DefaultRepositories.aniyomiAnimeRepo];
+      }
 
       for (final itemType in ItemType.values) {
         try {
           final extensions = await dataSource.getAvailableExtensions(
             bridgeType,
             itemType,
+            repos: repos,
           );
 
           for (final extension in extensions) {
             if (extension.id == extensionId) {
-              // We need to get the actual Source object
-              // For now, create a minimal Source object
-              // In production, the data source should return Source objects
               return Source(
                 id: extension.id,
                 name: extension.name,

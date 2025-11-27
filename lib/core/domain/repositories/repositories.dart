@@ -10,3 +10,4 @@ export 'library_repository.dart';
 export 'tracking_repository.dart';
 export 'video_repository.dart';
 export 'download_repository.dart';
+export 'repository_repository.dart';

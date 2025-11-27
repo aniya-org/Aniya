@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../../core/domain/entities/entities.dart';
+import '../../../../core/domain/entities/source_entity.dart';
 import '../../../../core/widgets/widgets.dart';
 import '../viewmodels/media_details_viewmodel.dart';
 import '../../../video_player/presentation/screens/video_player_screen.dart';
+import '../screens/episode_source_selection_sheet.dart';
+import '../../../manga_reader/presentation/screens/manga_reader_screen.dart';
 
 /// Screen for displaying detailed media information
 class MediaDetailsScreen extends StatefulWidget {
@@ -250,6 +253,30 @@ class _MediaDetailsScreenState extends State<MediaDetailsScreen> {
 
           const SizedBox(height: 24),
 
+          // Provider Attribution Badges
+          if (viewModel.contributingProviders.isNotEmpty) ...[
+            Row(
+              children: [
+                Text(
+                  'Data Sources',
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ProviderBadgeList(
+                    providers: viewModel.contributingProviders,
+                    isSmall: true,
+                    onProviderTap: (provider) =>
+                        _showProviderAttributionDialog(context, provider),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+          ],
+
           // Synopsis
           if (media.description != null) ...[
             Text(
@@ -462,7 +489,59 @@ class _MediaDetailsScreenState extends State<MediaDetailsScreen> {
   }
 
   void _readChapter(BuildContext context, ChapterEntity chapter) {
-    Navigator.pushNamed(context, '/manga-reader', arguments: chapter);
+    // Show EpisodeSourceSelectionSheet for chapter source selection
+    // Requirements: 1.2, 5.2, 5.4
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => EpisodeSourceSelectionSheet(
+        media: widget.media,
+        episode: EpisodeEntity(
+          id: chapter.id,
+          mediaId: chapter.mediaId,
+          title: chapter.title,
+          number: chapter.number.toInt(),
+          releaseDate: chapter.releaseDate,
+          sourceProvider: chapter.sourceProvider,
+        ),
+        isChapter: true,
+        onSourceSelected: (source) {
+          _navigateToMangaReader(context, chapter, source);
+        },
+      ),
+    );
+  }
+
+  /// Navigate to manga reader with chapter and source
+  /// Requirements: 5.2, 5.4
+  void _navigateToMangaReader(
+    BuildContext context,
+    ChapterEntity chapter,
+    SourceEntity source,
+  ) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => MangaReaderScreen(
+          chapter: chapter,
+          sourceId: source.id,
+          itemId: widget.media.id,
+        ),
+      ),
+    );
+  }
+
+  void _showProviderAttributionDialog(BuildContext context, String provider) {
+    final viewModel = context.read<MediaDetailsViewModel>();
+
+    showProviderAttributionDialog(
+      context,
+      dataSourceAttribution: viewModel.detailedMedia?.dataSourceAttribution,
+      contributingProviders: viewModel.contributingProviders,
+      matchConfidences: viewModel.detailedMedia?.matchConfidences,
+      primaryProvider: viewModel.media?.sourceName ?? 'unknown',
+    );
   }
 
   IconData _getTypeIcon(MediaType type) {

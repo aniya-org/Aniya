@@ -56,5 +56,71 @@ void main() {
       expect(result.title, tEpisodeModel.title);
       expect(result.number, tEpisodeModel.number);
     });
+
+    test('should handle sourceProvider field', () {
+      final episodeWithProvider = EpisodeModel(
+        id: 'ep1',
+        mediaId: 'media1',
+        title: 'Episode 1',
+        number: 1,
+        sourceProvider: 'kitsu',
+      );
+
+      expect(episodeWithProvider.sourceProvider, 'kitsu');
+
+      final json = episodeWithProvider.toJson();
+      expect(json['sourceProvider'], 'kitsu');
+
+      final fromJson = EpisodeModel.fromJson(json);
+      expect(fromJson.sourceProvider, 'kitsu');
+    });
+
+    test('should handle alternativeData field', () {
+      final alternativeData = {
+        'anilist': EpisodeData(
+          title: 'Alternative Title',
+          thumbnail: 'https://example.com/alt-thumb.jpg',
+          description: 'Alternative description',
+          airDate: DateTime(2024, 1, 2),
+        ),
+      };
+
+      final episodeWithAltData = EpisodeModel(
+        id: 'ep1',
+        mediaId: 'media1',
+        title: 'Episode 1',
+        number: 1,
+        alternativeData: alternativeData,
+      );
+
+      expect(episodeWithAltData.alternativeData, isNotNull);
+      expect(
+        episodeWithAltData.alternativeData!['anilist']?.title,
+        'Alternative Title',
+      );
+
+      final json = episodeWithAltData.toJson();
+      expect(json['alternativeData'], isNotNull);
+      expect(json['alternativeData']['anilist']['title'], 'Alternative Title');
+
+      final fromJson = EpisodeModel.fromJson(json);
+      expect(fromJson.alternativeData, isNotNull);
+      expect(fromJson.alternativeData!['anilist']?.title, 'Alternative Title');
+      expect(
+        fromJson.alternativeData!['anilist']?.thumbnail,
+        'https://example.com/alt-thumb.jpg',
+      );
+    });
+
+    test('copyWith should update fields correctly', () {
+      final updated = tEpisodeModel.copyWith(
+        sourceProvider: 'tmdb',
+        alternativeData: {'jikan': EpisodeData(title: 'Jikan Title')},
+      );
+
+      expect(updated.id, tEpisodeModel.id);
+      expect(updated.sourceProvider, 'tmdb');
+      expect(updated.alternativeData!['jikan']?.title, 'Jikan Title');
+    });
   });
 }

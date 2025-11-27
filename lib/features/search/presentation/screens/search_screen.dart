@@ -111,13 +111,23 @@ class _SearchScreenState extends State<SearchScreen> {
                           icon: const Icon(Icons.search, size: 16),
                         ),
                         SourceOption(
+                          id: 'tmdb',
+                          name: 'TMDB',
+                          icon: const Icon(Icons.movie, size: 16),
+                        ),
+                        SourceOption(
                           id: 'anilist',
                           name: 'AniList',
                           icon: const Icon(Icons.list, size: 16),
                         ),
                         SourceOption(
-                          id: 'myanimelist',
+                          id: 'jikan',
                           name: 'MyAnimeList',
+                          icon: const Icon(Icons.list, size: 16),
+                        ),
+                        SourceOption(
+                          id: 'kitsu',
+                          name: 'Kitsu',
                           icon: const Icon(Icons.list, size: 16),
                         ),
                         SourceOption(
@@ -127,7 +137,17 @@ class _SearchScreenState extends State<SearchScreen> {
                         ),
                       ],
                       onSourceChanged: (source) {
-                        setState(() => _selectedSource = source);
+                        setState(() {
+                          _selectedSource = source;
+                          // Update the viewmodel's source filter
+                          final viewModel = Provider.of<SearchViewModel>(
+                            context,
+                            listen: false,
+                          );
+                          viewModel.setSourceFilter(
+                            source == 'all' ? null : source,
+                          );
+                        });
                       },
                     ),
                   ),
@@ -208,6 +228,7 @@ class _SearchScreenState extends State<SearchScreen> {
                           childAspectRatio: 0.7,
                           crossAxisSpacing: 12,
                           mainAxisSpacing: 12,
+                          mainAxisExtent: 300,
                         ),
                         delegate: SliverChildBuilderDelegate((context, index) {
                           final media = viewModel.searchResults[index];

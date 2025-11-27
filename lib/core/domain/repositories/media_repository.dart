@@ -102,6 +102,18 @@ abstract class MediaRepository {
     String sourceId,
   );
 
+  /// Get episodes with cross-provider aggregation for external sources
+  ///
+  /// This method uses the full MediaEntity to perform cross-provider matching
+  /// and data aggregation, providing the most complete episode information.
+  ///
+  /// [media] - The media entity to fetch episodes for
+  ///
+  /// Returns a list of aggregated episode entities or a failure
+  Future<Either<Failure, List<EpisodeEntity>>> getEpisodesWithAggregation(
+    MediaEntity media,
+  );
+
   /// Get chapters for a specific media item
   ///
   /// [mediaId] - The unique identifier of the media
@@ -111,6 +123,18 @@ abstract class MediaRepository {
   Future<Either<Failure, List<ChapterEntity>>> getChapters(
     String mediaId,
     String sourceId,
+  );
+
+  /// Get chapters with cross-provider aggregation for external sources
+  ///
+  /// This method uses the full MediaEntity to perform cross-provider matching
+  /// and data aggregation, providing the most complete chapter information.
+  ///
+  /// [media] - The media entity to fetch chapters for
+  ///
+  /// Returns a list of aggregated chapter entities or a failure
+  Future<Either<Failure, List<ChapterEntity>>> getChaptersWithAggregation(
+    MediaEntity media,
   );
 
   /// Get pages for a specific manga chapter

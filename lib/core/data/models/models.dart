@@ -6,3 +6,5 @@ export 'library_item_model.dart';
 export 'user_model.dart';
 export 'video_source_model.dart';
 export 'download_model.dart';
+export 'deep_link_models.dart';
+export 'repository_config_model.dart';

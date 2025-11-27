@@ -3,11 +3,13 @@ import '../../../../core/domain/entities/media_entity.dart';
 import '../../../../core/domain/entities/episode_entity.dart';
 import '../../../../core/domain/entities/chapter_entity.dart';
 import '../../../../core/domain/entities/library_item_entity.dart';
+import '../../../../core/domain/entities/media_details_entity.dart';
 import '../../../../core/enums/tracking_service.dart';
 import '../../../../core/domain/usecases/get_media_details_usecase.dart';
 import '../../../../core/domain/usecases/get_episodes_usecase.dart';
 import '../../../../core/domain/usecases/get_chapters_usecase.dart';
 import '../../../../core/domain/usecases/add_to_library_usecase.dart';
+import '../../../../core/domain/repositories/media_repository.dart';
 import '../../../../core/utils/error_message_mapper.dart';
 import '../../../../core/utils/logger.dart';
 
@@ -16,15 +18,18 @@ class MediaDetailsViewModel extends ChangeNotifier {
   final GetEpisodesUseCase getEpisodes;
   final GetChaptersUseCase getChapters;
   final AddToLibraryUseCase addToLibrary;
+  final MediaRepository mediaRepository;
 
   MediaDetailsViewModel({
     required this.getMediaDetails,
     required this.getEpisodes,
     required this.getChapters,
     required this.addToLibrary,
+    required this.mediaRepository,
   });
 
   MediaEntity? _media;
+  MediaDetailsEntity? _detailedMedia;
   List<EpisodeEntity> _episodes = [];
   List<ChapterEntity> _chapters = [];
   bool _isLoading = false;
@@ -33,11 +38,19 @@ class MediaDetailsViewModel extends ChangeNotifier {
   String? _sourceId;
 
   MediaEntity? get media => _media;
+  MediaDetailsEntity? get detailedMedia => _detailedMedia;
   List<EpisodeEntity> get episodes => _episodes;
   List<ChapterEntity> get chapters => _chapters;
   bool get isLoading => _isLoading;
   bool get isInLibrary => _isInLibrary;
   String? get error => _error;
+
+  /// Get list of providers that contributed data
+  List<String> get contributingProviders =>
+      _detailedMedia?.contributingProviders ?? [];
+
+  /// Check if data is aggregated from multiple providers
+  bool get isAggregated => contributingProviders.length > 1;
 
   Future<void> loadMediaDetails(String id, String sourceId) async {
     _isLoading = true;
@@ -63,32 +76,91 @@ class MediaDetailsViewModel extends ChangeNotifier {
         (mediaEntity) async {
           _media = mediaEntity;
 
+          // Check if this is an external source for aggregation
+          final isExternalSource = _isExternalSource(sourceId);
+
           // Load episodes or chapters based on media type
           if (mediaEntity.type == MediaType.anime ||
               mediaEntity.type == MediaType.tvShow) {
-            final episodesResult = await getEpisodes(
-              GetEpisodesParams(mediaId: id, sourceId: sourceId),
-            );
-            episodesResult.fold((failure) {
-              _error = ErrorMessageMapper.mapFailureToMessage(failure);
-              Logger.error(
-                'Failed to load episodes',
+            if (isExternalSource) {
+              // Use aggregation for external sources
+              Logger.info(
+                'Using cross-provider aggregation for episodes',
                 tag: 'MediaDetailsViewModel',
-                error: failure,
               );
-            }, (episodeList) => _episodes = episodeList);
+              final episodesResult = await mediaRepository
+                  .getEpisodesWithAggregation(mediaEntity);
+              episodesResult.fold(
+                (failure) {
+                  _error = ErrorMessageMapper.mapFailureToMessage(failure);
+                  Logger.error(
+                    'Failed to load episodes with aggregation',
+                    tag: 'MediaDetailsViewModel',
+                    error: failure,
+                  );
+                },
+                (episodeList) {
+                  _episodes = episodeList;
+                  Logger.info(
+                    'Loaded ${episodeList.length} aggregated episodes',
+                    tag: 'MediaDetailsViewModel',
+                  );
+                },
+              );
+            } else {
+              // Use regular method for extensions
+              final episodesResult = await getEpisodes(
+                GetEpisodesParams(mediaId: id, sourceId: sourceId),
+              );
+              episodesResult.fold((failure) {
+                _error = ErrorMessageMapper.mapFailureToMessage(failure);
+                Logger.error(
+                  'Failed to load episodes',
+                  tag: 'MediaDetailsViewModel',
+                  error: failure,
+                );
+              }, (episodeList) => _episodes = episodeList);
+            }
           } else if (mediaEntity.type == MediaType.manga) {
-            final chaptersResult = await getChapters(
-              GetChaptersParams(mediaId: id, sourceId: sourceId),
-            );
-            chaptersResult.fold((failure) {
-              _error = ErrorMessageMapper.mapFailureToMessage(failure);
-              Logger.error(
-                'Failed to load chapters',
+            if (isExternalSource) {
+              // Use aggregation for external sources
+              Logger.info(
+                'Using cross-provider aggregation for chapters',
                 tag: 'MediaDetailsViewModel',
-                error: failure,
               );
-            }, (chapterList) => _chapters = chapterList);
+              final chaptersResult = await mediaRepository
+                  .getChaptersWithAggregation(mediaEntity);
+              chaptersResult.fold(
+                (failure) {
+                  _error = ErrorMessageMapper.mapFailureToMessage(failure);
+                  Logger.error(
+                    'Failed to load chapters with aggregation',
+                    tag: 'MediaDetailsViewModel',
+                    error: failure,
+                  );
+                },
+                (chapterList) {
+                  _chapters = chapterList;
+                  Logger.info(
+                    'Loaded ${chapterList.length} aggregated chapters',
+                    tag: 'MediaDetailsViewModel',
+                  );
+                },
+              );
+            } else {
+              // Use regular method for extensions
+              final chaptersResult = await getChapters(
+                GetChaptersParams(mediaId: id, sourceId: sourceId),
+              );
+              chaptersResult.fold((failure) {
+                _error = ErrorMessageMapper.mapFailureToMessage(failure);
+                Logger.error(
+                  'Failed to load chapters',
+                  tag: 'MediaDetailsViewModel',
+                  error: failure,
+                );
+              }, (chapterList) => _chapters = chapterList);
+            }
           }
         },
       );
@@ -104,6 +176,12 @@ class MediaDetailsViewModel extends ChangeNotifier {
       _isLoading = false;
       notifyListeners();
     }
+  }
+
+  /// Check if a source ID is an external source (vs extension)
+  bool _isExternalSource(String sourceId) {
+    final externalSources = ['tmdb', 'anilist', 'jikan', 'kitsu', 'simkl'];
+    return externalSources.contains(sourceId.toLowerCase());
   }
 
   Future<void> addMediaToLibrary(LibraryStatus status) async {

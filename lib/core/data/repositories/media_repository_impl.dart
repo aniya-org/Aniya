@@ -37,8 +37,18 @@ class MediaRepositoryImpl implements MediaRepository {
     String? sourceId,
   }) async {
     try {
+      Logger.info(
+        'MediaRepositoryImpl.searchMedia: query="$query", type=$type, sourceId=$sourceId',
+        tag: 'MediaRepositoryImpl',
+      );
+
       // If sourceId is provided, search from external source
       if (sourceId != null) {
+        Logger.debug(
+          'Routing to external data source for sourceId: $sourceId',
+          tag: 'MediaRepositoryImpl',
+        );
+
         final result = await externalDataSource.searchMediaAdvanced(
           query,
           sourceId,
@@ -46,6 +56,12 @@ class MediaRepositoryImpl implements MediaRepository {
           page: 1,
           perPage: AppConstants.maxPageSize,
         );
+
+        Logger.info(
+          'External search completed: ${result.items.length} results',
+          tag: 'MediaRepositoryImpl',
+        );
+
         return Right(result.items);
       }
 
@@ -357,6 +373,17 @@ class MediaRepositoryImpl implements MediaRepository {
     String sourceId,
   ) async {
     try {
+      // Check if this is an external source that supports aggregation
+      if (_isExternalSource(sourceId)) {
+        // For external sources, we need the full MediaEntity to perform aggregation
+        // This is a limitation of the current interface - we'll need to fetch details first
+        Logger.warning(
+          'getEpisodes called with external source but no MediaEntity. '
+          'Consider using getEpisodesWithAggregation for better results.',
+          tag: 'MediaRepositoryImpl',
+        );
+      }
+
       final episodes = await remoteDataSource.getEpisodes(mediaId, sourceId);
       return Right(episodes.map((e) => e.toEntity()).toList());
     } on ServerException catch (e) {
@@ -384,12 +411,67 @@ class MediaRepositoryImpl implements MediaRepository {
     }
   }
 
+  /// Get episodes with cross-provider aggregation for external sources
+  @override
+  Future<Either<Failure, List<EpisodeEntity>>> getEpisodesWithAggregation(
+    MediaEntity media,
+  ) async {
+    try {
+      // Check if this is an external source
+      if (_isExternalSource(media.sourceId)) {
+        // Use external data source with aggregation
+        final episodes = await externalDataSource.getEpisodes(media);
+        return Right(episodes);
+      } else {
+        // Use regular extension-based data source
+        final episodes = await remoteDataSource.getEpisodes(
+          media.id,
+          media.sourceId,
+        );
+        return Right(episodes.map((e) => e.toEntity()).toList());
+      }
+    } on ServerException catch (e) {
+      Logger.error(
+        'Server exception in getEpisodesWithAggregation',
+        tag: 'MediaRepositoryImpl',
+        error: e,
+      );
+      return Left(ServerFailure(e.message));
+    } on NetworkException catch (e) {
+      Logger.error(
+        'Network exception in getEpisodesWithAggregation',
+        tag: 'MediaRepositoryImpl',
+        error: e,
+      );
+      return Left(NetworkFailure(e.message));
+    } catch (e, stackTrace) {
+      Logger.error(
+        'Unexpected error in getEpisodesWithAggregation',
+        tag: 'MediaRepositoryImpl',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      return Left(UnknownFailure('Failed to get episodes: ${e.toString()}'));
+    }
+  }
+
   @override
   Future<Either<Failure, List<ChapterEntity>>> getChapters(
     String mediaId,
     String sourceId,
   ) async {
     try {
+      // Check if this is an external source that supports aggregation
+      if (_isExternalSource(sourceId)) {
+        // For external sources, we need the full MediaEntity to perform aggregation
+        // This is a limitation of the current interface - we'll need to fetch details first
+        Logger.warning(
+          'getChapters called with external source but no MediaEntity. '
+          'Consider using getChaptersWithAggregation for better results.',
+          tag: 'MediaRepositoryImpl',
+        );
+      }
+
       final chapters = await remoteDataSource.getChapters(mediaId, sourceId);
       return Right(chapters.map((c) => c.toEntity()).toList());
     } on ServerException catch (e) {
@@ -415,6 +497,56 @@ class MediaRepositoryImpl implements MediaRepository {
       );
       return Left(UnknownFailure('Failed to get chapters: ${e.toString()}'));
     }
+  }
+
+  /// Get chapters with cross-provider aggregation for external sources
+  @override
+  Future<Either<Failure, List<ChapterEntity>>> getChaptersWithAggregation(
+    MediaEntity media,
+  ) async {
+    try {
+      // Check if this is an external source
+      if (_isExternalSource(media.sourceId)) {
+        // Use external data source with aggregation
+        final chapters = await externalDataSource.getChapters(media);
+        return Right(chapters);
+      } else {
+        // Use regular extension-based data source
+        final chapters = await remoteDataSource.getChapters(
+          media.id,
+          media.sourceId,
+        );
+        return Right(chapters.map((c) => c.toEntity()).toList());
+      }
+    } on ServerException catch (e) {
+      Logger.error(
+        'Server exception in getChaptersWithAggregation',
+        tag: 'MediaRepositoryImpl',
+        error: e,
+      );
+      return Left(ServerFailure(e.message));
+    } on NetworkException catch (e) {
+      Logger.error(
+        'Network exception in getChaptersWithAggregation',
+        tag: 'MediaRepositoryImpl',
+        error: e,
+      );
+      return Left(NetworkFailure(e.message));
+    } catch (e, stackTrace) {
+      Logger.error(
+        'Unexpected error in getChaptersWithAggregation',
+        tag: 'MediaRepositoryImpl',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      return Left(UnknownFailure('Failed to get chapters: ${e.toString()}'));
+    }
+  }
+
+  /// Check if a source ID is an external source (vs extension)
+  bool _isExternalSource(String sourceId) {
+    final externalSources = ['tmdb', 'anilist', 'jikan', 'kitsu', 'simkl'];
+    return externalSources.contains(sourceId.toLowerCase());
   }
 
   @override

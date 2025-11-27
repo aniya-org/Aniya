@@ -15,9 +15,13 @@ class GetAvailableExtensionsUseCase {
   /// Execute the use case to get available extensions
   ///
   /// [type] - The type of extension to fetch
+  /// [repos] - Optional list of repository URLs to fetch extensions from
   ///
   /// Returns Either a Failure or a list of ExtensionEntity
-  Future<Either<Failure, List<ExtensionEntity>>> call(ExtensionType type) {
-    return repository.getAvailableExtensions(type);
+  Future<Either<Failure, List<ExtensionEntity>>> call(
+    ExtensionType type, {
+    List<String>? repos,
+  }) {
+    return repository.getAvailableExtensions(type, repos: repos);
   }
 }

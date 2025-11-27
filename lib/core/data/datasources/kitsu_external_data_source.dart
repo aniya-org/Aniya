@@ -1,5 +1,9 @@
 import 'package:dio/dio.dart';
-import '../../domain/entities/entities.dart';
+import '../../domain/entities/media_entity.dart';
+import '../../domain/entities/media_details_entity.dart' hide SearchResult;
+import '../../domain/entities/episode_entity.dart';
+import '../../domain/entities/chapter_entity.dart';
+import '../../domain/entities/search_result_entity.dart';
 import '../../error/exceptions.dart';
 import '../../utils/logger.dart';
 
@@ -29,9 +33,20 @@ class KitsuExternalDataSourceImpl {
     String? sort = 'popularityRank',
     int page = 1,
     int perPage = 20,
+    int? year,
+    String? season,
   }) async {
     try {
+      Logger.info(
+        'Kitsu search: query="$query", type=$type, page=$page',
+        tag: 'KitsuDataSource',
+      );
+
       if (type != MediaType.anime && type != MediaType.manga) {
+        Logger.debug(
+          'Kitsu does not support type: $type',
+          tag: 'KitsuDataSource',
+        );
         return SearchResult<List<MediaEntity>>(
           items: [],
           totalCount: 0,
@@ -67,6 +82,11 @@ class KitsuExternalDataSourceImpl {
           .map((item) => _mapToMediaEntity(item, type, 'kitsu', 'Kitsu'))
           .toList();
 
+      Logger.info(
+        'Kitsu search completed: ${results.length} results',
+        tag: 'KitsuDataSource',
+      );
+
       return SearchResult<List<MediaEntity>>(
         items: results,
         totalCount: totalCount,
@@ -74,8 +94,13 @@ class KitsuExternalDataSourceImpl {
         hasNextPage: mediaList.length == perPage,
         perPage: perPage,
       );
-    } catch (e) {
-      Logger.error('Kitsu search failed', error: e);
+    } catch (e, stackTrace) {
+      Logger.error(
+        'Kitsu search failed',
+        tag: 'KitsuDataSource',
+        error: e,
+        stackTrace: stackTrace,
+      );
       throw ServerException('Failed to search Kitsu: $e');
     }
   }
@@ -92,44 +117,166 @@ class KitsuExternalDataSourceImpl {
       final endpoint = type == MediaType.anime ? 'anime' : 'manga';
 
       // Get main media details with optional includes
-      final includes = <String>[];
-      if (includeCharacters) includes.add('characters');
-      if (type == MediaType.anime) includes.add('animeStaff');
+      // Always include categories for genres, and optionally include characters/staff
+      final includes = <String>['categories'];
+      if (includeCharacters) {
+        includes.add(
+          type == MediaType.anime
+              ? 'animeCharacters.character'
+              : 'mangaCharacters.character',
+        );
+      }
+      if (includeStaff && type == MediaType.anime) {
+        includes.add('animeStaff.person');
+      }
+      if (type == MediaType.anime) {
+        includes.add('animeProductions.producer');
+      }
 
-      final includeParam = includes.isNotEmpty ? includes.join(',') : null;
+      final includeParam = includes.join(',');
+
+      Logger.debug('Kitsu fetching $endpoint/$id with includes: $includeParam');
 
       final response = await _dio.get(
         '/$endpoint/$id',
-        queryParameters: includeParam != null
-            ? {'include': includeParam}
-            : null,
+        queryParameters: {'include': includeParam},
       );
 
       final media = response.data['data'];
-      final included = response.data['included'] ?? [];
+      final included = response.data['included'] as List<dynamic>? ?? [];
+
+      // Parse genres from categories
+      List<String> genres = [];
+      try {
+        for (final item in included) {
+          if (item is Map<String, dynamic> && item['type'] == 'categories') {
+            final attrs = item['attributes'] as Map<String, dynamic>? ?? {};
+            final title = attrs['title']?.toString();
+            if (title != null && title.isNotEmpty) {
+              genres.add(title);
+            }
+          }
+        }
+        Logger.debug('Kitsu parsed ${genres.length} genres/categories');
+      } catch (e) {
+        Logger.error('Failed to parse genres from Kitsu response', error: e);
+      }
 
       // Parse characters from included
       List<CharacterEntity>? characters;
-      if (includeCharacters && included.isNotEmpty) {
-        characters = included
-            .where((item) => item['type'] == 'characters')
-            .take(10)
-            .map((char) {
-              final attrs = char['attributes'] ?? {};
-              return CharacterEntity(
-                id: char['id']?.toString() ?? '',
-                name: attrs['name'] ?? attrs['canonicalName'] ?? '',
-                nativeName: null,
-                image: attrs['image']?['original'],
-                role: 'Unknown',
+      try {
+        if (includeCharacters) {
+          characters = <CharacterEntity>[];
+          for (final item in included) {
+            if (item is Map<String, dynamic> && item['type'] == 'characters') {
+              final attrs = item['attributes'] as Map<String, dynamic>? ?? {};
+              final imageObj = attrs['image'] as Map<String, dynamic>?;
+              characters.add(
+                CharacterEntity(
+                  id: item['id']?.toString() ?? '',
+                  name:
+                      attrs['canonicalName']?.toString() ??
+                      attrs['name']?.toString() ??
+                      '',
+                  nativeName: attrs['names']?['ja_jp']?.toString(),
+                  image:
+                      imageObj?['original']?.toString() ??
+                      imageObj?['large']?.toString(),
+                  role: 'Unknown',
+                ),
               );
-            })
-            .toList();
+              if (characters.length >= 10) break; // Limit to 10 characters
+            }
+          }
+          if (characters.isEmpty) characters = null;
+          Logger.debug('Kitsu parsed ${characters?.length ?? 0} characters');
+        }
+      } catch (e) {
+        Logger.error(
+          'Failed to parse characters from Kitsu response',
+          error: e,
+        );
+        characters = null;
+      }
+
+      // Parse staff from included (anime only)
+      List<StaffEntity>? staff;
+      try {
+        if (includeStaff && type == MediaType.anime) {
+          staff = <StaffEntity>[];
+          for (final item in included) {
+            if (item is Map<String, dynamic> && item['type'] == 'people') {
+              final attrs = item['attributes'] as Map<String, dynamic>? ?? {};
+              final imageObj = attrs['image'] as Map<String, dynamic>?;
+              staff.add(
+                StaffEntity(
+                  id: item['id']?.toString() ?? '',
+                  name:
+                      attrs['canonicalName']?.toString() ??
+                      attrs['name']?.toString() ??
+                      '',
+                  nativeName: attrs['names']?['ja_jp']?.toString(),
+                  image:
+                      imageObj?['original']?.toString() ??
+                      imageObj?['large']?.toString(),
+                  role: 'Staff',
+                ),
+              );
+              if (staff.length >= 10) break; // Limit to 10 staff
+            }
+          }
+          if (staff.isEmpty) staff = null;
+          Logger.debug('Kitsu parsed ${staff?.length ?? 0} staff members');
+        }
+      } catch (e) {
+        Logger.error('Failed to parse staff from Kitsu response', error: e);
+        staff = null;
+      }
+
+      // Parse studios/producers from included (anime only)
+      List<StudioEntity>? studios;
+      try {
+        if (type == MediaType.anime) {
+          studios = <StudioEntity>[];
+          for (final item in included) {
+            if (item is Map<String, dynamic> && item['type'] == 'producers') {
+              final attrs = item['attributes'] as Map<String, dynamic>? ?? {};
+              studios.add(
+                StudioEntity(
+                  id: item['id']?.toString() ?? '',
+                  name: attrs['name']?.toString() ?? '',
+                  isMain: true,
+                  isAnimationStudio: true,
+                ),
+              );
+            }
+          }
+          if (studios.isEmpty) studios = null;
+          Logger.debug('Kitsu parsed ${studios?.length ?? 0} studios');
+        }
+      } catch (e) {
+        Logger.error('Failed to parse studios from Kitsu response', error: e);
+        studios = null;
       }
 
       return type == MediaType.anime
-          ? _mapToAnimeDetailsEntity(media, characters, null, null, null)
-          : _mapToMangaDetailsEntity(media, characters, null, null, null);
+          ? _mapToAnimeDetailsEntity(
+              media,
+              characters,
+              staff,
+              null,
+              null,
+              genres: genres,
+              studios: studios,
+            )
+          : _mapToMangaDetailsEntity(
+              media,
+              characters,
+              null,
+              null,
+              null,
+              genres: genres,
+            );
     } catch (e) {
       Logger.error('Kitsu get details failed', error: e);
       throw ServerException('Failed to get Kitsu details: $e');
@@ -189,29 +336,113 @@ class KitsuExternalDataSourceImpl {
   }
 
   /// Get episodes for an anime (with thumbnail images)
-  Future<List<EpisodeEntity>> getEpisodes(String animeId) async {
+  Future<List<EpisodeEntity>> getEpisodes(
+    String animeId, {
+    String? coverImage,
+  }) async {
     try {
-      final response = await _dio.get(
-        '/episodes',
-        queryParameters: {
-          'filter[mediaId]': animeId,
-          'page[limit]': 100,
-          'sort': 'number',
-        },
-      );
+      // Use provided cover image or fetch from API
+      String? animePosterImage = coverImage;
+      if (animePosterImage == null) {
+        try {
+          final animeResponse = await _dio.get('/anime/$animeId');
+          final animeData = animeResponse.data['data'];
+          final posterObj =
+              animeData?['attributes']?['posterImage'] as Map<String, dynamic>?;
+          animePosterImage =
+              posterObj?['large'] ??
+              posterObj?['medium'] ??
+              posterObj?['small'];
+          Logger.debug('Kitsu anime poster for fallback: $animePosterImage');
+        } catch (e) {
+          Logger.warning(
+            'Could not fetch Kitsu anime details for fallback: $e',
+          );
+        }
+      } else {
+        Logger.debug('Kitsu using provided cover image for fallback');
+      }
 
-      final List episodesList = response.data['data'] ?? [];
+      // Kitsu API: Use the episodes endpoint
+      // The relationship endpoint /anime/{id}/episodes is the correct approach
+      List episodesList = [];
+      try {
+        Logger.debug('Kitsu fetching episodes for anime ID: $animeId');
+        final response = await _dio.get(
+          '/anime/$animeId/episodes',
+          queryParameters: {'page[limit]': 100, 'sort': 'number'},
+        );
+        episodesList = response.data['data'] ?? [];
+        Logger.info(
+          'Kitsu episodes endpoint returned ${episodesList.length} episodes',
+        );
+      } catch (e) {
+        // Log the specific error for debugging
+        Logger.warning('Kitsu episodes endpoint failed for anime $animeId: $e');
+        // Return empty list - the anime might not have episodes in Kitsu
+        return [];
+      }
+
+      // Log episode count for debugging
+      Logger.info(
+        'Kitsu returned ${episodesList.length} episodes for anime $animeId',
+      );
       return episodesList.map((ep) {
-        final attrs = ep['attributes'] ?? {};
+        final epMap = ep as Map<String, dynamic>;
+        final attrs = epMap['attributes'] as Map<String, dynamic>? ?? {};
+        final titlesObj = attrs['titles'] as Map<String, dynamic>?;
+        final thumbnailObj = attrs['thumbnail'] as Map<String, dynamic>?;
+
+        // Safe type conversion
+        int safeToInt(dynamic value, int defaultValue) {
+          if (value == null) return defaultValue;
+          if (value is int) return value;
+          if (value is double) return value.toInt();
+          if (value is String) return int.tryParse(value) ?? defaultValue;
+          return defaultValue;
+        }
+
+        // Extract thumbnail URL - Kitsu stores it as a nested object or direct string
+        String? thumbnailUrl;
+        if (thumbnailObj != null) {
+          thumbnailUrl =
+              thumbnailObj['original']?.toString() ??
+              thumbnailObj['large']?.toString() ??
+              thumbnailObj['small']?.toString();
+        } else if (attrs['thumbnail'] is String) {
+          // Sometimes thumbnail is a direct string URL
+          thumbnailUrl = attrs['thumbnail'] as String;
+        }
+
+        // Use episode thumbnail if available, otherwise fall back to anime poster
+        final finalThumbnail = thumbnailUrl ?? animePosterImage;
+
+        // Log for debugging
+        if (thumbnailUrl != null) {
+          Logger.debug(
+            'Kitsu episode ${attrs['number']} has thumbnail: $thumbnailUrl',
+          );
+        } else if (animePosterImage != null) {
+          Logger.debug(
+            'Kitsu episode ${attrs['number']} using anime poster as fallback',
+          );
+        }
+
         return EpisodeEntity(
-          id: ep['id']?.toString() ?? '',
+          id: epMap['id']?.toString() ?? '',
           mediaId: animeId,
-          number: attrs['number'] ?? 0,
-          title: attrs['canonicalTitle'] ?? attrs['titles']?['en_jp'] ?? '',
-          thumbnail: attrs['thumbnail']?['original'],
-          duration: attrs['length'],
+          number: safeToInt(attrs['number'], 0),
+          title:
+              attrs['canonicalTitle']?.toString() ??
+              titlesObj?['en_jp']?.toString() ??
+              titlesObj?['en']?.toString() ??
+              'Episode ${attrs['number'] ?? 0}',
+          thumbnail: finalThumbnail,
+          duration: safeToInt(attrs['length'], 0) > 0
+              ? safeToInt(attrs['length'], 0)
+              : null,
           releaseDate: attrs['airdate'] != null
-              ? DateTime.tryParse(attrs['airdate'])
+              ? DateTime.tryParse(attrs['airdate'].toString())
               : null,
         );
       }).toList();
@@ -222,34 +453,111 @@ class KitsuExternalDataSourceImpl {
   }
 
   /// Get chapters for a manga
+  /// Note: Kitsu's chapters endpoint often returns 400 errors as it's not fully supported
+  /// for all manga. We generate placeholder chapters based on the manga's chapter count.
   Future<List<ChapterEntity>> getChapters(String mangaId) async {
     try {
-      final response = await _dio.get(
-        '/chapters',
-        queryParameters: {
-          'filter[mangaId]': mangaId,
-          'page[limit]': 100,
-          'sort': 'number',
-        },
-      );
+      // First, try to get the manga details to know the chapter count
+      int? totalChapters;
+      try {
+        final mangaResponse = await _dio.get('/manga/$mangaId');
+        final mangaData = mangaResponse.data['data'];
+        final attrs = mangaData?['attributes'] as Map<String, dynamic>? ?? {};
+        totalChapters = attrs['chapterCount'] as int?;
+        Logger.debug('Kitsu manga $mangaId has $totalChapters chapters');
+      } catch (e) {
+        Logger.warning('Could not fetch manga details for chapter count: $e');
+      }
 
-      final List chaptersList = response.data['data'] ?? [];
+      // Try the chapters endpoint (often returns 400)
+      List chaptersList = [];
+      try {
+        Logger.debug('Kitsu fetching chapters for manga ID: $mangaId');
+        final response = await _dio.get(
+          '/manga/$mangaId/chapters',
+          queryParameters: {'page[limit]': 100, 'sort': 'number'},
+        );
+        chaptersList = response.data['data'] ?? [];
+        Logger.info(
+          'Kitsu chapters endpoint returned ${chaptersList.length} chapters',
+        );
+      } catch (e) {
+        // Chapters endpoint often fails with 400 - this is expected
+        Logger.warning('Kitsu chapters endpoint failed for manga $mangaId: $e');
+
+        // Generate placeholder chapters if we know the total count
+        if (totalChapters != null && totalChapters > 0) {
+          Logger.info(
+            'Generating $totalChapters placeholder chapters for manga $mangaId',
+          );
+          return List.generate(totalChapters, (index) {
+            final chapterNum = index + 1;
+            return ChapterEntity(
+              id: 'kitsu_chapter_${mangaId}_$chapterNum',
+              mediaId: mangaId,
+              number: chapterNum.toDouble(),
+              title: 'Chapter $chapterNum',
+              releaseDate: null,
+              pageCount: null,
+              sourceProvider: 'kitsu',
+            );
+          });
+        }
+        return [];
+      }
+
+      if (chaptersList.isEmpty && totalChapters != null && totalChapters > 0) {
+        // API returned empty but we know there are chapters
+        Logger.info(
+          'Generating $totalChapters placeholder chapters for manga $mangaId',
+        );
+        return List.generate(totalChapters, (index) {
+          final chapterNum = index + 1;
+          return ChapterEntity(
+            id: 'kitsu_chapter_${mangaId}_$chapterNum',
+            mediaId: mangaId,
+            number: chapterNum.toDouble(),
+            title: 'Chapter $chapterNum',
+            releaseDate: null,
+            pageCount: null,
+            sourceProvider: 'kitsu',
+          );
+        });
+      }
+
       return chaptersList.map((ch) {
-        final attrs = ch['attributes'] ?? {};
+        final chMap = ch as Map<String, dynamic>;
+        final attrs = chMap['attributes'] as Map<String, dynamic>? ?? {};
+        final titlesObj = attrs['titles'] as Map<String, dynamic>?;
+
+        // Safe number parsing
+        double safeToDouble(dynamic value) {
+          if (value == null) return 0.0;
+          if (value is double) return value;
+          if (value is int) return value.toDouble();
+          if (value is String) return double.tryParse(value) ?? 0.0;
+          return 0.0;
+        }
+
         return ChapterEntity(
-          id: ch['id']?.toString() ?? '',
+          id: chMap['id']?.toString() ?? '',
           mediaId: mangaId,
-          number: double.tryParse(attrs['number']?.toString() ?? '0') ?? 0.0,
-          title: attrs['canonicalTitle'] ?? attrs['titles']?['en_jp'] ?? '',
+          number: safeToDouble(attrs['number']),
+          title:
+              attrs['canonicalTitle']?.toString() ??
+              titlesObj?['en_jp']?.toString() ??
+              titlesObj?['en']?.toString() ??
+              'Chapter ${attrs['number'] ?? 0}',
           releaseDate: attrs['published'] != null
-              ? DateTime.tryParse(attrs['published'])
+              ? DateTime.tryParse(attrs['published'].toString())
               : null,
           pageCount: null,
+          sourceProvider: 'kitsu',
         );
       }).toList();
     } catch (e) {
       Logger.error('Kitsu get chapters failed', error: e);
-      throw ServerException('Failed to get Kitsu chapters: $e');
+      return []; // Return empty list instead of throwing
     }
   }
 
@@ -261,30 +569,44 @@ class KitsuExternalDataSourceImpl {
     String sourceId,
     String sourceName,
   ) {
-    final attrs = json['attributes'] ?? {};
+    final attrs = json['attributes'] as Map<String, dynamic>? ?? {};
+    final titlesObj = attrs['titles'] as Map<String, dynamic>?;
+    final posterObj = attrs['posterImage'] as Map<String, dynamic>?;
+    final coverObj = attrs['coverImage'] as Map<String, dynamic>?;
+
+    // Safe type conversion
+    int? safeToInt(dynamic value) {
+      if (value == null) return null;
+      if (value is int) return value;
+      if (value is double) return value.toInt();
+      if (value is String) return int.tryParse(value);
+      return null;
+    }
+
+    // Safe rating conversion (Kitsu uses 0-100 scale as string)
+    double safeRating(dynamic rating) {
+      if (rating == null) return 0.0;
+      final parsed = double.tryParse(rating.toString());
+      return parsed != null ? parsed / 10.0 : 0.0;
+    }
 
     return MediaEntity(
       id: json['id']?.toString() ?? '',
       title:
-          attrs['canonicalTitle'] ??
-          attrs['titles']?['en_jp'] ??
-          attrs['titles']?['en'] ??
+          attrs['canonicalTitle']?.toString() ??
+          titlesObj?['en_jp']?.toString() ??
+          titlesObj?['en']?.toString() ??
           '',
-      coverImage:
-          attrs['posterImage']?['medium'] ?? attrs['posterImage']?['small'],
-      bannerImage:
-          attrs['coverImage']?['original'] ?? attrs['coverImage']?['large'],
-      description: attrs['synopsis'] ?? attrs['description'],
+      coverImage: posterObj?['medium'] ?? posterObj?['small'],
+      bannerImage: coverObj?['original'] ?? coverObj?['large'],
+      description:
+          attrs['synopsis']?.toString() ?? attrs['description']?.toString(),
       type: type,
-      rating:
-          (attrs['averageRating'] != null
-              ? double.tryParse(attrs['averageRating'].toString())
-              : null) ??
-          0.0,
+      rating: safeRating(attrs['averageRating']),
       genres: [], // Genres require separate API call in Kitsu
-      status: _mapKitsuStatus(attrs['status']),
-      totalEpisodes: attrs['episodeCount'],
-      totalChapters: attrs['chapterCount'],
+      status: _mapKitsuStatus(attrs['status']?.toString()),
+      totalEpisodes: safeToInt(attrs['episodeCount']),
+      totalChapters: safeToInt(attrs['chapterCount']),
       sourceId: sourceId,
       sourceName: sourceName,
     );
@@ -295,19 +617,40 @@ class KitsuExternalDataSourceImpl {
     List<CharacterEntity>? characters,
     List<StaffEntity>? staff,
     List<ReviewEntity>? reviews,
-    List<RecommendationEntity>? recommendations,
-  ) {
-    final attrs = json['attributes'] ?? {};
+    List<RecommendationEntity>? recommendations, {
+    List<String>? genres,
+    List<StudioEntity>? studios,
+  }) {
+    final attrs = json['attributes'] as Map<String, dynamic>? ?? {};
+    final titlesObj = attrs['titles'] as Map<String, dynamic>?;
+    final posterObj = attrs['posterImage'] as Map<String, dynamic>?;
+    final coverObj = attrs['coverImage'] as Map<String, dynamic>?;
+
+    // Safe type conversion
+    int? safeToInt(dynamic value) {
+      if (value == null) return null;
+      if (value is int) return value;
+      if (value is double) return value.toInt();
+      if (value is String) return int.tryParse(value);
+      return null;
+    }
+
+    // Safe rating conversion (Kitsu uses 0-100 scale as string)
+    double safeRating(dynamic rating) {
+      if (rating == null) return 0.0;
+      final parsed = double.tryParse(rating.toString());
+      return parsed != null ? parsed / 10.0 : 0.0;
+    }
 
     // Parse dates
     DateTime? startDate;
     DateTime? endDate;
     try {
       if (attrs['startDate'] != null) {
-        startDate = DateTime.parse(attrs['startDate']);
+        startDate = DateTime.parse(attrs['startDate'].toString());
       }
       if (attrs['endDate'] != null) {
-        endDate = DateTime.parse(attrs['endDate']);
+        endDate = DateTime.parse(attrs['endDate'].toString());
       }
     } catch (e) {
       // Invalid dates
@@ -316,40 +659,33 @@ class KitsuExternalDataSourceImpl {
     return MediaDetailsEntity(
       id: json['id']?.toString() ?? '',
       title:
-          attrs['canonicalTitle'] ??
-          attrs['titles']?['en_jp'] ??
-          attrs['titles']?['en'] ??
+          attrs['canonicalTitle']?.toString() ??
+          titlesObj?['en_jp']?.toString() ??
+          titlesObj?['en']?.toString() ??
           '',
-      englishTitle: attrs['titles']?['en'],
-      romajiTitle: attrs['titles']?['en_jp'],
-      nativeTitle: attrs['titles']?['ja_jp'],
-      coverImage:
-          attrs['posterImage']?['large'] ??
-          attrs['posterImage']?['medium'] ??
-          '',
-      bannerImage:
-          attrs['coverImage']?['original'] ?? attrs['coverImage']?['large'],
-      description: attrs['synopsis'] ?? attrs['description'],
+      englishTitle: titlesObj?['en']?.toString(),
+      romajiTitle: titlesObj?['en_jp']?.toString(),
+      nativeTitle: titlesObj?['ja_jp']?.toString(),
+      coverImage: posterObj?['large'] ?? posterObj?['medium'] ?? '',
+      bannerImage: coverObj?['original'] ?? coverObj?['large'],
+      description:
+          attrs['synopsis']?.toString() ?? attrs['description']?.toString(),
       type: MediaType.anime,
-      status: _mapKitsuStatus(attrs['status']),
-      rating:
-          (attrs['averageRating'] != null
-              ? double.tryParse(attrs['averageRating'].toString())
-              : null) ??
-          0.0,
+      status: _mapKitsuStatus(attrs['status']?.toString()),
+      rating: safeRating(attrs['averageRating']),
       averageScore: attrs['averageRating'] != null
-          ? double.tryParse(attrs['averageRating'].toString())?.toInt()
+          ? (double.tryParse(attrs['averageRating'].toString())?.toInt())
           : null,
-      popularity: attrs['userCount'],
-      favorites: attrs['favoritesCount'],
-      genres: [], // Genres require separate call
+      popularity: safeToInt(attrs['userCount']),
+      favorites: safeToInt(attrs['favoritesCount']),
+      genres: genres ?? [],
       tags: [],
       startDate: startDate,
       endDate: endDate,
-      episodes: attrs['episodeCount'],
+      episodes: safeToInt(attrs['episodeCount']),
       chapters: null,
       volumes: null,
-      duration: attrs['episodeLength']?.toInt(),
+      duration: safeToInt(attrs['episodeLength']),
       season: null,
       seasonYear: startDate?.year,
       isAdult: attrs['nsfw'] == true,
@@ -361,10 +697,13 @@ class KitsuExternalDataSourceImpl {
       reviews: reviews,
       recommendations: recommendations,
       relations: null,
-      studios: null,
+      studios: studios,
       rankings: null,
       trailer: attrs['youtubeVideoId'] != null
-          ? TrailerEntity(id: attrs['youtubeVideoId'] ?? '', site: 'youtube')
+          ? TrailerEntity(
+              id: attrs['youtubeVideoId']?.toString() ?? '',
+              site: 'youtube',
+            )
           : null,
     );
   }
@@ -374,19 +713,39 @@ class KitsuExternalDataSourceImpl {
     List<CharacterEntity>? characters,
     List<StaffEntity>? staff,
     List<ReviewEntity>? reviews,
-    List<RecommendationEntity>? recommendations,
-  ) {
-    final attrs = json['attributes'] ?? {};
+    List<RecommendationEntity>? recommendations, {
+    List<String>? genres,
+  }) {
+    final attrs = json['attributes'] as Map<String, dynamic>? ?? {};
+    final titlesObj = attrs['titles'] as Map<String, dynamic>?;
+    final posterObj = attrs['posterImage'] as Map<String, dynamic>?;
+    final coverObj = attrs['coverImage'] as Map<String, dynamic>?;
+
+    // Safe type conversion
+    int? safeToInt(dynamic value) {
+      if (value == null) return null;
+      if (value is int) return value;
+      if (value is double) return value.toInt();
+      if (value is String) return int.tryParse(value);
+      return null;
+    }
+
+    // Safe rating conversion (Kitsu uses 0-100 scale as string)
+    double safeRating(dynamic rating) {
+      if (rating == null) return 0.0;
+      final parsed = double.tryParse(rating.toString());
+      return parsed != null ? parsed / 10.0 : 0.0;
+    }
 
     // Parse dates
     DateTime? startDate;
     DateTime? endDate;
     try {
       if (attrs['startDate'] != null) {
-        startDate = DateTime.parse(attrs['startDate']);
+        startDate = DateTime.parse(attrs['startDate'].toString());
       }
       if (attrs['endDate'] != null) {
-        endDate = DateTime.parse(attrs['endDate']);
+        endDate = DateTime.parse(attrs['endDate'].toString());
       }
     } catch (e) {
       // Invalid dates
@@ -395,39 +754,32 @@ class KitsuExternalDataSourceImpl {
     return MediaDetailsEntity(
       id: json['id']?.toString() ?? '',
       title:
-          attrs['canonicalTitle'] ??
-          attrs['titles']?['en_jp'] ??
-          attrs['titles']?['en'] ??
+          attrs['canonicalTitle']?.toString() ??
+          titlesObj?['en_jp']?.toString() ??
+          titlesObj?['en']?.toString() ??
           '',
-      englishTitle: attrs['titles']?['en'],
-      romajiTitle: attrs['titles']?['en_jp'],
-      nativeTitle: attrs['titles']?['ja_jp'],
-      coverImage:
-          attrs['posterImage']?['large'] ??
-          attrs['posterImage']?['medium'] ??
-          '',
-      bannerImage:
-          attrs['coverImage']?['original'] ?? attrs['coverImage']?['large'],
-      description: attrs['synopsis'] ?? attrs['description'],
+      englishTitle: titlesObj?['en']?.toString(),
+      romajiTitle: titlesObj?['en_jp']?.toString(),
+      nativeTitle: titlesObj?['ja_jp']?.toString(),
+      coverImage: posterObj?['large'] ?? posterObj?['medium'] ?? '',
+      bannerImage: coverObj?['original'] ?? coverObj?['large'],
+      description:
+          attrs['synopsis']?.toString() ?? attrs['description']?.toString(),
       type: MediaType.manga,
-      status: _mapKitsuStatus(attrs['status']),
-      rating:
-          (attrs['averageRating'] != null
-              ? double.tryParse(attrs['averageRating'].toString())
-              : null) ??
-          0.0,
+      status: _mapKitsuStatus(attrs['status']?.toString()),
+      rating: safeRating(attrs['averageRating']),
       averageScore: attrs['averageRating'] != null
-          ? double.tryParse(attrs['averageRating'].toString())?.toInt()
+          ? (double.tryParse(attrs['averageRating'].toString())?.toInt())
           : null,
-      popularity: attrs['userCount'],
-      favorites: attrs['favoritesCount'],
-      genres: [],
+      popularity: safeToInt(attrs['userCount']),
+      favorites: safeToInt(attrs['favoritesCount']),
+      genres: genres ?? [],
       tags: [],
       startDate: startDate,
       endDate: endDate,
       episodes: null,
-      chapters: attrs['chapterCount'],
-      volumes: attrs['volumeCount'],
+      chapters: safeToInt(attrs['chapterCount']),
+      volumes: safeToInt(attrs['volumeCount']),
       duration: null,
       season: null,
       seasonYear: startDate?.year,

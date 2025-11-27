@@ -56,6 +56,11 @@ class SearchViewModel extends ChangeNotifier {
       return;
     }
 
+    Logger.info(
+      'Performing search: query="$_query", typeFilter=$_typeFilter, sourceFilter=$_sourceFilter',
+      tag: 'SearchViewModel',
+    );
+
     try {
       // If no type filter is set, search all types
       if (_typeFilter == null) {
@@ -63,23 +68,52 @@ class SearchViewModel extends ChangeNotifier {
 
         // Search across all media types
         for (final type in MediaType.values) {
-          final result = await searchMedia(
-            SearchMediaParams(query: _query, type: type),
+          Logger.debug(
+            'Searching type: $type with sourceId: $_sourceFilter',
+            tag: 'SearchViewModel',
           );
 
-          result.fold((failure) {
-            _error = ErrorMessageMapper.mapFailureToMessage(failure);
-            Logger.error(
-              'Failed to search for type: $type',
-              tag: 'SearchViewModel',
-              error: failure,
-            );
-          }, (results) => allResults.addAll(results));
+          final result = await searchMedia(
+            SearchMediaParams(
+              query: _query,
+              type: type,
+              sourceId: _sourceFilter, // Pass sourceId even when no type filter
+            ),
+          );
+
+          result.fold(
+            (failure) {
+              final errorMsg = ErrorMessageMapper.mapFailureToMessage(failure);
+              Logger.error(
+                'Failed to search for type: $type - $errorMsg',
+                tag: 'SearchViewModel',
+                error: failure,
+              );
+              // Don't set _error here for "all types" search, just log it
+              // Only set error if ALL types fail
+            },
+            (results) {
+              Logger.debug(
+                'Found ${results.length} results for type: $type',
+                tag: 'SearchViewModel',
+              );
+              allResults.addAll(results);
+            },
+          );
         }
 
         _searchResults = allResults;
+        Logger.info(
+          'Search completed: ${_searchResults.length} total results',
+          tag: 'SearchViewModel',
+        );
       } else {
         // Search with specific type filter
+        Logger.debug(
+          'Searching with type filter: $_typeFilter, sourceId: $_sourceFilter',
+          tag: 'SearchViewModel',
+        );
+
         final result = await searchMedia(
           SearchMediaParams(
             query: _query,
@@ -88,14 +122,25 @@ class SearchViewModel extends ChangeNotifier {
           ),
         );
 
-        result.fold((failure) {
-          _error = ErrorMessageMapper.mapFailureToMessage(failure);
-          Logger.error(
-            'Failed to search',
-            tag: 'SearchViewModel',
-            error: failure,
-          );
-        }, (results) => _searchResults = results);
+        result.fold(
+          (failure) {
+            _error = ErrorMessageMapper.mapFailureToMessage(failure);
+            Logger.error(
+              'Failed to search with type filter $_typeFilter and source $_sourceFilter: $_error',
+              tag: 'SearchViewModel',
+              error: failure,
+            );
+            _searchResults = []; // Clear results on error
+          },
+          (results) {
+            _searchResults = results;
+            _error = null; // Clear any previous errors
+            Logger.info(
+              'Search completed: ${_searchResults.length} results',
+              tag: 'SearchViewModel',
+            );
+          },
+        );
       }
     } catch (e, stackTrace) {
       _error = 'An unexpected error occurred. Please try again.';

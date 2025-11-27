@@ -5,3 +5,4 @@ export 'library_repository_impl.dart';
 export 'tracking_repository_impl.dart';
 export 'video_repository_impl.dart';
 export 'download_repository_impl.dart';
+export 'repository_repository_impl.dart';

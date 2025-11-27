@@ -1,24 +1,34 @@
 import 'package:get_it/get_it.dart';
+import 'package:get/get.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:isar_community/isar.dart';
 import 'package:dio/dio.dart';
+import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:dartotsu_extension_bridge/ExtensionManager.dart';
 import '../domain/services/offline_storage_manager.dart';
 import '../domain/services/lazy_extension_loader.dart';
 import '../services/tracking_auth_service.dart';
+import '../services/extension_discovery_service.dart';
+import '../services/permission_service.dart';
 import '../services/tmdb_service.dart';
+import '../services/cloudstream_service.dart';
+import '../services/deep_link_handler.dart';
 import '../domain/repositories/download_repository.dart';
 import '../domain/repositories/media_repository.dart';
 import '../domain/repositories/library_repository.dart';
 import '../domain/repositories/extension_repository.dart';
 import '../domain/repositories/video_repository.dart';
 import '../domain/repositories/tracking_repository.dart';
+import '../domain/repositories/repository_repository.dart';
 import '../data/repositories/download_repository_impl.dart';
 import '../data/repositories/media_repository_impl.dart';
 import '../data/repositories/library_repository_impl.dart';
 import '../data/repositories/extension_repository_impl.dart';
 import '../data/repositories/video_repository_impl.dart';
 import '../data/repositories/tracking_repository_impl.dart';
+import '../data/repositories/repository_repository_impl.dart';
 import '../data/datasources/download_local_data_source.dart';
 import '../data/datasources/media_remote_data_source.dart';
 import '../data/datasources/media_local_data_source.dart';
@@ -26,6 +36,7 @@ import '../data/datasources/library_local_data_source.dart';
 import '../data/datasources/extension_data_source.dart';
 import '../data/datasources/external_remote_data_source.dart';
 import '../data/datasources/tracking_data_source.dart';
+import '../data/datasources/repository_local_data_source.dart';
 import '../domain/usecases/get_trending_media_usecase.dart';
 import '../domain/usecases/get_popular_media_usecase.dart';
 import '../domain/usecases/get_library_items_usecase.dart';
@@ -38,12 +49,27 @@ import '../domain/usecases/get_video_sources_usecase.dart';
 import '../domain/usecases/update_progress_usecase.dart';
 import '../domain/usecases/update_library_item_usecase.dart';
 import '../domain/usecases/remove_from_library_usecase.dart';
+import '../domain/usecases/get_media_details_usecase.dart';
+import '../domain/usecases/get_episodes_usecase.dart';
+import '../domain/usecases/get_chapters_usecase.dart';
+import '../domain/usecases/add_to_library_usecase.dart';
 import '../../features/home/presentation/viewmodels/home_viewmodel.dart';
 import '../../features/home/presentation/viewmodels/browse_viewmodel.dart';
 import '../../features/search/presentation/viewmodels/search_viewmodel.dart';
 import '../../features/library/presentation/viewmodels/library_viewmodel.dart';
 import '../../features/extensions/presentation/viewmodels/extension_viewmodel.dart';
 import '../../features/settings/presentation/viewmodels/settings_viewmodel.dart';
+import '../../features/media_details/presentation/viewmodels/media_details_viewmodel.dart';
+import '../../features/media_details/presentation/viewmodels/episode_source_selection_viewmodel.dart';
+import '../domain/repositories/extension_search_repository.dart';
+import '../domain/repositories/recent_extensions_repository.dart';
+import '../data/repositories/extension_search_repository_impl.dart';
+import '../data/repositories/recent_extensions_repository_impl.dart';
+import '../utils/provider_cache.dart';
+import '../utils/cross_provider_matcher.dart';
+import '../utils/data_aggregator.dart';
+import '../utils/retry_handler.dart';
+import '../utils/provider_priority_config.dart';
 
 final sl = GetIt.instance;
 
@@ -68,11 +94,54 @@ Future<void> initializeDependencies() async {
   final settingsBox = await Hive.openBox('settings');
   sl.registerSingleton<Box>(settingsBox, instanceName: 'settingsBox');
 
+  // Register SharedPreferences
+  final sharedPreferences = await SharedPreferences.getInstance();
+  sl.registerSingleton<SharedPreferences>(sharedPreferences);
+
+  // Register and initialize ProviderCache
+  final providerCache = ProviderCache();
+  await providerCache.init();
+  sl.registerSingleton<ProviderCache>(providerCache);
+
+  // Register cross-provider aggregation utilities
+  sl.registerLazySingleton<RetryHandler>(() => RetryHandler());
+  sl.registerLazySingleton<ProviderPriorityConfig>(
+    () => ProviderPriorityConfig.defaultConfig(),
+  );
+  sl.registerLazySingleton<CrossProviderMatcher>(
+    () => CrossProviderMatcher(retryHandler: sl<RetryHandler>()),
+  );
+  sl.registerLazySingleton<DataAggregator>(
+    () => DataAggregator(
+      priorityConfig: sl<ProviderPriorityConfig>(),
+      retryHandler: sl<RetryHandler>(),
+    ),
+  );
+
   // Register LazyExtensionLoader for on-demand extension loading
   sl.registerLazySingleton<LazyExtensionLoader>(() => LazyExtensionLoader());
 
+  // Register ExtensionDiscoveryService for discovering installed extensions (Task 12)
+  sl.registerLazySingleton<ExtensionDiscoveryService>(
+    () => ExtensionDiscoveryService(lazyLoader: sl<LazyExtensionLoader>()),
+  );
+
+  // Register PermissionService for handling app permissions
+  sl.registerLazySingleton<PermissionService>(() => PermissionService());
+
   // Register TMDB Service
   sl.registerLazySingleton<TmdbService>(() => TmdbService());
+
+  // Register HTTP Client for CloudStream Service
+  // This is registered before CloudStreamService so it can be injected
+  if (!sl.isRegistered<http.Client>()) {
+    sl.registerLazySingleton<http.Client>(() => http.Client());
+  }
+
+  // Register CloudStream Service
+  sl.registerLazySingleton<CloudStreamService>(
+    () => CloudStreamService(httpClient: sl<http.Client>()),
+  );
 
   // Register Data Sources
   sl.registerLazySingleton<DownloadLocalDataSource>(
@@ -106,10 +175,7 @@ Future<void> initializeDependencies() async {
   );
 
   sl.registerLazySingleton<ExtensionDataSource>(
-    () => ExtensionDataSourceImpl(
-      extensionManager: _getExtensionManager(),
-      lazyLoader: sl<LazyExtensionLoader>(),
-    ),
+    () => ExtensionDataSourceImpl(lazyLoader: sl<LazyExtensionLoader>()),
   );
 
   sl.registerLazySingleton<TrackingDataSource>(
@@ -154,6 +220,51 @@ Future<void> initializeDependencies() async {
     () => TrackingRepositoryImpl(dataSource: sl<TrackingDataSource>()),
   );
 
+  // Register ExtensionSearchRepository for episode/chapter source selection
+  // Requirements: 3.2, 4.1
+  sl.registerLazySingleton<ExtensionSearchRepository>(
+    () => ExtensionSearchRepositoryImpl(
+      extensionDataSource: sl<ExtensionDataSource>(),
+    ),
+  );
+
+  // Register RecentExtensionsRepository for storing recently used extensions
+  // Requirements: 8.1, 8.2, 8.3
+  sl.registerLazySingleton<RecentExtensionsRepository>(
+    () => RecentExtensionsRepositoryImpl(
+      sharedPreferences: sl<SharedPreferences>(),
+    ),
+  );
+
+  // RepositoryLocalDataSource requires async initialization
+  // For now, we'll use a placeholder that will be initialized later
+  sl.registerLazySingleton<RepositoryLocalDataSource>(
+    () => throw UnimplementedError(
+      'RepositoryLocalDataSource must be initialized asynchronously. '
+      'Call initializeRepositoryDataSource() after initializeDependencies()',
+    ),
+  );
+
+  // RepositoryRepository requires RepositoryLocalDataSource
+  // Will be properly initialized after initializeRepositoryDataSource()
+  sl.registerLazySingleton<RepositoryRepository>(
+    () => RepositoryRepositoryImpl(
+      localDataSource: sl<RepositoryLocalDataSource>(),
+      httpClient: sl<http.Client>(),
+    ),
+  );
+
+  // Register DeepLinkHandler
+  // The onSaveRepository callback will be connected to the RepositoryRepository
+  sl.registerLazySingleton<DeepLinkHandler>(
+    () => DeepLinkHandler(
+      onSaveRepository: (type, config) async {
+        final repo = sl<RepositoryRepository>();
+        await repo.saveRepositoryConfig(type, config);
+      },
+    ),
+  );
+
   // Register Use Cases
   sl.registerLazySingleton<GetTrendingMediaUseCase>(
     () => GetTrendingMediaUseCase(sl<MediaRepository>()),
@@ -191,6 +302,18 @@ Future<void> initializeDependencies() async {
   sl.registerLazySingleton<RemoveFromLibraryUseCase>(
     () => RemoveFromLibraryUseCase(sl<LibraryRepository>()),
   );
+  sl.registerLazySingleton<GetMediaDetailsUseCase>(
+    () => GetMediaDetailsUseCase(sl<MediaRepository>()),
+  );
+  sl.registerLazySingleton<GetEpisodesUseCase>(
+    () => GetEpisodesUseCase(sl<MediaRepository>()),
+  );
+  sl.registerLazySingleton<GetChaptersUseCase>(
+    () => GetChaptersUseCase(sl<MediaRepository>()),
+  );
+  sl.registerLazySingleton<AddToLibraryUseCase>(
+    () => AddToLibraryUseCase(sl<LibraryRepository>()),
+  );
 
   // Register OfflineStorageManager
   sl.registerLazySingleton<OfflineStorageManager>(
@@ -227,12 +350,31 @@ Future<void> initializeDependencies() async {
       getInstalledExtensions: sl<GetInstalledExtensionsUseCase>(),
       installExtension: sl<InstallExtensionUseCase>(),
       uninstallExtension: sl<UninstallExtensionUseCase>(),
+      extensionDiscoveryService: sl<ExtensionDiscoveryService>(),
+      repositoryRepository: sl<RepositoryRepository>(),
+      permissionService: sl<PermissionService>(),
     ),
   );
   sl.registerLazySingleton<SettingsViewModel>(
     () => SettingsViewModel(
       sl<TrackingAuthService>(),
       sl<Box>(instanceName: 'settingsBox'),
+      sl<ProviderCache>(),
+    ),
+  );
+  sl.registerFactory<MediaDetailsViewModel>(
+    () => MediaDetailsViewModel(
+      getMediaDetails: sl<GetMediaDetailsUseCase>(),
+      getEpisodes: sl<GetEpisodesUseCase>(),
+      getChapters: sl<GetChaptersUseCase>(),
+      addToLibrary: sl<AddToLibraryUseCase>(),
+      mediaRepository: sl<MediaRepository>(),
+    ),
+  );
+  sl.registerFactory<EpisodeSourceSelectionViewModel>(
+    () => EpisodeSourceSelectionViewModel(
+      extensionSearchRepository: sl<ExtensionSearchRepository>(),
+      recentExtensionsRepository: sl<RecentExtensionsRepository>(),
     ),
   );
 }
@@ -257,14 +399,51 @@ Future<void> initializeLibraryDataSource() async {
   sl.registerSingleton<LibraryLocalDataSource>(dataSource);
 }
 
-/// Get ExtensionManager from GetX (if available) or return a placeholder
+/// Initialize RepositoryLocalDataSource asynchronously
+/// This is required for repository URL persistence (Requirements: 2.1, 2.2)
+Future<void> initializeRepositoryDataSource() async {
+  // Unregister the placeholder if it exists
+  if (sl.isRegistered<RepositoryLocalDataSource>()) {
+    await sl.unregister<RepositoryLocalDataSource>();
+  }
+  final dataSource = await RepositoryLocalDataSourceImpl.create();
+  sl.registerSingleton<RepositoryLocalDataSource>(dataSource);
+
+  // Re-register RepositoryRepository with the initialized data source
+  if (sl.isRegistered<RepositoryRepository>()) {
+    await sl.unregister<RepositoryRepository>();
+  }
+  sl.registerLazySingleton<RepositoryRepository>(
+    () => RepositoryRepositoryImpl(
+      localDataSource: sl<RepositoryLocalDataSource>(),
+      httpClient: sl<http.Client>(),
+    ),
+  );
+
+  // Re-register DeepLinkHandler with the updated repository
+  if (sl.isRegistered<DeepLinkHandler>()) {
+    await sl.unregister<DeepLinkHandler>();
+  }
+  sl.registerLazySingleton<DeepLinkHandler>(
+    () => DeepLinkHandler(
+      onSaveRepository: (type, config) async {
+        final repo = sl<RepositoryRepository>();
+        await repo.saveRepositoryConfig(type, config);
+      },
+    ),
+  );
+}
+
+/// Get ExtensionManager from GetX (if available) or return null
 /// This is a workaround since ExtensionManager is managed by GetX
-dynamic _getExtensionManager() {
+/// The ExtensionManager is registered by DartotsuExtensionBridge.init()
+ExtensionManager? _getExtensionManager() {
   try {
     // Try to get from GetX if available
-    // This will be called when the extension bridge is initialized
-    return null; // Placeholder - will be replaced with actual manager
+    // This will be available after DartotsuExtensionBridge.init() is called
+    return Get.find<ExtensionManager>();
   } catch (e) {
+    // ExtensionManager not yet registered - this is expected during initial setup
     return null;
   }
 }

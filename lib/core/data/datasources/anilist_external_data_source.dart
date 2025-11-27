@@ -1,5 +1,10 @@
 import 'package:dio/dio.dart';
-import '../../domain/entities/entities.dart';
+import '../../domain/entities/media_entity.dart';
+import '../../domain/entities/media_details_entity.dart' hide SearchResult;
+import '../../domain/entities/episode_entity.dart';
+import '../../domain/entities/chapter_entity.dart';
+import '../../domain/entities/search_result_entity.dart';
+import '../../domain/entities/user_entity.dart';
 import '../../error/exceptions.dart';
 import '../../utils/logger.dart';
 
@@ -30,22 +35,19 @@ class AnilistExternalDataSourceImpl {
     bool includeFull = false,
   }) async {
     try {
+      Logger.info(
+        'AniList search: query="$query", type=$type, page=$page',
+        tag: 'AniListDataSource',
+      );
+
       final String mediaType = _mapMediaTypeToAnilist(type);
 
       // Advanced GraphQL query with filtering
+      // Note: Only include parameters that are actually being used to avoid 400 errors
       final String queryBody = '''
         query (
           \$search: String,
           \$type: MediaType,
-          \$genres: [String],
-          \$year: Int,
-          \$seasonYear: Int,
-          \$season: MediaSeason,
-          \$status: MediaStatus,
-          \$format: MediaFormat,
-          \$minScore: Int,
-          \$maxScore: Int,
-          \$sort: [MediaSort],
           \$page: Int,
           \$perPage: Int
         ) {
@@ -60,14 +62,7 @@ class AnilistExternalDataSourceImpl {
             media(
               search: \$search,
               type: \$type,
-              genre_in: \$genres,
-              seasonYear: \$seasonYear,
-              season: \$season,
-              status: \$status,
-              format: \$format,
-              averageScore_greater: \$minScore,
-              averageScore_lesser: \$maxScore,
-              sort: \$sort
+              sort: [SEARCH_MATCH, POPULARITY_DESC]
             ) {
               id
               title {
@@ -127,35 +122,6 @@ class AnilistExternalDataSourceImpl {
         'perPage': perPage,
       };
 
-      // Add optional filters
-      if (genres != null && genres.isNotEmpty) {
-        variables['genres'] = genres;
-      }
-      if (year != null) {
-        variables['seasonYear'] = year;
-      }
-      if (seasonYear != null) {
-        variables['seasonYear'] = seasonYear;
-      }
-      if (season != null) {
-        variables['season'] = season.toUpperCase();
-      }
-      if (status != null) {
-        variables['status'] = status.toUpperCase();
-      }
-      if (format != null) {
-        variables['format'] = format.toUpperCase();
-      }
-      if (minScore != null && minScore > 0) {
-        variables['minScore'] = minScore;
-      }
-      if (maxScore != null && maxScore < 100) {
-        variables['maxScore'] = maxScore;
-      }
-      if (sort != null) {
-        variables['sort'] = [sort];
-      }
-
       final response = await _dio.post(
         '',
         data: {'query': queryBody, 'variables': variables},
@@ -168,6 +134,11 @@ class AnilistExternalDataSourceImpl {
           .map((m) => _mapToMediaEntity(m, type, 'anilist', 'AniList'))
           .toList();
 
+      Logger.info(
+        'AniList search completed: ${results.length} results',
+        tag: 'AniListDataSource',
+      );
+
       return SearchResult(
         items: results,
         totalCount: pageInfo?['total'] ?? 0,
@@ -175,8 +146,13 @@ class AnilistExternalDataSourceImpl {
         hasNextPage: pageInfo?['hasNextPage'] ?? false,
         perPage: perPage,
       );
-    } catch (e) {
-      Logger.error('AniList advanced search failed', error: e);
+    } catch (e, stackTrace) {
+      Logger.error(
+        'AniList advanced search failed',
+        tag: 'AniListDataSource',
+        error: e,
+        stackTrace: stackTrace,
+      );
       throw ServerException('Failed to search AniList: $e');
     }
   }
@@ -529,22 +505,37 @@ class AnilistExternalDataSourceImpl {
     String sourceId,
     String sourceName,
   ) {
-    // Choose title: english > romaji > native
+    // Choose title: english > romaji > native (with null safety)
+    final titleObj = json['title'] as Map<String, dynamic>?;
     String title =
-        json['title']['english'] ??
-        json['title']['romaji'] ??
-        json['title']['native'] ??
+        titleObj?['english'] ??
+        titleObj?['romaji'] ??
+        titleObj?['native'] ??
         '';
+
+    // Safe cover image extraction
+    final coverImageObj = json['coverImage'] as Map<String, dynamic>?;
+    String? coverImage =
+        coverImageObj?['extraLarge'] ??
+        coverImageObj?['large'] ??
+        coverImageObj?['medium'];
+
+    // Safe rating conversion
+    double safeRating(dynamic score) {
+      if (score == null) return 0.0;
+      if (score is int) return score / 10.0;
+      if (score is double) return score / 10.0;
+      return 0.0;
+    }
 
     return MediaEntity(
       id: json['id'].toString(),
       title: title,
-      coverImage:
-          json['coverImage']['extraLarge'] ?? json['coverImage']['large'],
+      coverImage: coverImage,
       bannerImage: json['bannerImage'],
       description: _cleanDescription(json['description']),
       type: type,
-      rating: (json['meanScore'] ?? 0) / 10.0, // AniList uses 0-100 scale
+      rating: safeRating(json['meanScore']), // AniList uses 0-100 scale
       genres: List<String>.from(json['genres'] ?? []),
       status: _mapAnilistStatus(json['status']),
       totalEpisodes: json['episodes'],
@@ -580,193 +571,273 @@ class AnilistExternalDataSourceImpl {
     Map<String, dynamic> json,
     MediaType type,
   ) {
-    // Parse dates
+    // Safe type conversion helper
+    int? safeToInt(dynamic value) {
+      if (value == null) return null;
+      if (value is int) return value;
+      if (value is double) return value.toInt();
+      if (value is String) return int.tryParse(value);
+      return null;
+    }
+
+    // Parse dates safely
     DateTime? startDate;
     DateTime? endDate;
-    if (json['startDate'] != null) {
+    final startDateObj = json['startDate'] as Map<String, dynamic>?;
+    final endDateObj = json['endDate'] as Map<String, dynamic>?;
+
+    if (startDateObj != null && startDateObj['year'] != null) {
       try {
-        startDate = DateTime(
-          json['startDate']['year'] ?? 0,
-          json['startDate']['month'] ?? 1,
-          json['startDate']['day'] ?? 1,
-        );
+        final year = safeToInt(startDateObj['year']);
+        if (year != null && year > 0) {
+          startDate = DateTime(
+            year,
+            safeToInt(startDateObj['month']) ?? 1,
+            safeToInt(startDateObj['day']) ?? 1,
+          );
+        }
       } catch (e) {
         // Invalid date, leave as null
       }
     }
-    if (json['endDate'] != null) {
+    if (endDateObj != null && endDateObj['year'] != null) {
       try {
-        endDate = DateTime(
-          json['endDate']['year'] ?? 0,
-          json['endDate']['month'] ?? 1,
-          json['endDate']['day'] ?? 1,
-        );
+        final year = safeToInt(endDateObj['year']);
+        if (year != null && year > 0) {
+          endDate = DateTime(
+            year,
+            safeToInt(endDateObj['month']) ?? 1,
+            safeToInt(endDateObj['day']) ?? 1,
+          );
+        }
       } catch (e) {
         // Invalid date, leave as null
       }
     }
 
-    // Choose title
+    // Choose title safely
+    final titleObj = json['title'] as Map<String, dynamic>?;
     String title =
-        json['title']['english'] ??
-        json['title']['romaji'] ??
-        json['title']['native'] ??
+        titleObj?['english'] ??
+        titleObj?['romaji'] ??
+        titleObj?['native'] ??
         '';
 
-    // Parse tags
+    // Parse tags safely
     final tags = json['tags'] != null
-        ? List<String>.from((json['tags'] as List).map((tag) => tag['name']))
+        ? List<String>.from(
+            (json['tags'] as List).map(
+              (tag) => (tag as Map<String, dynamic>)['name']?.toString() ?? '',
+            ),
+          )
         : <String>[];
 
-    // Parse characters
-    final characters = json['characters'] != null
-        ? (json['characters']['edges'] as List?)?.map((edge) {
-            final node = edge['node'] as Map<String, dynamic>;
-            return CharacterEntity(
-              id: node['id'].toString(),
-              name: node['name']['full'] ?? node['name']['native'] ?? '',
-              nativeName: node['name']['native'],
-              image: node['image']['large'] ?? node['image']['medium'],
-              role: edge['role'] ?? 'Unknown',
-            );
-          }).toList()
-        : null;
+    // Parse characters safely
+    List<CharacterEntity>? characters;
+    if (json['characters'] != null) {
+      final edges =
+          (json['characters'] as Map<String, dynamic>)['edges'] as List?;
+      if (edges != null) {
+        characters = edges.map((edge) {
+          final edgeMap = edge as Map<String, dynamic>;
+          final node = edgeMap['node'] as Map<String, dynamic>?;
+          final nameObj = node?['name'] as Map<String, dynamic>?;
+          final imageObj = node?['image'] as Map<String, dynamic>?;
+          return CharacterEntity(
+            id: node?['id']?.toString() ?? '',
+            name: nameObj?['full'] ?? nameObj?['native'] ?? '',
+            nativeName: nameObj?['native'],
+            image: imageObj?['large'] ?? imageObj?['medium'],
+            role: edgeMap['role']?.toString() ?? 'Unknown',
+          );
+        }).toList();
+      }
+    }
 
-    // Parse staff
-    final staff = json['staff'] != null
-        ? (json['staff']['edges'] as List?)?.map((edge) {
-            final node = edge['node'] as Map<String, dynamic>;
-            return StaffEntity(
-              id: node['id'].toString(),
-              name: node['name']['full'] ?? node['name']['native'] ?? '',
-              nativeName: node['name']['native'],
-              image: node['image']['large'] ?? node['image']['medium'],
-              role: edge['role'] ?? 'Unknown',
-            );
-          }).toList()
-        : null;
+    // Parse staff safely
+    List<StaffEntity>? staff;
+    if (json['staff'] != null) {
+      final edges = (json['staff'] as Map<String, dynamic>)['edges'] as List?;
+      if (edges != null) {
+        staff = edges.map((edge) {
+          final edgeMap = edge as Map<String, dynamic>;
+          final node = edgeMap['node'] as Map<String, dynamic>?;
+          final nameObj = node?['name'] as Map<String, dynamic>?;
+          final imageObj = node?['image'] as Map<String, dynamic>?;
+          return StaffEntity(
+            id: node?['id']?.toString() ?? '',
+            name: nameObj?['full'] ?? nameObj?['native'] ?? '',
+            nativeName: nameObj?['native'],
+            image: imageObj?['large'] ?? imageObj?['medium'],
+            role: edgeMap['role']?.toString() ?? 'Unknown',
+          );
+        }).toList();
+      }
+    }
 
-    // Parse reviews
-    final reviews = json['reviews'] != null
-        ? (json['reviews']['nodes'] as List?)?.map((node) {
-            final user = node['user'] as Map<String, dynamic>?;
-            return ReviewEntity(
-              id: node['id'].toString(),
-              score: node['score'] ?? 0,
-              summary: node['summary'],
-              body: node['body'],
-              user: user != null
-                  ? UserEntity(
-                      id: user['id'].toString(),
-                      username: user['name'] ?? '',
-                      avatarUrl: user['avatar']['medium'],
-                      service: TrackingService.anilist,
-                    )
-                  : null,
-            );
-          }).toList()
-        : null;
+    // Parse reviews safely
+    List<ReviewEntity>? reviews;
+    if (json['reviews'] != null) {
+      final nodes = (json['reviews'] as Map<String, dynamic>)['nodes'] as List?;
+      if (nodes != null) {
+        reviews = nodes.map((node) {
+          final nodeMap = node as Map<String, dynamic>;
+          final user = nodeMap['user'] as Map<String, dynamic>?;
+          final avatarObj = user?['avatar'] as Map<String, dynamic>?;
+          return ReviewEntity(
+            id: nodeMap['id']?.toString() ?? '',
+            score: safeToInt(nodeMap['score']) ?? 0,
+            summary: nodeMap['summary']?.toString(),
+            body: nodeMap['body']?.toString(),
+            user: user != null
+                ? UserEntity(
+                    id: user['id']?.toString() ?? '',
+                    username: user['name']?.toString() ?? '',
+                    avatarUrl: avatarObj?['medium'],
+                    service: TrackingService.anilist,
+                  )
+                : null,
+          );
+        }).toList();
+      }
+    }
 
-    // Parse recommendations
-    final recommendations = json['recommendations'] != null
-        ? (json['recommendations']['nodes'] as List?)?.map((node) {
-            final mediaNode =
-                node['mediaRecommendation'] as Map<String, dynamic>;
-            return RecommendationEntity(
-              id: mediaNode['id'].toString(),
-              title:
-                  mediaNode['title']['english'] ??
-                  mediaNode['title']['romaji'] ??
-                  '',
-              englishTitle: mediaNode['title']['english'],
-              romajiTitle: mediaNode['title']['romaji'],
-              coverImage: mediaNode['coverImage']['large'] ?? '',
-              rating: node['rating'] ?? 0,
-            );
-          }).toList()
-        : null;
+    // Parse recommendations safely
+    List<RecommendationEntity>? recommendations;
+    if (json['recommendations'] != null) {
+      final nodes =
+          (json['recommendations'] as Map<String, dynamic>)['nodes'] as List?;
+      if (nodes != null) {
+        recommendations = nodes
+            .where((node) {
+              final nodeMap = node as Map<String, dynamic>;
+              return nodeMap['mediaRecommendation'] != null;
+            })
+            .map((node) {
+              final nodeMap = node as Map<String, dynamic>;
+              final mediaNode =
+                  nodeMap['mediaRecommendation'] as Map<String, dynamic>;
+              final mediaTitleObj = mediaNode['title'] as Map<String, dynamic>?;
+              final coverObj = mediaNode['coverImage'] as Map<String, dynamic>?;
+              return RecommendationEntity(
+                id: mediaNode['id']?.toString() ?? '',
+                title:
+                    mediaTitleObj?['english'] ?? mediaTitleObj?['romaji'] ?? '',
+                englishTitle: mediaTitleObj?['english'],
+                romajiTitle: mediaTitleObj?['romaji'],
+                coverImage: coverObj?['large'] ?? '',
+                rating: safeToInt(nodeMap['rating']) ?? 0,
+              );
+            })
+            .toList();
+      }
+    }
 
-    // Parse relations
-    final relations = json['relations'] != null
-        ? (json['relations']['edges'] as List?)?.map((edge) {
-            final node = edge['node'] as Map<String, dynamic>;
-            return MediaRelationEntity(
-              relationType: edge['relationType'] ?? '',
-              id: node['id'].toString(),
-              title: node['title']['english'] ?? node['title']['romaji'] ?? '',
-              englishTitle: node['title']['english'],
-              romajiTitle: node['title']['romaji'],
-              type: _mapAnilistTypeToMediaType(node['type']),
-            );
-          }).toList()
-        : null;
+    // Parse relations safely
+    List<MediaRelationEntity>? relations;
+    if (json['relations'] != null) {
+      final edges =
+          (json['relations'] as Map<String, dynamic>)['edges'] as List?;
+      if (edges != null) {
+        relations = edges.map((edge) {
+          final edgeMap = edge as Map<String, dynamic>;
+          final node = edgeMap['node'] as Map<String, dynamic>?;
+          final nodeTitleObj = node?['title'] as Map<String, dynamic>?;
+          return MediaRelationEntity(
+            relationType: edgeMap['relationType']?.toString() ?? '',
+            id: node?['id']?.toString() ?? '',
+            title: nodeTitleObj?['english'] ?? nodeTitleObj?['romaji'] ?? '',
+            englishTitle: nodeTitleObj?['english'],
+            romajiTitle: nodeTitleObj?['romaji'],
+            type: _mapAnilistTypeToMediaType(node?['type']?.toString()),
+          );
+        }).toList();
+      }
+    }
 
-    // Parse studios
-    final studios = json['studios'] != null
-        ? (json['studios']['edges'] as List?)?.map((edge) {
-            final node = edge['node'] as Map<String, dynamic>;
-            return StudioEntity(
-              id: node['id'].toString(),
-              name: node['name'] ?? '',
-              isMain: true,
-              isAnimationStudio: node['isAnimationStudio'] ?? false,
-            );
-          }).toList()
-        : null;
+    // Parse studios safely
+    List<StudioEntity>? studios;
+    if (json['studios'] != null) {
+      final edges = (json['studios'] as Map<String, dynamic>)['edges'] as List?;
+      if (edges != null) {
+        studios = edges.map((edge) {
+          final edgeMap = edge as Map<String, dynamic>;
+          final node = edgeMap['node'] as Map<String, dynamic>?;
+          return StudioEntity(
+            id: node?['id']?.toString() ?? '',
+            name: node?['name']?.toString() ?? '',
+            isMain: true,
+            isAnimationStudio: node?['isAnimationStudio'] == true,
+          );
+        }).toList();
+      }
+    }
 
-    // Parse rankings
-    final rankings = json['rankings'] != null
-        ? (json['rankings'] as List?)?.map((ranking) {
-            return RankingEntity(
-              rank: ranking['rank'] ?? 0,
-              type: ranking['type'] ?? '',
-              year: ranking['year'],
-              season: ranking['season'],
-            );
-          }).toList()
-        : null;
+    // Parse rankings safely
+    List<RankingEntity>? rankings;
+    if (json['rankings'] != null) {
+      final rankingsList = json['rankings'] as List?;
+      if (rankingsList != null) {
+        rankings = rankingsList.map((ranking) {
+          final rankingMap = ranking as Map<String, dynamic>;
+          return RankingEntity(
+            rank: safeToInt(rankingMap['rank']) ?? 0,
+            type: rankingMap['type']?.toString() ?? '',
+            year: safeToInt(rankingMap['year']),
+            season: rankingMap['season']?.toString(),
+          );
+        }).toList();
+      }
+    }
 
-    // Parse trailer
+    // Parse trailer safely
     TrailerEntity? trailer;
-    if (json['trailer'] != null) {
+    final trailerObj = json['trailer'] as Map<String, dynamic>?;
+    if (trailerObj != null && trailerObj['id'] != null) {
       trailer = TrailerEntity(
-        id: json['trailer']['id'] ?? '',
-        site: json['trailer']['site'] ?? '',
+        id: trailerObj['id']?.toString() ?? '',
+        site: trailerObj['site']?.toString() ?? '',
       );
     }
+
+    // Safe cover image extraction
+    final coverImageObj = json['coverImage'] as Map<String, dynamic>?;
+    String coverImage =
+        coverImageObj?['extraLarge'] ??
+        coverImageObj?['large'] ??
+        coverImageObj?['medium'] ??
+        '';
 
     return MediaDetailsEntity(
       id: json['id'].toString(),
       title: title,
-      englishTitle: json['title']['english'],
-      romajiTitle: json['title']['romaji'],
-      nativeTitle: json['title']['native'],
-      coverImage:
-          json['coverImage']['extraLarge'] ??
-          json['coverImage']['large'] ??
-          json['coverImage']['medium'] ??
-          '',
+      englishTitle: titleObj?['english'],
+      romajiTitle: titleObj?['romaji'],
+      nativeTitle: titleObj?['native'],
+      coverImage: coverImage,
       bannerImage: json['bannerImage'],
       description: _cleanDescription(json['description']),
       type: type,
       status: _mapAnilistStatus(json['status']),
-      rating: json['meanScore'] != null ? json['meanScore'] / 10.0 : null,
-      averageScore: json['averageScore'],
-      meanScore: json['meanScore'],
-      popularity: json['popularity'],
-      favorites: json['favourites'],
+      rating: json['meanScore'] != null
+          ? (json['meanScore'] as num) / 10.0
+          : null,
+      averageScore: safeToInt(json['averageScore']),
+      meanScore: safeToInt(json['meanScore']),
+      popularity: safeToInt(json['popularity']),
+      favorites: safeToInt(json['favourites']),
       genres: List<String>.from(json['genres'] ?? []),
       tags: tags,
       startDate: startDate,
       endDate: endDate,
-      episodes: json['episodes'],
-      chapters: json['chapters'],
-      volumes: json['volumes'],
-      duration: json['duration'],
-      season: json['season'],
-      seasonYear: json['seasonYear'],
-      isAdult: json['isAdult'] ?? false,
-      siteUrl: json['siteUrl'],
+      episodes: safeToInt(json['episodes']),
+      chapters: safeToInt(json['chapters']),
+      volumes: safeToInt(json['volumes']),
+      duration: safeToInt(json['duration']),
+      season: json['season']?.toString(),
+      seasonYear: safeToInt(json['seasonYear']),
+      isAdult: json['isAdult'] == true,
+      siteUrl: json['siteUrl']?.toString(),
       sourceId: 'anilist',
       sourceName: 'AniList',
       characters: characters,
@@ -834,6 +905,62 @@ class AnilistExternalDataSourceImpl {
       }).toList();
     } catch (e) {
       Logger.error('AniList get episodes failed', error: e);
+      return [];
+    }
+  }
+
+  /// Get chapters for a manga
+  /// Note: AniList doesn't provide chapter-level data via API.
+  /// We generate placeholder chapters based on the manga's chapter count.
+  Future<List<ChapterEntity>> getChapters(String id) async {
+    try {
+      final queryBody = '''
+        query (\$id: Int) {
+          Media(id: \$id, type: MANGA) {
+            chapters
+            title {
+              romaji
+              english
+            }
+          }
+        }
+      ''';
+
+      final response = await _dio.post(
+        '',
+        data: {
+          'query': queryBody,
+          'variables': {'id': int.parse(id)},
+        },
+      );
+
+      final media = response.data['data']['Media'];
+      final totalChapters = media['chapters'] as int?;
+
+      if (totalChapters == null || totalChapters <= 0) {
+        Logger.info('AniList manga $id has no chapter count');
+        return [];
+      }
+
+      Logger.info(
+        'AniList generating $totalChapters placeholder chapters for manga $id',
+      );
+
+      // Generate placeholder chapters
+      return List.generate(totalChapters, (index) {
+        final chapterNum = index + 1;
+        return ChapterEntity(
+          id: 'anilist_chapter_${id}_$chapterNum',
+          mediaId: id,
+          number: chapterNum.toDouble(),
+          title: 'Chapter $chapterNum',
+          releaseDate: null,
+          pageCount: null,
+          sourceProvider: 'anilist',
+        );
+      });
+    } catch (e) {
+      Logger.error('AniList get chapters failed', error: e);
       return [];
     }
   }

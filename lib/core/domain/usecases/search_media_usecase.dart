@@ -63,9 +63,9 @@ class SearchMediaParamsAdvanced extends SearchMediaParams {
   final String? sort;
 
   SearchMediaParamsAdvanced({
-    required String query,
-    required MediaType type,
-    required String sourceId,
+    required super.query,
+    required super.type,
+    required String super.sourceId,
     this.genres,
     this.year,
     this.season,
@@ -74,5 +74,5 @@ class SearchMediaParamsAdvanced extends SearchMediaParams {
     this.minScore,
     this.maxScore,
     this.sort,
-  }) : super(query: query, type: type, sourceId: sourceId);
+  });
 }

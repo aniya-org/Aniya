@@ -1,5 +1,10 @@
 import 'package:dio/dio.dart';
-import '../../domain/entities/entities.dart';
+import '../../domain/entities/media_entity.dart';
+import '../../domain/entities/media_details_entity.dart' hide SearchResult;
+import '../../domain/entities/episode_entity.dart';
+import '../../domain/entities/chapter_entity.dart';
+import '../../domain/entities/search_result_entity.dart';
+import '../../domain/entities/user_entity.dart';
 import '../../error/exceptions.dart';
 import '../../utils/logger.dart';
 
@@ -25,9 +30,20 @@ class JikanExternalDataSourceImpl {
     String? sort = 'desc',
     int page = 1,
     int perPage = 25,
+    int? year,
+    String? season,
   }) async {
     try {
+      Logger.info(
+        'Jikan search: query="$query", type=$type, page=$page',
+        tag: 'JikanDataSource',
+      );
+
       if (type != MediaType.anime && type != MediaType.manga) {
+        Logger.debug(
+          'Jikan does not support type: $type',
+          tag: 'JikanDataSource',
+        );
         return SearchResult<List<MediaEntity>>(
           items: [],
           totalCount: 0,
@@ -79,19 +95,66 @@ class JikanExternalDataSourceImpl {
         queryParams['sort'] = sort;
       }
 
+      final fullUrl = '${_dio.options.baseUrl}/$endpoint';
+      Logger.debug(
+        'Jikan API call: GET $fullUrl with params: $queryParams',
+        tag: 'JikanDataSource',
+      );
+
       final response = await _dio.get(
         '/$endpoint',
         queryParameters: queryParams,
       );
 
-      final List mediaList = response.data['data'] ?? [];
-      final pagination = response.data['pagination'] ?? {};
+      Logger.debug(
+        'Jikan API response status: ${response.statusCode}, data type: ${response.data.runtimeType}',
+        tag: 'JikanDataSource',
+      );
+
+      if (response.data == null) {
+        Logger.warning('Jikan API returned null data', tag: 'JikanDataSource');
+        return SearchResult<List<MediaEntity>>(
+          items: [],
+          totalCount: 0,
+          currentPage: page,
+          hasNextPage: false,
+          perPage: perPage,
+        );
+      }
+
+      final responseData = response.data as Map<String, dynamic>?;
+      if (responseData == null) {
+        Logger.warning(
+          'Jikan API response.data is not a Map',
+          tag: 'JikanDataSource',
+        );
+        return SearchResult<List<MediaEntity>>(
+          items: [],
+          totalCount: 0,
+          currentPage: page,
+          hasNextPage: false,
+          perPage: perPage,
+        );
+      }
+
+      final List mediaList = responseData['data'] ?? [];
+      final pagination = responseData['pagination'] ?? {};
+
+      Logger.debug(
+        'Jikan raw data count: ${mediaList.length}, pagination: $pagination',
+        tag: 'JikanDataSource',
+      );
 
       final results = mediaList.map((item) {
         return type == MediaType.anime
             ? _mapAnimeToMediaEntity(item)
             : _mapMangaToMediaEntity(item);
       }).toList();
+
+      Logger.info(
+        'Jikan search completed: ${results.length} results',
+        tag: 'JikanDataSource',
+      );
 
       return SearchResult<List<MediaEntity>>(
         items: results,
@@ -100,8 +163,13 @@ class JikanExternalDataSourceImpl {
         hasNextPage: pagination?['has_next_page'] ?? false,
         perPage: perPage,
       );
-    } catch (e) {
-      Logger.error('Jikan advanced search failed', error: e);
+    } catch (e, stackTrace) {
+      Logger.error(
+        'Jikan advanced search failed',
+        tag: 'JikanDataSource',
+        error: e,
+        stackTrace: stackTrace,
+      );
       throw ServerException('Failed to search Jikan: $e');
     }
   }
@@ -131,7 +199,9 @@ class JikanExternalDataSourceImpl {
         try {
           final charsResponse = await _dio.get('/$endpoint/$id/characters');
           final charsList = charsResponse.data['data'] ?? [];
-          characters = charsList.take(10).map((char) {
+          characters = (charsList as List).take(10).map<CharacterEntity>((
+            char,
+          ) {
             return CharacterEntity(
               id: char['character']?['mal_id'].toString() ?? '',
               name: char['character']?['name'] ?? '',
@@ -149,10 +219,12 @@ class JikanExternalDataSourceImpl {
         try {
           final reviewsResponse = await _dio.get('/$endpoint/$id/reviews');
           final reviewsList = reviewsResponse.data['data'] ?? [];
-          reviews = reviewsList.take(5).map((review) {
+          reviews = (reviewsList as List).take(5).map<ReviewEntity>((review) {
             return ReviewEntity(
               id: review['mal_id'].toString(),
-              score: review['score'] ?? 0,
+              score: (review['score'] ?? 0) is double
+                  ? (review['score'] as double).toInt()
+                  : review['score'] ?? 0,
               summary: null,
               body: review['review'],
               user: UserEntity(
@@ -172,7 +244,9 @@ class JikanExternalDataSourceImpl {
       try {
         final recResponse = await _dio.get('/$endpoint/$id/recommendations');
         final recList = recResponse.data['data'] ?? [];
-        recommendations = recList.take(10).map((rec) {
+        recommendations = (recList as List).take(10).map<RecommendationEntity>((
+          rec,
+        ) {
           final entry = rec['entry'];
           return RecommendationEntity(
             id: entry['mal_id'].toString(),
@@ -464,6 +538,15 @@ class JikanExternalDataSourceImpl {
       // Invalid dates
     }
 
+    // Safe type conversion for numeric fields
+    int? safeToInt(dynamic value) {
+      if (value == null) return null;
+      if (value is int) return value;
+      if (value is double) return value.toInt();
+      if (value is String) return int.tryParse(value);
+      return null;
+    }
+
     // Parse producers as studios
     final studios = anime['producers'] != null
         ? (anime['producers'] as List).map((producer) {
@@ -475,6 +558,24 @@ class JikanExternalDataSourceImpl {
             );
           }).toList()
         : null;
+
+    // Parse duration - handle various formats like "24 min per ep", "1 hr 30 min"
+    int? parseDuration(String? durationStr) {
+      if (durationStr == null) return null;
+      final parts = durationStr.toLowerCase().split(' ');
+      int totalMinutes = 0;
+      for (int i = 0; i < parts.length - 1; i++) {
+        final num = int.tryParse(parts[i]);
+        if (num != null) {
+          if (parts[i + 1].startsWith('hr')) {
+            totalMinutes += num * 60;
+          } else if (parts[i + 1].startsWith('min')) {
+            totalMinutes += num;
+          }
+        }
+      }
+      return totalMinutes > 0 ? totalMinutes : int.tryParse(parts[0]);
+    }
 
     return MediaDetailsEntity(
       id: anime['mal_id'].toString(),
@@ -491,21 +592,19 @@ class JikanExternalDataSourceImpl {
       type: MediaType.anime,
       status: _mapJikanStatus(anime['status']),
       rating: (anime['score'] ?? 0).toDouble(),
-      averageScore: anime['score'],
-      popularity: anime['members'],
-      favorites: anime['favorites'],
+      averageScore: safeToInt(anime['score']),
+      popularity: safeToInt(anime['members']),
+      favorites: safeToInt(anime['favorites']),
       genres: List<String>.from(anime['genres']?.map((g) => g['name']) ?? []),
       tags: [],
       startDate: startDate,
       endDate: endDate,
-      episodes: anime['episodes'],
+      episodes: safeToInt(anime['episodes']),
       chapters: null,
       volumes: null,
-      duration: anime['duration'] != null
-          ? int.tryParse(anime['duration'].split(' ')[0])
-          : null,
+      duration: parseDuration(anime['duration']),
       season: anime['season'],
-      seasonYear: anime['year'],
+      seasonYear: safeToInt(anime['year']),
       isAdult: anime['rating'] == 'Rx',
       siteUrl: anime['url'],
       sourceId: 'jikan',
@@ -545,6 +644,15 @@ class JikanExternalDataSourceImpl {
       // Invalid dates
     }
 
+    // Safe type conversion for numeric fields
+    int? safeToInt(dynamic value) {
+      if (value == null) return null;
+      if (value is int) return value;
+      if (value is double) return value.toInt();
+      if (value is String) return int.tryParse(value);
+      return null;
+    }
+
     return MediaDetailsEntity(
       id: manga['mal_id'].toString(),
       title: manga['title'] ?? '',
@@ -560,19 +668,19 @@ class JikanExternalDataSourceImpl {
       type: MediaType.manga,
       status: _mapJikanStatus(manga['status']),
       rating: (manga['score'] ?? 0).toDouble(),
-      averageScore: manga['score'],
-      popularity: manga['members'],
-      favorites: manga['favorites'],
+      averageScore: safeToInt(manga['score']),
+      popularity: safeToInt(manga['members']),
+      favorites: safeToInt(manga['favorites']),
       genres: List<String>.from(manga['genres']?.map((g) => g['name']) ?? []),
       tags: [],
       startDate: startDate,
       endDate: endDate,
       episodes: null,
-      chapters: manga['chapters'],
-      volumes: manga['volumes'],
+      chapters: safeToInt(manga['chapters']),
+      volumes: safeToInt(manga['volumes']),
       duration: null,
       season: null,
-      seasonYear: manga['year'],
+      seasonYear: safeToInt(manga['year']),
       isAdult: false, // Jikan doesn't provide NSFW for manga easily
       siteUrl: manga['url'],
       sourceId: 'jikan',
@@ -605,28 +713,160 @@ class JikanExternalDataSourceImpl {
     }
   }
 
-  Future<List<EpisodeEntity>> getEpisodes(String id) async {
+  Future<List<EpisodeEntity>> getEpisodes(
+    String id, {
+    String? coverImage,
+  }) async {
     try {
-      final response = await _dio.get('/anime/$id/episodes');
-      final List episodesList = response.data['data'] ?? [];
-      // final pagination = response.data['pagination']; // Unused
+      // Try to get episode images from the videos/episodes endpoint
+      Map<int, String> episodeImages = {};
+      String? animeCoverImage = coverImage;
 
-      return episodesList.map((ep) {
+      // Only fetch anime cover if not provided (to avoid rate limiting)
+      if (animeCoverImage == null) {
+        try {
+          final animeResponse = await _dio.get('/anime/$id');
+          final animeData = animeResponse.data['data'];
+          animeCoverImage =
+              animeData?['images']?['jpg']?['large_image_url'] ??
+              animeData?['images']?['jpg']?['image_url'];
+          Logger.info('Jikan anime cover for fallback: $animeCoverImage');
+          // Add delay after fetching cover to avoid rate limiting
+          await Future.delayed(const Duration(milliseconds: 400));
+        } catch (e) {
+          Logger.warning('Could not fetch anime cover for fallback: $e');
+        }
+      } else {
+        Logger.info(
+          'Jikan using provided cover image for fallback: $animeCoverImage',
+        );
+      }
+
+      // Get basic episode info
+      List episodesList = [];
+      try {
+        final response = await _dio.get('/anime/$id/episodes');
+        episodesList = response.data['data'] ?? [];
+      } catch (e) {
+        Logger.warning('Jikan episodes endpoint failed for anime $id: $e');
+        // Return empty list - other providers may have episodes
+        return [];
+      }
+
+      // Add delay before videos/episodes call to avoid rate limiting
+      await Future.delayed(const Duration(milliseconds: 400));
+      try {
+        final videosResponse = await _dio.get('/anime/$id/videos/episodes');
+        final List videoEpisodes = videosResponse.data['data'] ?? [];
+        Logger.info(
+          'Jikan videos/episodes returned ${videoEpisodes.length} episodes for anime $id',
+        );
+
+        // Log the first episode structure for debugging
+        if (videoEpisodes.isNotEmpty) {
+          Logger.debug(
+            'Jikan episode structure sample: ${videoEpisodes.first}',
+          );
+        }
+
+        for (final ep in videoEpisodes) {
+          final epNum = ep['mal_id'];
+          final images = ep['images'];
+          if (epNum != null && images != null) {
+            // Try different image paths
+            final imageUrl =
+                images['jpg']?['image_url'] ??
+                images['webp']?['image_url'] ??
+                images['webp']?['small_image_url'];
+            if (imageUrl != null) {
+              final epNumInt = epNum is int
+                  ? epNum
+                  : int.tryParse(epNum.toString()) ?? 0;
+              episodeImages[epNumInt] = imageUrl;
+              Logger.debug('Jikan episode $epNumInt has image: $imageUrl');
+            }
+          }
+        }
+        Logger.info(
+          'Jikan found ${episodeImages.length} episode images for anime $id',
+        );
+      } catch (e) {
+        // Videos endpoint might not be available for all anime
+        Logger.info('No episode images available for anime $id: $e');
+      }
+
+      final episodes = episodesList.map((ep) {
+        final epNumber = ep['mal_id'] is int
+            ? ep['mal_id']
+            : int.tryParse(ep['mal_id'].toString()) ?? 0;
+        // Use episode-specific image if available, otherwise fall back to anime cover
+        final thumbnail = episodeImages[epNumber] ?? animeCoverImage;
         return EpisodeEntity(
           id: ep['mal_id'].toString(),
           mediaId: id,
-          number: ep['mal_id'] is int
-              ? ep['mal_id']
-              : int.tryParse(ep['mal_id'].toString()) ?? 0,
-          title: ep['title'] ?? 'Episode ${ep['mal_id']}',
-          thumbnail: null,
+          number: epNumber,
+          title: ep['title'] ?? 'Episode $epNumber',
+          thumbnail: thumbnail,
           releaseDate: ep['aired'] != null
               ? DateTime.tryParse(ep['aired'])
               : null,
         );
       }).toList();
+
+      // Log thumbnail assignment summary
+      final episodesWithThumbnails = episodes
+          .where((e) => e.thumbnail != null && e.thumbnail!.isNotEmpty)
+          .length;
+      Logger.info(
+        'Jikan returning ${episodes.length} episodes, $episodesWithThumbnails with thumbnails (fallback cover: ${animeCoverImage != null})',
+      );
+      if (episodes.isNotEmpty && episodes.first.thumbnail != null) {
+        Logger.debug(
+          'Jikan first episode thumbnail: ${episodes.first.thumbnail}',
+        );
+      }
+
+      return episodes;
     } catch (e) {
       Logger.error('Jikan get episodes failed', error: e);
+      return [];
+    }
+  }
+
+  /// Get chapters for a manga
+  /// Note: MAL/Jikan doesn't provide chapter-level data via API.
+  /// We generate placeholder chapters based on the manga's chapter count.
+  Future<List<ChapterEntity>> getChapters(String id) async {
+    try {
+      // Fetch manga details to get chapter count
+      final response = await _dio.get('/manga/$id');
+      final manga = response.data['data'];
+      final totalChapters = manga['chapters'] as int?;
+
+      if (totalChapters == null || totalChapters <= 0) {
+        Logger.info('Jikan manga $id has no chapter count');
+        return [];
+      }
+
+      Logger.info(
+        'Jikan generating $totalChapters placeholder chapters for manga $id',
+      );
+
+      // Generate placeholder chapters
+      return List.generate(totalChapters, (index) {
+        final chapterNum = index + 1;
+        return ChapterEntity(
+          id: 'jikan_chapter_${id}_$chapterNum',
+          mediaId: id,
+          number: chapterNum.toDouble(),
+          title: 'Chapter $chapterNum',
+          releaseDate: null,
+          pageCount: null,
+          sourceProvider: 'jikan',
+        );
+      });
+    } catch (e) {
+      Logger.error('Jikan get chapters failed', error: e);
       return [];
     }
   }

@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:aniya/core/domain/entities/entities.dart';
+import 'package:aniya/core/enums/tracking_service.dart' as ts;
 
 void main() {
   group('Domain Entities', () {
@@ -61,6 +62,56 @@ void main() {
         expect(episode.title, 'Episode 1');
         expect(episode.number, 1);
       });
+
+      test('should create EpisodeEntity with sourceProvider', () {
+        final episode = EpisodeEntity(
+          id: 'ep1',
+          mediaId: 'media1',
+          title: 'Episode 1',
+          number: 1,
+          sourceProvider: 'kitsu',
+        );
+
+        expect(episode.sourceProvider, 'kitsu');
+      });
+
+      test('should create EpisodeEntity with alternativeData', () {
+        final alternativeData = {
+          'anilist': EpisodeData(
+            title: 'Alternative Title',
+            thumbnail: 'https://example.com/thumb.jpg',
+          ),
+        };
+
+        final episode = EpisodeEntity(
+          id: 'ep1',
+          mediaId: 'media1',
+          title: 'Episode 1',
+          number: 1,
+          alternativeData: alternativeData,
+        );
+
+        expect(episode.alternativeData, isNotNull);
+        expect(episode.alternativeData!['anilist']?.title, 'Alternative Title');
+      });
+
+      test('copyWith should update fields correctly', () {
+        final episode = EpisodeEntity(
+          id: 'ep1',
+          mediaId: 'media1',
+          title: 'Episode 1',
+          number: 1,
+        );
+
+        final updated = episode.copyWith(
+          sourceProvider: 'tmdb',
+          alternativeData: {'jikan': EpisodeData(title: 'Jikan Title')},
+        );
+
+        expect(updated.id, episode.id);
+        expect(updated.sourceProvider, 'tmdb');
+        expect(updated.alternativeData!['jikan']?.title, 'Jikan Title');
+      });
     });
 
     group('ChapterEntity', () {
@@ -113,10 +164,11 @@ void main() {
 
         final libraryItem = LibraryItemEntity(
           id: 'lib1',
+          mediaId: '1',
+          userService: ts.TrackingService.anilist,
           media: media,
           status: LibraryStatus.watching,
-          currentEpisode: 5,
-          currentChapter: 0,
+          progress: const WatchProgress(currentEpisode: 5, currentChapter: 0),
           addedAt: DateTime(2024, 1, 1),
         );
 

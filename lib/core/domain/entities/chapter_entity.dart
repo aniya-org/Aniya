@@ -8,6 +8,9 @@ class ChapterEntity extends Equatable {
   final DateTime? releaseDate;
   final int? pageCount;
 
+  /// Provider that supplied this chapter data
+  final String? sourceProvider;
+
   const ChapterEntity({
     required this.id,
     required this.mediaId,
@@ -15,6 +18,7 @@ class ChapterEntity extends Equatable {
     required this.number,
     this.releaseDate,
     this.pageCount,
+    this.sourceProvider,
   });
 
   @override
@@ -25,5 +29,26 @@ class ChapterEntity extends Equatable {
     number,
     releaseDate,
     pageCount,
+    sourceProvider,
   ];
+
+  ChapterEntity copyWith({
+    String? id,
+    String? mediaId,
+    String? title,
+    double? number,
+    DateTime? releaseDate,
+    int? pageCount,
+    String? sourceProvider,
+  }) {
+    return ChapterEntity(
+      id: id ?? this.id,
+      mediaId: mediaId ?? this.mediaId,
+      title: title ?? this.title,
+      number: number ?? this.number,
+      releaseDate: releaseDate ?? this.releaseDate,
+      pageCount: pageCount ?? this.pageCount,
+      sourceProvider: sourceProvider ?? this.sourceProvider,
+    );
+  }
 }

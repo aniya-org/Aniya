@@ -18,8 +18,8 @@ class HomeViewModel extends ChangeNotifier {
     required this.tmdbService,
   });
 
-  List<MediaEntity> _trendingAnime = [];
-  List<MediaEntity> _trendingManga = [];
+  final List<MediaEntity> _trendingAnime = [];
+  final List<MediaEntity> _trendingManga = [];
   List<LibraryItemEntity> _continueWatching = [];
   List<Map> _trendingMovies = []; // TMDB movies
   List<Map> _trendingTVShows = []; // TMDB TV shows

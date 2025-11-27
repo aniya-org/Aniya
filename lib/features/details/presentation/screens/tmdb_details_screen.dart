@@ -1,6 +1,18 @@
 import 'package:flutter/material.dart';
 import '../../../../core/services/tmdb_service.dart';
 import '../../../../core/di/injection_container.dart';
+import '../../../../core/utils/cross_provider_matcher.dart';
+import '../../../../core/utils/data_aggregator.dart';
+import '../../../../core/utils/provider_cache.dart';
+import '../../../../core/utils/logger.dart';
+import '../../../../core/domain/entities/media_entity.dart';
+import '../../../../core/domain/entities/episode_entity.dart';
+import '../../../../core/domain/entities/source_entity.dart';
+import '../../../../core/data/datasources/external_remote_data_source.dart';
+import '../../../../core/widgets/provider_badge.dart';
+import '../../../../core/widgets/provider_attribution_dialog.dart';
+import '../../../media_details/presentation/screens/episode_source_selection_sheet.dart';
+import '../../../video_player/presentation/screens/video_player_screen.dart';
 
 /// Details screen for TMDB movies and TV shows
 class TmdbDetailsScreen extends StatefulWidget {
@@ -20,6 +32,10 @@ class TmdbDetailsScreen extends StatefulWidget {
 class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
     with SingleTickerProviderStateMixin {
   late final TmdbService _tmdbService;
+  late final CrossProviderMatcher _matcher;
+  late final DataAggregator _aggregator;
+  late final ProviderCache _cache;
+  late final ExternalRemoteDataSource _externalDataSource;
   late TabController _tabController;
 
   Map? _fullDetails;
@@ -31,10 +47,20 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
   Map? _seasonDetails;
   bool _isLoadingSeason = false;
 
+  // Cross-provider aggregation state
+  Map<String, ProviderMatch>? _providerMatches;
+  List<EpisodeEntity>? _aggregatedEpisodes;
+  bool _isAggregating = false;
+  List<String> _contributingProviders = [];
+
   @override
   void initState() {
     super.initState();
     _tmdbService = sl<TmdbService>();
+    _matcher = sl<CrossProviderMatcher>();
+    _aggregator = sl<DataAggregator>();
+    _cache = sl<ProviderCache>();
+    _externalDataSource = sl<ExternalRemoteDataSource>();
     // 3 tabs for TV Shows (Overview, Episodes, More Info), 2 for Movies
     _tabController = TabController(length: widget.isMovie ? 2 : 3, vsync: this);
     _fetchFullDetails();
@@ -61,6 +87,18 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
               appendToResponse: appendToResponse,
             );
 
+      if (mounted) {
+        setState(() {
+          _fullDetails = result;
+          _isLoading = false;
+        });
+      }
+
+      // Start cross-provider matching for additional metadata
+      if (mounted) {
+        _performCrossProviderMatching();
+      }
+
       // If TV show, fetch season 1 details by default
       if (!widget.isMovie && mounted) {
         // Check if season 1 exists in the seasons list
@@ -72,14 +110,8 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
           _fetchSeasonDetails(id, seasons.first['season_number']);
         }
       }
-
-      if (mounted) {
-        setState(() {
-          _fullDetails = result;
-          _isLoading = false;
-        });
-      }
     } catch (e) {
+      Logger.error('Error fetching TMDB details', error: e);
       if (mounted) {
         setState(() {
           _hasError = true;
@@ -87,6 +119,188 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
         });
       }
     }
+  }
+
+  /// Perform cross-provider matching to find this media in anime/manga databases
+  Future<void> _performCrossProviderMatching() async {
+    if (_fullDetails == null) return;
+
+    setState(() {
+      _isAggregating = true;
+    });
+
+    try {
+      final title = widget.isMovie
+          ? (_fullDetails!['title'] as String? ?? '')
+          : (_fullDetails!['name'] as String? ?? '');
+
+      final releaseYear = widget.isMovie
+          ? _extractYear(_fullDetails!['release_date'] as String?)
+          : _extractYear(_fullDetails!['first_air_date'] as String?);
+
+      Logger.info(
+        'Searching for TMDB media "$title" across anime/manga providers',
+      );
+
+      // Search anime/manga providers for matching content
+      final matches = await _matcher.findMatches(
+        title: title,
+        type: widget.isMovie ? MediaType.movie : MediaType.tvShow,
+        primarySourceId: 'tmdb',
+        year: releaseYear,
+        searchFunction: _searchProvider,
+        cache: _cache,
+      );
+
+      if (matches.isNotEmpty) {
+        Logger.info(
+          'Found ${matches.length} matches for TMDB media: ${matches.keys.join(", ")}',
+        );
+
+        // If TV show, try to aggregate episode data
+        if (!widget.isMovie) {
+          await _aggregateEpisodeData(matches);
+        }
+
+        if (mounted) {
+          setState(() {
+            _providerMatches = matches;
+            _contributingProviders = ['tmdb', ...matches.keys];
+            _isAggregating = false;
+          });
+        }
+      } else {
+        Logger.info('No high-confidence matches found for TMDB media');
+        if (mounted) {
+          setState(() {
+            _contributingProviders = ['tmdb'];
+            _isAggregating = false;
+          });
+        }
+      }
+    } catch (e) {
+      Logger.error('Error performing cross-provider matching', error: e);
+      if (mounted) {
+        setState(() {
+          _contributingProviders = ['tmdb'];
+          _isAggregating = false;
+        });
+      }
+    }
+  }
+
+  /// Search a specific provider for matching media
+  Future<List<MediaEntity>> _searchProvider(
+    String query,
+    String providerId,
+    MediaType type,
+  ) async {
+    try {
+      // Only search anime/manga providers (not TMDB itself)
+      if (providerId.toLowerCase() == 'tmdb') {
+        return [];
+      }
+
+      final results = await _externalDataSource.searchMedia(
+        query,
+        providerId,
+        type,
+      );
+
+      return results;
+    } catch (e) {
+      Logger.error('Error searching provider $providerId', error: e);
+      return [];
+    }
+  }
+
+  /// Aggregate episode data from matched providers
+  Future<void> _aggregateEpisodeData(Map<String, ProviderMatch> matches) async {
+    try {
+      // Create a MediaEntity for the TMDB media
+      final tmdbMedia = MediaEntity(
+        id: widget.tmdbData['id'].toString(),
+        title: _fullDetails!['name'] as String? ?? '',
+        coverImage: _fullDetails!['poster_path'] as String? ?? '',
+        type: MediaType.tvShow,
+        genres: [],
+        status: MediaStatus.ongoing,
+        sourceId: 'tmdb',
+        sourceName: 'TMDB',
+      );
+
+      // Aggregate episodes from all matched providers
+      final aggregatedEpisodes = await _aggregator.aggregateEpisodes(
+        primaryMedia: tmdbMedia,
+        matches: matches,
+        episodeFetcher: _fetchEpisodesFromProvider,
+      );
+
+      if (aggregatedEpisodes.isNotEmpty) {
+        Logger.info(
+          'Aggregated ${aggregatedEpisodes.length} episodes from ${matches.length + 1} providers',
+        );
+
+        if (mounted) {
+          setState(() {
+            _aggregatedEpisodes = aggregatedEpisodes;
+          });
+        }
+      }
+    } catch (e) {
+      Logger.error('Error aggregating episode data', error: e);
+    }
+  }
+
+  /// Fetch episodes from a specific provider
+  Future<List<EpisodeEntity>> _fetchEpisodesFromProvider(
+    String mediaId,
+    String providerId,
+  ) async {
+    try {
+      if (providerId.toLowerCase() == 'tmdb') {
+        // For TMDB, we don't have a direct episode fetcher
+        // Episodes come from season details
+        return [];
+      }
+
+      // Create a MediaEntity for the episode fetch
+      final media = MediaEntity(
+        id: mediaId,
+        title: '', // Title not needed for episode fetch
+        coverImage: '',
+        type: MediaType.tvShow,
+        genres: [],
+        status: MediaStatus.ongoing,
+        sourceId: providerId,
+        sourceName: providerId,
+      );
+
+      final episodes = await _externalDataSource.getEpisodes(media);
+
+      return episodes;
+    } catch (e) {
+      Logger.error(
+        'Error fetching episodes from provider $providerId',
+        error: e,
+      );
+      return [];
+    }
+  }
+
+  /// Extract year from date string (YYYY-MM-DD format)
+  int? _extractYear(String? dateString) {
+    if (dateString == null || dateString.isEmpty) return null;
+    try {
+      return int.parse(dateString.split('-').first);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /// Format DateTime to readable string
+  String _formatDate(DateTime date) {
+    return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
   }
 
   Future<void> _fetchSeasonDetails(int tvId, int seasonNumber) async {
@@ -300,27 +514,99 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
-                child: Row(
+                child: Column(
                   children: [
-                    Expanded(
-                      child: FilledButton.icon(
-                        onPressed: () {
-                          // TODO: Implement Add to Library
-                        },
-                        icon: const Icon(Icons.add),
-                        label: const Text('Add to Library'),
-                      ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: FilledButton.icon(
+                            onPressed: () {
+                              // TODO: Implement Add to Library
+                            },
+                            icon: const Icon(Icons.add),
+                            label: const Text('Add to Library'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () {
+                              // TODO: Implement Custom List
+                            },
+                            icon: const Icon(Icons.playlist_add),
+                            label: const Text('Custom List'),
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () {
-                          // TODO: Implement Custom List
-                        },
-                        icon: const Icon(Icons.playlist_add),
-                        label: const Text('Custom List'),
+                    // Provider attribution badges
+                    if (_contributingProviders.isNotEmpty &&
+                        _contributingProviders.length > 1) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerHighest
+                              .withValues(alpha: 0.3),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.outline.withValues(alpha: 0.1),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.source,
+                                  size: 16,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'Data Sources',
+                                  style: Theme.of(context).textTheme.labelMedium
+                                      ?.copyWith(
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.onSurfaceVariant,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                ),
+                                if (_isAggregating) ...[
+                                  const SizedBox(width: 8),
+                                  SizedBox(
+                                    width: 12,
+                                    height: 12,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.primary,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            ProviderBadgeList(
+                              providers: _contributingProviders,
+                              onProviderTap: (provider) {
+                                _showProviderAttributionDialog(provider);
+                              },
+                              isSmall: false,
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),
@@ -526,7 +812,11 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
 
   Widget _buildEpisodesTab(Map data) {
     final seasons = (data['seasons'] as List?) ?? [];
-    final episodes = (_seasonDetails?['episodes'] as List?) ?? [];
+    final tmdbEpisodes = (_seasonDetails?['episodes'] as List?) ?? [];
+
+    // Use aggregated episodes if available, otherwise use TMDB episodes
+    final hasAggregatedEpisodes =
+        _aggregatedEpisodes != null && _aggregatedEpisodes!.isNotEmpty;
 
     return Builder(
       builder: (context) {
@@ -564,6 +854,47 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
                       },
                     ),
                   ),
+                  // Show info banner if using aggregated data
+                  if (hasAggregatedEpisodes)
+                    Container(
+                      margin: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.primaryContainer.withValues(alpha: 0.3),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.primary.withValues(alpha: 0.3),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.info_outline,
+                            size: 16,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Showing enhanced episode data from multiple sources',
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.primary,
+                                  ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -573,97 +904,204 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
               const SliverFillRemaining(
                 child: Center(child: CircularProgressIndicator()),
               )
-            else
+            else if (hasAggregatedEpisodes)
+              // Show aggregated episodes
               SliverList(
                 delegate: SliverChildBuilderDelegate((context, index) {
-                  final episode = episodes[index];
-                  final stillPath = episode['still_path'];
-
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 8,
-                    ),
-                    child: Card(
-                      clipBehavior: Clip.antiAlias,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Episode Image
-                          if (stillPath != null)
-                            AspectRatio(
-                              aspectRatio: 16 / 9,
-                              child: Image.network(
-                                TmdbService.getBackdropUrl(stillPath),
-                                fit: BoxFit.cover,
-                                errorBuilder: (context, error, stackTrace) =>
-                                    Container(
-                                      color: Colors.grey[800],
-                                      child: const Icon(Icons.tv, size: 48),
-                                    ),
-                              ),
-                            ),
-
-                          Padding(
-                            padding: const EdgeInsets.all(12),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Text(
-                                      'EP ${episode['episode_number']}',
-                                      style: TextStyle(
-                                        color: Theme.of(
-                                          context,
-                                        ).colorScheme.primary,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Text(
-                                        episode['name'] ?? 'Unknown',
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 16,
-                                        ),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  episode['overview'] ??
-                                      'No description available.',
-                                  maxLines: 3,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: Theme.of(context).textTheme.bodySmall,
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  episode['air_date'] ?? '',
-                                  style: Theme.of(context).textTheme.labelSmall
-                                      ?.copyWith(
-                                        color: Theme.of(
-                                          context,
-                                        ).colorScheme.onSurfaceVariant,
-                                      ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                }, childCount: episodes.length),
+                  final episode = _aggregatedEpisodes![index];
+                  return _buildAggregatedEpisodeCard(episode);
+                }, childCount: _aggregatedEpisodes!.length),
+              )
+            else
+              // Show TMDB episodes
+              SliverList(
+                delegate: SliverChildBuilderDelegate((context, index) {
+                  final episode = tmdbEpisodes[index];
+                  return _buildTmdbEpisodeCard(episode);
+                }, childCount: tmdbEpisodes.length),
               ),
           ],
         );
       },
+    );
+  }
+
+  Widget _buildAggregatedEpisodeCard(EpisodeEntity episode) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: GestureDetector(
+        onTap: () => _showEpisodeSourceSelectionForAggregated(episode),
+        child: Card(
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Episode Image
+              if (episode.thumbnail != null && episode.thumbnail!.isNotEmpty)
+                AspectRatio(
+                  aspectRatio: 16 / 9,
+                  child: Image.network(
+                    episode.thumbnail!,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) => Container(
+                      color: Colors.grey[800],
+                      child: const Icon(Icons.tv, size: 48),
+                    ),
+                  ),
+                ),
+
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          'EP ${episode.number}',
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.primary,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            episode.title,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (episode.releaseDate != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        _formatDate(episode.releaseDate!),
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                    // Show source provider badge if available
+                    if (episode.sourceProvider != null &&
+                        episode.sourceProvider!.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.source,
+                            size: 12,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Source: ',
+                            style: Theme.of(context).textTheme.labelSmall
+                                ?.copyWith(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                                ),
+                          ),
+                          ProviderBadge(
+                            providerId: episode.sourceProvider!,
+                            isSmall: true,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTmdbEpisodeCard(Map episode) {
+    final stillPath = episode['still_path'];
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: GestureDetector(
+        onTap: () => _showEpisodeSourceSelection(episode),
+        child: Card(
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Episode Image
+              if (stillPath != null)
+                AspectRatio(
+                  aspectRatio: 16 / 9,
+                  child: Image.network(
+                    TmdbService.getBackdropUrl(stillPath),
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) => Container(
+                      color: Colors.grey[800],
+                      child: const Icon(Icons.tv, size: 48),
+                    ),
+                  ),
+                ),
+
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          'EP ${episode['episode_number']}',
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.primary,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            episode['name'] ?? 'Unknown',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      episode['overview'] ?? 'No description available.',
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      episode['air_date'] ?? '',
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -882,6 +1320,146 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
           ),
         ],
       ),
+    );
+  }
+
+  /// Show episode source selection sheet for TMDB episode
+  /// Requirements: 1.1
+  void _showEpisodeSourceSelection(Map tmdbEpisode) {
+    final episodeNumber = tmdbEpisode['episode_number'] as int? ?? 0;
+    final episodeName = tmdbEpisode['name'] as String? ?? 'Unknown';
+    final airDate = tmdbEpisode['air_date'] as String?;
+
+    // Create an EpisodeEntity from the TMDB episode data
+    final episode = EpisodeEntity(
+      id: '${_selectedSeason}_${episodeNumber}',
+      mediaId: widget.tmdbData['id'].toString(),
+      number: episodeNumber,
+      title: episodeName,
+      releaseDate: airDate != null ? DateTime.tryParse(airDate) : null,
+      thumbnail: tmdbEpisode['still_path'] != null
+          ? TmdbService.getBackdropUrl(tmdbEpisode['still_path'])
+          : null,
+      sourceProvider: 'tmdb',
+    );
+
+    // Create a MediaEntity from the TMDB data
+    final media = MediaEntity(
+      id: widget.tmdbData['id'].toString(),
+      title: _fullDetails?['name'] as String? ?? 'Unknown',
+      coverImage: _fullDetails?['poster_path'] as String? ?? '',
+      type: MediaType.tvShow,
+      genres: [],
+      status: MediaStatus.ongoing,
+      sourceId: 'tmdb',
+      sourceName: 'TMDB',
+    );
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => EpisodeSourceSelectionSheet(
+        media: media,
+        episode: episode,
+        isChapter: false,
+        onSourceSelected: (source) {
+          _navigateToVideoPlayer(episode, source);
+        },
+      ),
+    );
+  }
+
+  /// Show episode source selection sheet for aggregated episode
+  /// Requirements: 1.1
+  void _showEpisodeSourceSelectionForAggregated(EpisodeEntity episode) {
+    // Create a MediaEntity from the TMDB data
+    final media = MediaEntity(
+      id: widget.tmdbData['id'].toString(),
+      title: _fullDetails?['name'] as String? ?? 'Unknown',
+      coverImage: _fullDetails?['poster_path'] as String? ?? '',
+      type: MediaType.tvShow,
+      genres: [],
+      status: MediaStatus.ongoing,
+      sourceId: 'tmdb',
+      sourceName: 'TMDB',
+    );
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => EpisodeSourceSelectionSheet(
+        media: media,
+        episode: episode,
+        isChapter: false,
+        onSourceSelected: (source) {
+          _navigateToVideoPlayer(episode, source);
+        },
+      ),
+    );
+  }
+
+  /// Navigate to video player with selected source
+  /// Requirements: 5.1, 5.3
+  void _navigateToVideoPlayer(EpisodeEntity episode, SourceEntity source) {
+    Logger.info(
+      'Navigating to video player for episode ${episode.number} with source ${source.name}',
+      tag: 'TmdbDetailsScreen',
+    );
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => VideoPlayerScreen(
+          episodeId: episode.id,
+          sourceId: source.id,
+          itemId: widget.tmdbData['id'].toString(),
+          episodeNumber: episode.number,
+          episodeTitle: episode.title,
+        ),
+      ),
+    );
+  }
+
+  /// Show dialog with detailed provider attribution information
+  void _showProviderAttributionDialog(String providerId) {
+    // Build data source attribution map
+    final Map<String, String> dataSourceAttribution = {};
+
+    if (providerId.toLowerCase() == 'tmdb') {
+      dataSourceAttribution['title'] = 'tmdb';
+      dataSourceAttribution['releaseDate'] = 'tmdb';
+      dataSourceAttribution['overview'] = 'tmdb';
+      dataSourceAttribution['ratings'] = 'tmdb';
+      dataSourceAttribution['images'] = 'tmdb';
+      dataSourceAttribution['castAndCrew'] = 'tmdb';
+      if (!widget.isMovie) {
+        dataSourceAttribution['episodes'] = 'tmdb';
+      }
+    } else {
+      if (_aggregatedEpisodes != null &&
+          _aggregatedEpisodes!.any((e) => e.sourceProvider == providerId)) {
+        dataSourceAttribution['episodes'] = providerId;
+        dataSourceAttribution['episodeThumbnails'] = providerId;
+      }
+      dataSourceAttribution['additionalMetadata'] = providerId;
+    }
+
+    // Build match confidences map
+    final Map<String, double>? matchConfidences = _providerMatches != null
+        ? Map.fromEntries(
+            _providerMatches!.entries.map(
+              (e) => MapEntry(e.key, e.value.confidence),
+            ),
+          )
+        : null;
+
+    showProviderAttributionDialog(
+      context,
+      dataSourceAttribution: dataSourceAttribution,
+      contributingProviders: _contributingProviders,
+      matchConfidences: matchConfidences,
+      primaryProvider: 'tmdb',
     );
   }
 }

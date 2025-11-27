@@ -1,6 +1,8 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import '../../domain/entities/entities.dart';
+import '../../domain/entities/media_entity.dart';
+import '../../domain/entities/media_details_entity.dart' hide SearchResult;
+import '../../domain/entities/search_result_entity.dart';
 import '../../error/exceptions.dart';
 import '../../utils/logger.dart';
 
@@ -28,8 +30,17 @@ class SimklExternalDataSourceImpl {
     String? sort = 'popularity',
     int page = 1,
     int perPage = 20,
+    int? year,
+    String? season,
+    String? status,
+    int? maxScore,
   }) async {
     try {
+      Logger.info(
+        'Simkl search: query="$query", type=$type, page=$page',
+        tag: 'SimklDataSource',
+      );
+
       final String simklType = _mapMediaTypeToSimkl(type);
 
       // Simkl has limited filtering - mainly supports genre and type
@@ -72,6 +83,11 @@ class SimklExternalDataSourceImpl {
       // Since Simkl doesn't provide total count, we use current page size * 5 as estimate
       final estimatedTotal = page * perPage * 5;
 
+      Logger.info(
+        'Simkl search completed: ${mappedResults.length} results',
+        tag: 'SimklDataSource',
+      );
+
       return SearchResult<List<MediaEntity>>(
         items: mappedResults,
         totalCount: estimatedTotal,
@@ -79,8 +95,13 @@ class SimklExternalDataSourceImpl {
         hasNextPage: hasNextPage,
         perPage: perPage,
       );
-    } catch (e) {
-      Logger.error('Simkl advanced search failed', error: e);
+    } catch (e, stackTrace) {
+      Logger.error(
+        'Simkl advanced search failed',
+        tag: 'SimklDataSource',
+        error: e,
+        stackTrace: stackTrace,
+      );
       throw ServerException('Failed to search Simkl: $e');
     }
   }
@@ -208,21 +229,40 @@ class SimklExternalDataSourceImpl {
   ) {
     final Map<String, dynamic> show = json['show'] ?? json;
 
+    // Safe extraction of ID from various possible locations
+    String extractId() {
+      if (show['ids'] != null) {
+        return show['ids']['simkl']?.toString() ??
+            show['ids']['mal']?.toString() ??
+            show['ids']['anidb']?.toString() ??
+            '';
+      }
+      return show['id']?.toString() ?? '';
+    }
+
+    // Safe rating conversion
+    double safeRating(dynamic rating) {
+      if (rating == null) return 0.0;
+      if (rating is int) return rating / 10.0;
+      if (rating is double) return rating / 10.0;
+      return 0.0;
+    }
+
     return MediaEntity(
-      id: show['ids']['simkl']?.toString() ?? show['id']?.toString() ?? '',
+      id: extractId(),
       title: show['title'] ?? '',
       coverImage: show['poster'] != null
-          ? 'https://simkl.in/shd/poster/${show['poster']}_original.jpg'
+          ? 'https://simkl.in/posters/${show['poster']}_m.jpg'
           : null,
       bannerImage: show['fanart'] != null
-          ? 'https://simkl.in/shd/fanart/${show['fanart']}_original.jpg'
+          ? 'https://simkl.in/fanart/${show['fanart']}_w.jpg'
           : null,
       description: show['overview'],
       type: type,
-      rating: (show['rating'] ?? 0) / 10.0,
+      rating: safeRating(show['rating']),
       genres: List<String>.from(show['genres'] ?? []),
       status: _mapSimklStatus(show['status']),
-      totalEpisodes: show['episodes'],
+      totalEpisodes: show['total_episodes'] ?? show['episodes'],
       totalChapters: null,
       sourceId: sourceId,
       sourceName: sourceName,
@@ -250,8 +290,38 @@ class SimklExternalDataSourceImpl {
     Map<String, dynamic> json,
     MediaType type,
   ) {
+    // Safe extraction of ID
+    String extractId() {
+      if (json['ids'] != null) {
+        return json['ids']['simkl']?.toString() ??
+            json['ids']['mal']?.toString() ??
+            json['ids']['anidb']?.toString() ??
+            '';
+      }
+      return json['id']?.toString() ?? '';
+    }
+
+    // Safe type conversion for numeric fields
+    int? safeToInt(dynamic value) {
+      if (value == null) return null;
+      if (value is int) return value;
+      if (value is double) return value.toInt();
+      if (value is String) return int.tryParse(value);
+      return null;
+    }
+
+    // Safe rating conversion
+    double safeRating(dynamic rating) {
+      if (rating == null) return 0.0;
+      if (rating is int) return rating / 10.0;
+      if (rating is double) return rating / 10.0;
+      return 0.0;
+    }
+
+    final year = safeToInt(json['year']);
+
     return MediaDetailsEntity(
-      id: json['ids']['simkl']?.toString() ?? json['id']?.toString() ?? '',
+      id: extractId(),
       title: json['title'] ?? '',
       englishTitle: json['title'],
       romajiTitle: null,
@@ -259,32 +329,32 @@ class SimklExternalDataSourceImpl {
       coverImage:
           json['images']?['poster'] ??
           (json['poster'] != null
-              ? 'https://simkl.in/shd/poster/${json['poster']}_original.jpg'
-              : null),
+              ? 'https://simkl.in/posters/${json['poster']}_m.jpg'
+              : ''),
       bannerImage:
           json['images']?['fanart'] ??
           (json['fanart'] != null
-              ? 'https://simkl.in/shd/fanart/${json['fanart']}_original.jpg'
+              ? 'https://simkl.in/fanart/${json['fanart']}_w.jpg'
               : null),
       description: json['overview'],
       type: type,
       status: _mapSimklStatus(json['status']),
-      rating: (json['rating'] ?? 0) / 10.0,
-      averageScore: json['rating'],
+      rating: safeRating(json['rating']),
+      averageScore: safeToInt(json['rating']),
       popularity: null,
       favorites: null,
       genres: List<String>.from(json['genres'] ?? []),
       tags: [],
-      startDate: json['year'] != null ? DateTime(json['year'], 1, 1) : null,
-      endDate: json['year'] != null && json['status'] == 'ended'
-          ? DateTime(json['year'], 12, 31)
+      startDate: year != null ? DateTime(year, 1, 1) : null,
+      endDate: year != null && json['status'] == 'ended'
+          ? DateTime(year, 12, 31)
           : null,
-      episodes: json['episodes'],
+      episodes: safeToInt(json['total_episodes'] ?? json['episodes']),
       chapters: null,
       volumes: null,
-      duration: null,
+      duration: safeToInt(json['runtime']),
       season: null,
-      seasonYear: json['year'],
+      seasonYear: year,
       isAdult: false,
       siteUrl: json['ids']?['simkl'] != null
           ? 'https://simkl.com/${type.toString().split('.').last}/${json['ids']['simkl']}'

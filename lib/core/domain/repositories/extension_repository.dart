@@ -8,11 +8,13 @@ abstract class ExtensionRepository {
   /// Get all available extensions for a specific type
   ///
   /// [type] - The type of extension (cloudstream, aniyomi, mangayomi, lnreader)
+  /// [repos] - Optional list of repository URLs to fetch extensions from
   ///
   /// Returns a list of available extension entities or a failure
   Future<Either<Failure, List<ExtensionEntity>>> getAvailableExtensions(
-    ExtensionType type,
-  );
+    ExtensionType type, {
+    List<String>? repos,
+  });
 
   /// Get all installed extensions for a specific type
   ///

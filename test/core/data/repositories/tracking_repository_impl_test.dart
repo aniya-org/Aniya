@@ -6,6 +6,7 @@ import 'package:aniya/core/data/models/library_item_model.dart';
 import 'package:aniya/core/domain/entities/user_entity.dart';
 import 'package:aniya/core/domain/entities/library_item_entity.dart';
 import 'package:aniya/core/domain/entities/media_entity.dart';
+import 'package:aniya/core/enums/tracking_service.dart' as ts;
 import 'package:aniya/core/error/failures.dart';
 import 'package:aniya/core/error/exceptions.dart';
 
@@ -216,10 +217,11 @@ void main() {
 
           final mockLibraryItem = LibraryItemModel(
             id: 'item1',
+            mediaId: 'media1',
+            userService: ts.TrackingService.anilist,
             media: mockMedia,
             status: LibraryStatus.watching,
-            currentEpisode: 5,
-            currentChapter: 0,
+            progress: const WatchProgress(currentEpisode: 5, currentChapter: 0),
             addedAt: DateTime.now(),
           );
 

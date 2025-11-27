@@ -9,6 +9,7 @@ class ChapterModel extends ChapterEntity {
     required super.number,
     super.releaseDate,
     super.pageCount,
+    super.sourceProvider,
   });
 
   factory ChapterModel.fromJson(Map<String, dynamic> json) {
@@ -21,6 +22,7 @@ class ChapterModel extends ChapterEntity {
           ? DateTime.parse(json['releaseDate'] as String)
           : null,
       pageCount: json['pageCount'] as int?,
+      sourceProvider: json['sourceProvider'] as String?,
     );
   }
 
@@ -32,6 +34,7 @@ class ChapterModel extends ChapterEntity {
       'number': number,
       'releaseDate': releaseDate?.toIso8601String(),
       'pageCount': pageCount,
+      'sourceProvider': sourceProvider,
     };
   }
 
@@ -58,6 +61,7 @@ class ChapterModel extends ChapterEntity {
       number: number,
       releaseDate: releaseDate,
       pageCount: pageCount,
+      sourceProvider: sourceProvider,
     );
   }
 }

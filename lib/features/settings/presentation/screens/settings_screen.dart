@@ -83,6 +83,9 @@ class _SettingsContent extends StatelessWidget {
               const Divider(),
               _buildSectionHeader(context, 'Tracking & Accounts', padding),
               _buildTrackingSettings(context, viewModel),
+              const Divider(),
+              _buildSectionHeader(context, 'Cache Management', padding),
+              _buildCacheManagement(context, viewModel),
               const SizedBox(height: 50),
             ]),
           ),
@@ -306,6 +309,83 @@ class _SettingsContent extends StatelessWidget {
               );
             },
             child: const Text('Disconnect'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCacheManagement(
+    BuildContext context,
+    SettingsViewModel viewModel,
+  ) {
+    return Column(
+      children: [
+        ListTile(
+          leading: const Icon(Icons.storage),
+          title: const Text('Provider Cache'),
+          subtitle: viewModel.isLoadingCacheStats
+              ? const Text('Loading...')
+              : Text(
+                  '${viewModel.cacheEntryCount} entries • ${viewModel.getFormattedCacheSize()}',
+                ),
+          trailing: IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () => viewModel.loadCacheStatistics(),
+            tooltip: 'Refresh statistics',
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+          child: Text(
+            'Provider cache stores cross-provider media mappings to speed up loading. '
+            'Cache entries expire after 7 days.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+          child: FilledButton.tonal(
+            onPressed: viewModel.cacheEntryCount > 0
+                ? () => _showClearCacheDialog(context, viewModel)
+                : null,
+            child: const Text('Clear Cache'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _showClearCacheDialog(
+    BuildContext context,
+    SettingsViewModel viewModel,
+  ) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Clear Provider Cache?'),
+        content: Text(
+          'This will remove ${viewModel.cacheEntryCount} cached provider mappings. '
+          'Media details will need to be fetched again from all providers.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              await viewModel.clearProviderCache();
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Cache cleared successfully')),
+                );
+              }
+            },
+            child: const Text('Clear'),
           ),
         ],
       ),

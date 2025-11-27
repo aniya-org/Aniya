@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../../../../core/utils/logger.dart';
 import '../../../../core/theme/theme.dart';
+import '../../../../core/utils/provider_cache.dart';
 
 import '../../../../core/enums/tracking_service.dart';
 import '../../../../core/services/tracking_auth_service.dart';
@@ -12,8 +13,9 @@ enum VideoQuality { auto, p360, p480, p720, p1080 }
 class SettingsViewModel extends ChangeNotifier {
   final TrackingAuthService _authService;
   final Box _settingsBox;
+  final ProviderCache _providerCache;
 
-  SettingsViewModel(this._authService, this._settingsBox);
+  SettingsViewModel(this._authService, this._settingsBox, this._providerCache);
 
   // Theme settings
   AppThemeMode _themeMode = AppThemeMode.system;
@@ -26,10 +28,15 @@ class SettingsViewModel extends ChangeNotifier {
   bool _showNsfwExtensions = false;
 
   // Tracking service settings
-  Set<TrackingService> _connectedTrackingServices = {};
+  final Set<TrackingService> _connectedTrackingServices = {};
 
   // Error state
   String? _error;
+
+  // Cache statistics
+  int _cacheSize = 0;
+  int _cacheEntryCount = 0;
+  bool _isLoadingCacheStats = false;
 
   // Getters
   AppThemeMode get themeMode => _themeMode;
@@ -39,6 +46,9 @@ class SettingsViewModel extends ChangeNotifier {
   Set<TrackingService> get connectedTrackingServices =>
       _connectedTrackingServices;
   String? get error => _error;
+  int get cacheSize => _cacheSize;
+  int get cacheEntryCount => _cacheEntryCount;
+  bool get isLoadingCacheStats => _isLoadingCacheStats;
 
   /// Load settings from local storage
   Future<void> loadSettings() async {
@@ -69,6 +79,9 @@ class SettingsViewModel extends ChangeNotifier {
         }
       }
 
+      // Load cache statistics
+      await loadCacheStatistics();
+
       _error = null;
       notifyListeners();
     } catch (e, stackTrace) {
@@ -80,6 +93,59 @@ class SettingsViewModel extends ChangeNotifier {
         stackTrace: stackTrace,
       );
       notifyListeners();
+    }
+  }
+
+  /// Load cache statistics
+  Future<void> loadCacheStatistics() async {
+    try {
+      _isLoadingCacheStats = true;
+      notifyListeners();
+
+      _cacheSize = await _providerCache.getCacheSize();
+      _cacheEntryCount = await _providerCache.getEntryCount();
+
+      _isLoadingCacheStats = false;
+      notifyListeners();
+    } catch (e, stackTrace) {
+      _isLoadingCacheStats = false;
+      Logger.error(
+        'Error loading cache statistics',
+        tag: 'SettingsViewModel',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      notifyListeners();
+    }
+  }
+
+  /// Clear provider cache
+  Future<void> clearProviderCache() async {
+    try {
+      await _providerCache.clearAll();
+      await loadCacheStatistics();
+      _error = null;
+      notifyListeners();
+    } catch (e, stackTrace) {
+      _error = 'Failed to clear cache. Please try again.';
+      Logger.error(
+        'Error clearing cache',
+        tag: 'SettingsViewModel',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      notifyListeners();
+    }
+  }
+
+  /// Format cache size for display
+  String getFormattedCacheSize() {
+    if (_cacheSize < 1024) {
+      return '$_cacheSize B';
+    } else if (_cacheSize < 1024 * 1024) {
+      return '${(_cacheSize / 1024).toStringAsFixed(2)} KB';
+    } else {
+      return '${(_cacheSize / (1024 * 1024)).toStringAsFixed(2)} MB';
     }
   }
 

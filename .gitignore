@@ -49,5 +49,5 @@ app.*.map.json
 .env.local
 !.env.example
 
-# ref/
+ref/
 .kiro/

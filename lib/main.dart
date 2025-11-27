@@ -1,8 +1,12 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:dartotsu_extension_bridge/dartotsu_extension_bridge.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
 import 'package:aniya/core/di/injection_container.dart';
 import 'package:aniya/core/constants/app_constants.dart';
 import 'package:aniya/core/utils/logger.dart';
@@ -12,8 +16,13 @@ import 'package:aniya/core/theme/theme.dart';
 import 'package:aniya/core/navigation/navigation_shell.dart';
 import 'package:aniya/core/services/mobile_platform_manager.dart';
 import 'package:aniya/core/services/desktop_window_manager.dart';
+import 'package:aniya/core/services/deep_link_service.dart';
 import 'package:aniya/core/widgets/mobile_status_bar_controller.dart';
 import 'package:aniya/core/widgets/mobile_navigation_bar_controller.dart';
+import 'package:aniya/features/media_details/presentation/screens/media_details_screen.dart';
+import 'package:aniya/features/media_details/presentation/viewmodels/media_details_viewmodel.dart';
+import 'package:aniya/features/extensions/presentation/viewmodels/extension_viewmodel.dart';
+import 'package:aniya/core/domain/entities/media_entity.dart';
 
 void main() async {
   // Initialize Flutter bindings BEFORE creating zones
@@ -28,6 +37,30 @@ void main() async {
   try {
     // Initialize media_kit
     MediaKit.ensureInitialized();
+
+    // Initialize DartotsuExtensionBridge to register extension managers with GetX
+    // This is required for extension discovery and management (Requirements: 10.1, 10.2, 10.3, 12.1)
+    Logger.info('Initializing extension bridge...', tag: 'Main');
+    try {
+      // Ensure the Isar database directory exists before initializing the bridge
+      final docDir = await getApplicationDocumentsDirectory();
+      final isarDir = Directory(p.join(docDir.path, 'isar'));
+      if (!await isarDir.exists()) {
+        await isarDir.create(recursive: true);
+        Logger.debug('Created Isar directory: ${isarDir.path}', tag: 'Main');
+      }
+
+      await DartotsuExtensionBridge().init(null, 'aniya');
+      Logger.info('Extension bridge initialized successfully', tag: 'Main');
+    } catch (e, stackTrace) {
+      // Extension bridge initialization is optional - app can still work without it
+      // Extensions will just not be available until the bridge is properly initialized
+      Logger.warning(
+        'Extension bridge initialization failed (extensions may not be available): $e',
+        tag: 'Main',
+      );
+      Logger.debug('Extension bridge error stack: $stackTrace', tag: 'Main');
+    }
 
     // Initialize platform-specific features
     Logger.info('Initializing platform features...', tag: 'Main');
@@ -48,6 +81,7 @@ void main() async {
     Logger.info('Initializing data sources...', tag: 'Main');
     await initializeMediaDataSource();
     await initializeLibraryDataSource();
+    await initializeRepositoryDataSource();
     Logger.info('Data sources initialized successfully', tag: 'Main');
   } catch (e, stackTrace) {
     Logger.error(
@@ -74,6 +108,9 @@ class AniyaApp extends StatefulWidget {
 
 class _AniyaAppState extends State<AniyaApp> {
   late final ThemeProvider _themeProvider;
+  DeepLinkService? _deepLinkService;
+  final GlobalKey<ScaffoldMessengerState> _scaffoldMessengerKey =
+      GlobalKey<ScaffoldMessengerState>();
 
   @override
   void initState() {
@@ -85,10 +122,76 @@ class _AniyaAppState extends State<AniyaApp> {
     );
     final initialTheme = AppThemeMode.values[themeIndex];
     _themeProvider = ThemeProvider(initialThemeMode: initialTheme);
+
+    // Initialize deep link handling
+    _initializeDeepLinks();
+  }
+
+  /// Initializes deep link service to listen for incoming repository links.
+  ///
+  /// Supports schemes: aniyomi, tachiyomi, mangayomi, dar, cloudstreamrepo, cs.repo
+  /// Requirements: 3.1, 3.2, 3.3, 3.4, 3.5
+  Future<void> _initializeDeepLinks() async {
+    final extensionViewModel = sl<ExtensionViewModel>();
+
+    _deepLinkService = DeepLinkService(
+      onDeepLinkProcessed: (result) {
+        // Show success message (Requirement 3.4)
+        Logger.info('Deep link processed: ${result.message}', tag: 'DeepLink');
+        _showDeepLinkSnackBar(result.message, isError: false);
+        // Reload extensions to show newly added repositories
+        extensionViewModel.loadExtensions();
+      },
+      onDeepLinkError: (error) {
+        // Show error message (Requirement 3.5)
+        Logger.warning('Deep link error: $error', tag: 'DeepLink');
+        _showDeepLinkSnackBar(error, isError: true);
+      },
+      onSaveRepository: (type, config) async {
+        // Save repository configuration through the viewmodel
+        await extensionViewModel.saveRepository(type, config);
+      },
+    );
+
+    await _deepLinkService!.initialize();
+  }
+
+  /// Shows a snackbar with the deep link processing result.
+  void _showDeepLinkSnackBar(String message, {required bool isError}) {
+    final messenger = _scaffoldMessengerKey.currentState;
+    if (messenger != null) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              Icon(
+                isError ? Icons.error_outline : Icons.check_circle_outline,
+                color: Colors.white,
+              ),
+              const SizedBox(width: 12),
+              Expanded(child: Text(message)),
+            ],
+          ),
+          backgroundColor: isError
+              ? Colors.red.shade700
+              : Colors.green.shade700,
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: isError ? 5 : 3),
+          action: isError
+              ? SnackBarAction(
+                  label: 'Dismiss',
+                  textColor: Colors.white,
+                  onPressed: () => messenger.hideCurrentSnackBar(),
+                )
+              : null,
+        ),
+      );
+    }
   }
 
   @override
   void dispose() {
+    _deepLinkService?.dispose();
     _themeProvider.dispose();
     super.dispose();
   }
@@ -103,6 +206,7 @@ class _AniyaAppState extends State<AniyaApp> {
           child: MaterialApp(
             title: AppConstants.appName,
             debugShowCheckedModeBanner: false,
+            scaffoldMessengerKey: _scaffoldMessengerKey,
             theme: _themeProvider.lightTheme,
             darkTheme: _themeProvider.darkTheme,
             themeMode: _themeProvider.materialThemeMode,
@@ -111,6 +215,18 @@ class _AniyaAppState extends State<AniyaApp> {
               darkTheme: _themeProvider.darkTheme,
               themeMode: _themeProvider.materialThemeMode,
             ),
+            onGenerateRoute: (settings) {
+              if (settings.name == '/media-details') {
+                final media = settings.arguments as MediaEntity;
+                return MaterialPageRoute(
+                  builder: (context) => ChangeNotifierProvider(
+                    create: (_) => sl<MediaDetailsViewModel>(),
+                    child: MediaDetailsScreen(media: media),
+                  ),
+                );
+              }
+              return null;
+            },
           ),
         );
 

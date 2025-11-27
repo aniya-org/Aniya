@@ -5,6 +5,9 @@ import '../../domain/entities/chapter_entity.dart';
 import '../../domain/entities/search_result_entity.dart';
 import '../../error/exceptions.dart';
 import '../../utils/logger.dart';
+import '../../utils/cross_provider_matcher.dart';
+import '../../utils/data_aggregator.dart';
+import '../../utils/provider_cache.dart';
 import 'tmdb_external_data_source.dart';
 import 'anilist_external_data_source.dart';
 import 'simkl_external_data_source.dart';
@@ -17,6 +20,9 @@ class ExternalRemoteDataSource {
   final SimklExternalDataSourceImpl _simklDataSource;
   final JikanExternalDataSourceImpl _jikanDataSource;
   final KitsuExternalDataSourceImpl _kitsuDataSource;
+  final CrossProviderMatcher _matcher;
+  final DataAggregator _aggregator;
+  final ProviderCache _cache;
 
   ExternalRemoteDataSource({
     TmdbExternalDataSourceImpl? tmdbDataSource,
@@ -24,12 +30,23 @@ class ExternalRemoteDataSource {
     SimklExternalDataSourceImpl? simklDataSource,
     JikanExternalDataSourceImpl? jikanDataSource,
     KitsuExternalDataSourceImpl? kitsuDataSource,
+    CrossProviderMatcher? matcher,
+    DataAggregator? aggregator,
+    ProviderCache? cache,
   }) : _tmdbDataSource = tmdbDataSource ?? TmdbExternalDataSourceImpl(),
        _anilistDataSource =
            anilistDataSource ?? AnilistExternalDataSourceImpl(),
        _simklDataSource = simklDataSource ?? SimklExternalDataSourceImpl(),
        _jikanDataSource = jikanDataSource ?? JikanExternalDataSourceImpl(),
-       _kitsuDataSource = kitsuDataSource ?? KitsuExternalDataSourceImpl();
+       _kitsuDataSource = kitsuDataSource ?? KitsuExternalDataSourceImpl(),
+       _matcher = matcher ?? CrossProviderMatcher(),
+       _aggregator = aggregator ?? DataAggregator(),
+       _cache = cache ?? ProviderCache() {
+    // Initialize cache
+    _cache.init().catchError((error) {
+      Logger.error('Failed to initialize provider cache', error: error);
+    });
+  }
 
   /// Get data source by source ID
   dynamic _getDataSource(String sourceId) {
@@ -57,7 +74,15 @@ class ExternalRemoteDataSource {
   }) async {
     try {
       final dataSource = _getDataSource(sourceId);
-      return await dataSource.searchMedia(query, type, page: page);
+      final result = await dataSource.searchMedia(query, type, page: page);
+      // Handle both SearchResult and plain List return types
+      if (result is SearchResult<List<MediaEntity>>) {
+        return result.items;
+      } else if (result is List<MediaEntity>) {
+        return result;
+      }
+      // Fallback: try to access items property
+      return (result as dynamic).items as List<MediaEntity>;
     } catch (e) {
       Logger.error('External search failed for source $sourceId', error: e);
       rethrow;
@@ -81,8 +106,18 @@ class ExternalRemoteDataSource {
     int perPage = 20,
   }) async {
     try {
+      Logger.info(
+        'ExternalRemoteDataSource.searchMediaAdvanced: sourceId=$sourceId, type=$type, query="$query"',
+        tag: 'ExternalRemoteDataSource',
+      );
+
       final dataSource = _getDataSource(sourceId);
-      return await dataSource.searchMedia(
+      Logger.debug(
+        'Got data source for $sourceId: ${dataSource.runtimeType}',
+        tag: 'ExternalRemoteDataSource',
+      );
+
+      final result = await dataSource.searchMedia(
         query,
         type,
         genres: genres,
@@ -96,10 +131,19 @@ class ExternalRemoteDataSource {
         page: page,
         perPage: perPage,
       );
-    } catch (e) {
+
+      Logger.info(
+        'ExternalRemoteDataSource.searchMediaAdvanced completed: ${result.items.length} results',
+        tag: 'ExternalRemoteDataSource',
+      );
+
+      return result;
+    } catch (e, stackTrace) {
       Logger.error(
         'External advanced search failed for source $sourceId',
+        tag: 'ExternalRemoteDataSource',
         error: e,
+        stackTrace: stackTrace,
       );
       rethrow;
     }
@@ -210,106 +254,199 @@ class ExternalRemoteDataSource {
   }
 
   Future<List<EpisodeEntity>> getEpisodes(MediaEntity media) async {
-    List<EpisodeEntity> episodes = [];
+    Logger.info('Fetching episodes for ${media.title} from ${media.sourceId}');
 
-    // 1. Try primary source
-    try {
-      final dataSource = _getDataSource(media.sourceId);
-      if (dataSource is KitsuExternalDataSourceImpl) {
-        episodes = await dataSource.getEpisodes(media.id);
-      } else if (dataSource is AnilistExternalDataSourceImpl) {
-        episodes = await dataSource.getEpisodes(media.id);
-      } else if (dataSource is JikanExternalDataSourceImpl) {
-        episodes = await dataSource.getEpisodes(media.id);
+    // Use CrossProviderMatcher to find matches across all providers
+    var matches = await _matcher.findMatches(
+      title: media.title,
+      type: media.type,
+      primarySourceId: media.sourceId,
+      searchFunction: searchMedia,
+      cache: _cache,
+    );
+
+    // Ensure AniList is always included for anime episodes (it has good episode data)
+    // This helps when the cache doesn't have AniList or when other providers fail
+    Logger.info(
+      'AniList fallback check: type=${media.type}, sourceId=${media.sourceId}, hasAniList=${matches.containsKey('anilist')}, matchKeys=${matches.keys.toList()}',
+    );
+    if (media.type == MediaType.anime &&
+        media.sourceId != 'anilist' &&
+        !matches.containsKey('anilist')) {
+      Logger.info(
+        'Attempting to add AniList as fallback provider for "${media.title}"',
+      );
+      try {
+        final anilistResults = await searchMedia(
+          media.title,
+          'anilist',
+          media.type,
+        );
+        Logger.info('AniList search returned ${anilistResults.length} results');
+        if (anilistResults.isNotEmpty) {
+          final anilistMatch = anilistResults.first;
+          matches = Map.from(matches);
+          matches['anilist'] = ProviderMatch(
+            providerId: 'anilist',
+            providerMediaId: anilistMatch.id,
+            confidence: 0.85,
+            matchedTitle: anilistMatch.title,
+            mediaEntity: anilistMatch,
+          );
+          Logger.info(
+            'Added AniList as fallback provider for episodes (ID: ${anilistMatch.id})',
+          );
+        } else {
+          Logger.warning('No AniList results found for "${media.title}"');
+        }
+      } catch (e) {
+        Logger.warning('Could not add AniList as fallback: $e');
       }
+    }
+
+    Logger.info(
+      'Found ${matches.length} high-confidence matches for episode aggregation: ${matches.keys.toList()}',
+    );
+
+    // Use DataAggregator to merge episodes from all providers
+    // This implements the fallback strategy: Kitsu → AniList → Jikan
+    // Pass the cover image to avoid extra API calls
+    final aggregatedEpisodes = await _aggregator.aggregateEpisodes(
+      primaryMedia: media,
+      matches: matches,
+      episodeFetcher: (mediaId, providerId) {
+        // Get cover image from primary media or matched provider
+        String? coverImage;
+        if (providerId == media.sourceId) {
+          coverImage = media.coverImage;
+        } else if (matches.containsKey(providerId)) {
+          coverImage = matches[providerId]?.mediaEntity?.coverImage;
+        }
+        return _fetchEpisodesFromProvider(
+          mediaId,
+          providerId,
+          coverImage: coverImage,
+        );
+      },
+    );
+
+    Logger.info(
+      'Aggregated ${aggregatedEpisodes.length} episodes for ${media.title}',
+    );
+
+    return aggregatedEpisodes;
+  }
+
+  /// Fetch episodes from a specific provider
+  ///
+  /// This is a helper method used by DataAggregator to fetch episodes
+  /// from individual providers. It handles provider-specific logic and
+  /// error handling.
+  Future<List<EpisodeEntity>> _fetchEpisodesFromProvider(
+    String mediaId,
+    String providerId, {
+    String? coverImage,
+  }) async {
+    try {
+      final dataSource = _getDataSource(providerId);
+
+      // Only fetch episodes from providers that support them
+      // Pass cover image when available to avoid extra API calls
+      if (dataSource is KitsuExternalDataSourceImpl) {
+        return await dataSource.getEpisodes(mediaId, coverImage: coverImage);
+      } else if (dataSource is AnilistExternalDataSourceImpl) {
+        Logger.info('Fetching episodes from AniList for media ID: $mediaId');
+        final episodes = await dataSource.getEpisodes(mediaId);
+        Logger.info('AniList returned ${episodes.length} episodes');
+        return episodes;
+      } else if (dataSource is JikanExternalDataSourceImpl) {
+        return await dataSource.getEpisodes(mediaId, coverImage: coverImage);
+      }
+
+      // Provider doesn't support episodes
+      return [];
     } catch (e) {
       Logger.error(
-        'Primary source episodes failed for ${media.sourceName}',
+        'Failed to fetch episodes from provider $providerId',
         error: e,
       );
+      return [];
     }
+  }
 
-    if (episodes.isNotEmpty) return episodes;
+  /// Fetch chapters from a specific provider
+  ///
+  /// This is a helper method used by DataAggregator to fetch chapters
+  /// from individual providers. It handles provider-specific logic and
+  /// error handling.
+  ///
+  /// Note: Most manga APIs don't provide chapter-level data. We generate
+  /// placeholder chapters based on the manga's total chapter count.
+  Future<List<ChapterEntity>> _fetchChaptersFromProvider(
+    String mediaId,
+    String providerId,
+  ) async {
+    try {
+      final dataSource = _getDataSource(providerId);
 
-    // 2. Fallback: Kitsu (Best for images)
-    if (media.sourceId != 'kitsu') {
-      final match = await _findMatchInSource(media.title, media.type, 'kitsu');
-      if (match != null) {
-        try {
-          episodes = await _kitsuDataSource.getEpisodes(match.id);
-          if (episodes.isNotEmpty) return episodes;
-        } catch (e) {
-          Logger.error('Kitsu fallback episodes failed', error: e);
-        }
+      // Fetch chapters from providers that support them
+      if (dataSource is KitsuExternalDataSourceImpl) {
+        Logger.info('Fetching chapters from Kitsu for manga ID: $mediaId');
+        final chapters = await dataSource.getChapters(mediaId);
+        Logger.info('Kitsu returned ${chapters.length} chapters');
+        return chapters;
+      } else if (dataSource is AnilistExternalDataSourceImpl) {
+        Logger.info('Fetching chapters from AniList for manga ID: $mediaId');
+        final chapters = await dataSource.getChapters(mediaId);
+        Logger.info('AniList returned ${chapters.length} chapters');
+        return chapters;
+      } else if (dataSource is JikanExternalDataSourceImpl) {
+        Logger.info('Fetching chapters from Jikan for manga ID: $mediaId');
+        final chapters = await dataSource.getChapters(mediaId);
+        Logger.info('Jikan returned ${chapters.length} chapters');
+        return chapters;
       }
-    }
 
-    // 3. Fallback: Jikan
-    if (media.sourceId != 'jikan') {
-      final match = await _findMatchInSource(media.title, media.type, 'jikan');
-      if (match != null) {
-        try {
-          episodes = await _jikanDataSource.getEpisodes(match.id);
-          if (episodes.isNotEmpty) return episodes;
-        } catch (e) {
-          Logger.error('Jikan fallback episodes failed', error: e);
-        }
-      }
-    }
-
-    // 4. Fallback: AniList
-    if (media.sourceId != 'anilist') {
-      final match = await _findMatchInSource(
-        media.title,
-        media.type,
-        'anilist',
+      // Provider doesn't support chapters
+      return [];
+    } catch (e) {
+      Logger.error(
+        'Failed to fetch chapters from provider $providerId',
+        error: e,
       );
-      if (match != null) {
-        try {
-          episodes = await _anilistDataSource.getEpisodes(match.id);
-          if (episodes.isNotEmpty) return episodes;
-        } catch (e) {
-          Logger.error('AniList fallback episodes failed', error: e);
-        }
-      }
+      return [];
     }
-
-    return episodes;
   }
 
   Future<List<ChapterEntity>> getChapters(MediaEntity media) async {
-    List<ChapterEntity> chapters = [];
+    Logger.info('Fetching chapters for ${media.title} from ${media.sourceId}');
 
-    // 1. Try primary source
-    try {
-      final dataSource = _getDataSource(media.sourceId);
-      if (dataSource is KitsuExternalDataSourceImpl) {
-        chapters = await dataSource.getChapters(media.id);
-      }
-      // AniList and Jikan don't support chapters via API yet
-    } catch (e) {
-      Logger.error(
-        'Primary source chapters failed for ${media.sourceName}',
-        error: e,
-      );
-    }
+    // Use CrossProviderMatcher to find matches across all providers
+    final matches = await _matcher.findMatches(
+      title: media.title,
+      type: media.type,
+      primarySourceId: media.sourceId,
+      searchFunction: searchMedia,
+      cache: _cache,
+    );
 
-    if (chapters.isNotEmpty) return chapters;
+    Logger.info(
+      'Found ${matches.length} high-confidence matches for chapter aggregation',
+    );
 
-    // 2. Fallback: Kitsu (Primary source for chapters)
-    if (media.sourceId != 'kitsu') {
-      final match = await _findMatchInSource(media.title, media.type, 'kitsu');
-      if (match != null) {
-        try {
-          chapters = await _kitsuDataSource.getChapters(match.id);
-          if (chapters.isNotEmpty) return chapters;
-        } catch (e) {
-          Logger.error('Kitsu fallback chapters failed', error: e);
-        }
-      }
-    }
+    // Use DataAggregator to merge chapters from all providers
+    // This implements the Kitsu-first fallback strategy
+    final aggregatedChapters = await _aggregator.aggregateChapters(
+      primaryMedia: media,
+      matches: matches,
+      chapterFetcher: _fetchChaptersFromProvider,
+    );
 
-    return chapters;
+    Logger.info(
+      'Aggregated ${aggregatedChapters.length} chapters for ${media.title}',
+    );
+
+    return aggregatedChapters;
   }
 
   /// Get available external sources

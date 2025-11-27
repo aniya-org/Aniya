@@ -42,6 +42,16 @@ class MediaDetailsEntity {
   final List<RankingEntity>? rankings;
   final TrailerEntity? trailer;
 
+  // Cross-provider attribution fields
+  /// Map of data field to source provider (e.g., {'episodes': 'kitsu', 'coverImage': 'tmdb'})
+  final Map<String, String>? dataSourceAttribution;
+
+  /// List of all providers that contributed data to this entity
+  final List<String>? contributingProviders;
+
+  /// Confidence scores for cross-provider matches (e.g., {'anilist': 0.95, 'kitsu': 0.87})
+  final Map<String, double>? matchConfidences;
+
   const MediaDetailsEntity({
     required this.id,
     required this.title,
@@ -80,6 +90,9 @@ class MediaDetailsEntity {
     this.studios,
     this.rankings,
     this.trailer,
+    this.dataSourceAttribution,
+    this.contributingProviders,
+    this.matchConfidences,
   });
 
   MediaDetailsEntity copyWith({
@@ -120,6 +133,9 @@ class MediaDetailsEntity {
     List<StudioEntity>? studios,
     List<RankingEntity>? rankings,
     TrailerEntity? trailer,
+    Map<String, String>? dataSourceAttribution,
+    List<String>? contributingProviders,
+    Map<String, double>? matchConfidences,
   }) {
     return MediaDetailsEntity(
       id: id ?? this.id,
@@ -159,6 +175,11 @@ class MediaDetailsEntity {
       studios: studios ?? this.studios,
       rankings: rankings ?? this.rankings,
       trailer: trailer ?? this.trailer,
+      dataSourceAttribution:
+          dataSourceAttribution ?? this.dataSourceAttribution,
+      contributingProviders:
+          contributingProviders ?? this.contributingProviders,
+      matchConfidences: matchConfidences ?? this.matchConfidences,
     );
   }
 }

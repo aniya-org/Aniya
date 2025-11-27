@@ -51,10 +51,12 @@ dependencies:
   isar_community: ^3.3.0-dev.3
   isar_community_flutter_libs: ^3.3.0-dev.3
   path_provider: ^2.1.5
+  path: ^1.9.0
+  shared_preferences: ^2.2.3
 
   # Extension Bridge
   dartotsu_extension_bridge:
-    path: ../DartotsuExtensionBridge
+    path: packages/dartotsu_extension_bridge
 
   # Extension Bridge Dependencies
   install_plugin: ^2.1.0
@@ -83,6 +85,12 @@ dependencies:
   photo_view: ^0.15.0
   flutter_web_auth_2: ^4.1.0
   flutter_dotenv: ^6.0.0
+
+  # Deep Link Handling
+  app_links: ^6.3.3
+
+  # Permissions
+  permission_handler: ^11.3.1
 
 dev_dependencies:
   flutter_test:

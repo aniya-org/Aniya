@@ -10,9 +10,29 @@ class EpisodeModel extends EpisodeEntity {
     super.thumbnail,
     super.duration,
     super.releaseDate,
+    super.sourceProvider,
+    super.alternativeData,
   });
 
   factory EpisodeModel.fromJson(Map<String, dynamic> json) {
+    Map<String, EpisodeData>? alternativeData;
+    if (json['alternativeData'] != null) {
+      final altDataMap = json['alternativeData'] as Map<String, dynamic>;
+      alternativeData = altDataMap.map(
+        (key, value) => MapEntry(
+          key,
+          EpisodeData(
+            title: value['title'] as String?,
+            thumbnail: value['thumbnail'] as String?,
+            description: value['description'] as String?,
+            airDate: value['airDate'] != null
+                ? DateTime.parse(value['airDate'] as String)
+                : null,
+          ),
+        ),
+      );
+    }
+
     return EpisodeModel(
       id: json['id'] as String,
       mediaId: json['mediaId'] as String,
@@ -23,10 +43,24 @@ class EpisodeModel extends EpisodeEntity {
       releaseDate: json['releaseDate'] != null
           ? DateTime.parse(json['releaseDate'] as String)
           : null,
+      sourceProvider: json['sourceProvider'] as String?,
+      alternativeData: alternativeData,
     );
   }
 
   Map<String, dynamic> toJson() {
+    Map<String, dynamic>? alternativeDataJson;
+    if (alternativeData != null) {
+      alternativeDataJson = alternativeData!.map(
+        (key, value) => MapEntry(key, {
+          'title': value.title,
+          'thumbnail': value.thumbnail,
+          'description': value.description,
+          'airDate': value.airDate?.toIso8601String(),
+        }),
+      );
+    }
+
     return {
       'id': id,
       'mediaId': mediaId,
@@ -35,6 +69,8 @@ class EpisodeModel extends EpisodeEntity {
       'thumbnail': thumbnail,
       'duration': duration,
       'releaseDate': releaseDate?.toIso8601String(),
+      'sourceProvider': sourceProvider,
+      'alternativeData': alternativeDataJson,
     };
   }
 
@@ -63,6 +99,32 @@ class EpisodeModel extends EpisodeEntity {
       thumbnail: thumbnail,
       duration: duration,
       releaseDate: releaseDate,
+      sourceProvider: sourceProvider,
+      alternativeData: alternativeData,
+    );
+  }
+
+  EpisodeModel copyWith({
+    String? id,
+    String? mediaId,
+    String? title,
+    int? number,
+    String? thumbnail,
+    int? duration,
+    DateTime? releaseDate,
+    String? sourceProvider,
+    Map<String, EpisodeData>? alternativeData,
+  }) {
+    return EpisodeModel(
+      id: id ?? this.id,
+      mediaId: mediaId ?? this.mediaId,
+      title: title ?? this.title,
+      number: number ?? this.number,
+      thumbnail: thumbnail ?? this.thumbnail,
+      duration: duration ?? this.duration,
+      releaseDate: releaseDate ?? this.releaseDate,
+      sourceProvider: sourceProvider ?? this.sourceProvider,
+      alternativeData: alternativeData ?? this.alternativeData,
     );
   }
 }

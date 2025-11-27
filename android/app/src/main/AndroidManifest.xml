@@ -1,4 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Permission to install packages (for extension installation) -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    
     <application
         android:label="aniya"
         android:name="${applicationName}"
@@ -23,6 +26,55 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+
+            <!-- Deep Link: Aniyomi scheme (aniyomi://add-repo?url=...) -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="aniyomi" android:host="add-repo" />
+            </intent-filter>
+
+            <!-- Deep Link: Tachiyomi scheme (tachiyomi://add-repo?url=...) -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="tachiyomi" android:host="add-repo" />
+            </intent-filter>
+
+            <!-- Deep Link: Mangayomi scheme (mangayomi://add-repo?url=...) -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="mangayomi" android:host="add-repo" />
+            </intent-filter>
+
+            <!-- Deep Link: Dar scheme (dar://add-repo?url=...) -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="dar" android:host="add-repo" />
+            </intent-filter>
+
+            <!-- Deep Link: CloudStream repo scheme (cloudstreamrepo://...) -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="cloudstreamrepo" />
+            </intent-filter>
+
+            <!-- Deep Link: cs.repo URL (https://cs.repo/?...) -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="cs.repo" />
+                <data android:scheme="http" android:host="cs.repo" />
             </intent-filter>
         </activity>
 
