@@ -13,26 +13,29 @@ import '../../../../core/navigation/app_navigation.dart';
 import '../../../details/presentation/screens/anime_manga_details_screen.dart';
 import '../viewmodels/browse_viewmodel.dart';
 
-/// Screen for browsing anime content from extensions
-class AnimeScreen extends StatefulWidget {
-  const AnimeScreen({super.key});
+/// Screen for browsing novel/light novel content from extensions
+class NovelScreen extends StatefulWidget {
+  const NovelScreen({super.key});
 
   @override
-  State<AnimeScreen> createState() => _AnimeScreenState();
+  State<NovelScreen> createState() => _NovelScreenState();
 }
 
-class _AnimeScreenState extends State<AnimeScreen> {
+class _NovelScreenState extends State<NovelScreen> {
   final ScrollController _scrollController = ScrollController();
   String _selectedSource = 'anilist';
 
   @override
   void initState() {
     super.initState();
-    // Load anime content when screen initializes
+    // Load novel content when screen initializes
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final viewModel = context.read<BrowseViewModel>();
-      viewModel.setMediaType(MediaType.anime);
-      viewModel.setSourceId(_selectedSource);
+      viewModel.setMediaTypeAndSource(
+        type: MediaType.novel,
+        sourceId: 'anilist',
+        force: true,
+      );
       viewModel.loadMedia();
     });
 
@@ -73,7 +76,7 @@ class _AnimeScreenState extends State<AnimeScreen> {
                 return CustomScrollView(
                   slivers: [
                     // App Bar
-                    SliverAppBar(title: const Text('Anime'), floating: true),
+                    SliverAppBar(title: const Text('Novels'), floating: true),
                     // Skeleton Grid
                     SliverPadding(
                       padding: EdgeInsets.all(padding.left),
@@ -107,7 +110,7 @@ class _AnimeScreenState extends State<AnimeScreen> {
                 slivers: [
                   // App Bar with filters
                   SliverAppBar(
-                    title: const Text('Anime'),
+                    title: const Text('Novels'),
                     floating: true,
                     actions: [
                       // Search button
@@ -189,7 +192,7 @@ class _AnimeScreenState extends State<AnimeScreen> {
                     ],
                   ),
 
-                  // Source Selector
+                  // Source Selector - Only AniList supports novels properly
                   SliverToBoxAdapter(
                     child: SourceSelector(
                       currentSource: _selectedSource,
@@ -197,19 +200,8 @@ class _AnimeScreenState extends State<AnimeScreen> {
                         SourceOption(
                           id: 'anilist',
                           name: 'AniList',
-                          icon: const Icon(Icons.list, size: 16),
-                        ),
-                        SourceOption(
-                          id: 'jikan',
-                          name: 'MyAnimeList (Jikan)',
-                          icon: const Icon(Icons.list, size: 16),
-                        ),
-                        SourceOption(
-                          id: 'kitsu',
-                          name: 'Kitsu',
                           icon: const Icon(Icons.explore, size: 16),
                         ),
-                        // Simkl removed: API doesn't support browsing/discovery endpoints
                       ],
                       onSourceChanged: (source) {
                         setState(() => _selectedSource = source);
@@ -264,7 +256,7 @@ class _AnimeScreenState extends State<AnimeScreen> {
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Icon(
-                              Icons.movie_outlined,
+                              Icons.auto_stories_outlined,
                               size: 64,
                               color: Theme.of(
                                 context,
@@ -272,12 +264,12 @@ class _AnimeScreenState extends State<AnimeScreen> {
                             ),
                             const SizedBox(height: 16),
                             Text(
-                              'No anime found',
+                              'No novels found',
                               style: Theme.of(context).textTheme.titleLarge,
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              'Try adjusting your filters',
+                              'Try adjusting your filters or source',
                               style: Theme.of(context).textTheme.bodyMedium
                                   ?.copyWith(
                                     color: Theme.of(

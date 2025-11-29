@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import '../../../../core/domain/entities/media_entity.dart';
 import '../../../../core/domain/usecases/get_popular_media_usecase.dart';
 import '../../../../core/domain/usecases/get_trending_media_usecase.dart';
+import '../../../../core/domain/usecases/search_media_usecase.dart';
 import '../../../../core/error/failures.dart';
 
 enum SortOption { popularity, rating, releaseDate }
@@ -9,10 +10,12 @@ enum SortOption { popularity, rating, releaseDate }
 class BrowseViewModel extends ChangeNotifier {
   final GetPopularMediaUseCase getPopularMedia;
   final GetTrendingMediaUseCase getTrendingMedia;
+  final SearchMediaUseCase? searchMedia;
 
   BrowseViewModel({
     required this.getPopularMedia,
     required this.getTrendingMedia,
+    this.searchMedia,
   });
 
   List<MediaEntity> _mediaList = [];
@@ -25,6 +28,8 @@ class BrowseViewModel extends ChangeNotifier {
   List<String> _genreFilters = [];
   MediaStatus? _statusFilter;
   String? _sourceId;
+  String _searchQuery = '';
+  bool _isSearchMode = false;
 
   List<MediaEntity> get mediaList => _mediaList;
   MediaType get mediaType => _mediaType;
@@ -35,12 +40,29 @@ class BrowseViewModel extends ChangeNotifier {
   List<String> get genreFilters => _genreFilters;
   MediaStatus? get statusFilter => _statusFilter;
   String? get sourceId => _sourceId;
+  String get searchQuery => _searchQuery;
+  bool get isSearchMode => _isSearchMode;
 
   void setMediaType(MediaType type) {
     if (_mediaType != type) {
       _mediaType = type;
       _resetAndLoad();
     }
+  }
+
+  void setMediaTypeAndSource({
+    required MediaType type,
+    required String? sourceId,
+    bool force = false,
+  }) {
+    final typeChanged = _mediaType != type;
+    final sourceChanged = _sourceId != sourceId;
+    if (!force && !typeChanged && !sourceChanged) {
+      return;
+    }
+    _mediaType = type;
+    _sourceId = sourceId;
+    _resetAndLoad();
   }
 
   void setSortOption(SortOption option) {
@@ -67,6 +89,26 @@ class BrowseViewModel extends ChangeNotifier {
     }
   }
 
+  /// Force set source ID and reload, even if the sourceId is the same
+  void forceSetSourceId(String? sourceId) {
+    _sourceId = sourceId;
+    _resetAndLoad();
+  }
+
+  /// Set search query and trigger search
+  void setSearchQuery(String query) {
+    _searchQuery = query.trim();
+    _isSearchMode = _searchQuery.isNotEmpty;
+    _resetAndLoad();
+  }
+
+  /// Clear search and return to browse mode
+  void clearSearch() {
+    _searchQuery = '';
+    _isSearchMode = false;
+    _resetAndLoad();
+  }
+
   Future<void> loadMedia({bool loadMore = false}) async {
     if (_isLoading) return;
 
@@ -84,22 +126,35 @@ class BrowseViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // Use trending or popular based on sort option
-      final result = _sortOption == SortOption.popularity
-          ? await getPopularMedia(
-              GetPopularMediaParams(
-                type: _mediaType,
-                page: _currentPage,
-                sourceId: _sourceId,
-              ),
-            )
-          : await getTrendingMedia(
-              GetTrendingMediaParams(
-                type: _mediaType,
-                page: _currentPage,
-                sourceId: _sourceId,
-              ),
-            );
+      dynamic result;
+
+      // Use search if in search mode, otherwise use trending/popular
+      if (_isSearchMode && searchMedia != null) {
+        result = await searchMedia!(
+          SearchMediaParams(
+            query: _searchQuery,
+            type: _mediaType,
+            sourceId: _sourceId,
+          ),
+        );
+      } else {
+        // Use trending or popular based on sort option
+        result = _sortOption == SortOption.popularity
+            ? await getPopularMedia(
+                GetPopularMediaParams(
+                  type: _mediaType,
+                  page: _currentPage,
+                  sourceId: _sourceId,
+                ),
+              )
+            : await getTrendingMedia(
+                GetTrendingMediaParams(
+                  type: _mediaType,
+                  page: _currentPage,
+                  sourceId: _sourceId,
+                ),
+              );
+      }
 
       result.fold(
         (failure) {

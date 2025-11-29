@@ -136,7 +136,9 @@ class JikanExternalDataSourceImpl {
         tag: 'JikanDataSource',
       );
 
-      if (type != MediaType.anime && type != MediaType.manga) {
+      if (type != MediaType.anime &&
+          type != MediaType.manga &&
+          type != MediaType.novel) {
         Logger.debug(
           'Jikan does not support type: $type',
           tag: 'JikanDataSource',
@@ -150,6 +152,7 @@ class JikanExternalDataSourceImpl {
         );
       }
 
+      // Novels (light novels) are under manga endpoint in MAL/Jikan with type filter
       final endpoint = type == MediaType.anime ? 'anime' : 'manga';
 
       // Build query parameters

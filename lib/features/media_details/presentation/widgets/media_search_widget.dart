@@ -340,6 +340,8 @@ class _MediaSearchWidgetState extends State<MediaSearchWidget> {
         return 'Anime';
       case MediaType.manga:
         return 'Manga';
+      case MediaType.novel:
+        return 'Novel';
       case MediaType.movie:
         return 'Movie';
       case MediaType.tvShow:

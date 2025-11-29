@@ -671,7 +671,9 @@ class ExternalRemoteDataSource {
       List<ChapterEntity> providerFallback = [];
       final sourceKey = media.sourceId.toLowerCase();
       try {
-        if (sourceKey == 'jikan') {
+        if (sourceKey == 'anilist') {
+          providerFallback = await _anilistDataSource.getChapters(media.id);
+        } else if (sourceKey == 'jikan') {
           providerFallback = await _jikanDataSource.getChapters(media.id);
         } else if (sourceKey == 'kitsu') {
           providerFallback = await _kitsuDataSource.getChapters(media.id);

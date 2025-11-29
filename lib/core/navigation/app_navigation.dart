@@ -1,22 +1,14 @@
 import 'package:flutter/material.dart';
 
 /// Navigation destinations for the application
-enum AppDestination {
-  home,
-  anime,
-  manga,
-  search,
-  library,
-  extensions,
-  settings,
-}
+enum AppDestination { home, anime, manga, novel, library, extensions, settings }
 
 /// Route names for navigation
 class AppRoutes {
   static const String home = '/';
   static const String anime = '/anime';
   static const String manga = '/manga';
-  static const String search = '/search';
+  static const String novel = '/novel';
   static const String library = '/library';
   static const String extensions = '/extensions';
   static const String settings = '/settings';
@@ -62,10 +54,10 @@ class AppNavigationDestinations {
       selectedIcon: Icons.book,
     ),
     NavigationDestinationData(
-      destination: AppDestination.search,
-      label: 'Search',
-      icon: Icons.search_outlined,
-      selectedIcon: Icons.search,
+      destination: AppDestination.novel,
+      label: 'Novels',
+      icon: Icons.auto_stories_outlined,
+      selectedIcon: Icons.auto_stories,
     ),
     NavigationDestinationData(
       destination: AppDestination.library,
@@ -93,7 +85,7 @@ class AppNavigationDestinations {
       return d.destination == AppDestination.home ||
           d.destination == AppDestination.anime ||
           d.destination == AppDestination.manga ||
-          d.destination == AppDestination.search ||
+          d.destination == AppDestination.novel ||
           d.destination == AppDestination.library;
     }).toList();
   }

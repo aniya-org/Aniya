@@ -172,6 +172,8 @@ class MediaCard extends StatelessWidget {
         return Icons.movie;
       case MediaType.manga:
         return Icons.book;
+      case MediaType.novel:
+        return Icons.auto_stories;
       case MediaType.movie:
         return Icons.theaters;
       case MediaType.tvShow:
@@ -185,6 +187,8 @@ class MediaCard extends StatelessWidget {
         return 'ANIME';
       case MediaType.manga:
         return 'MANGA';
+      case MediaType.novel:
+        return 'NOVEL';
       case MediaType.movie:
         return 'MOVIE';
       case MediaType.tvShow:
@@ -197,6 +201,8 @@ class MediaCard extends StatelessWidget {
       case MediaType.anime:
         return colorScheme.primary;
       case MediaType.manga:
+        return colorScheme.secondary;
+      case MediaType.novel:
         return colorScheme.secondary;
       case MediaType.movie:
         return colorScheme.tertiary;

@@ -204,7 +204,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
       itemBuilder: (context, index) {
         return GestureDetector(
           onTap: _toggleControls,
-          child: _buildPageWithZoom(index),
+          child: _buildVerticalPage(index),
         );
       },
     );
@@ -238,37 +238,63 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
     );
   }
 
-  Widget _buildPageWithZoom(int index) {
-    final screenHeight = MediaQuery.of(context).size.height;
-    return SizedBox(
-      height: screenHeight,
-      child: PhotoView(
-        imageProvider: NetworkImage(_viewModel.pages[index]),
-        initialScale: PhotoViewComputedScale.contained,
-        minScale: PhotoViewComputedScale.contained,
-        maxScale: PhotoViewComputedScale.covered * 3,
-        backgroundDecoration: const BoxDecoration(color: Colors.black),
-        loadingBuilder: (context, event) => Center(
-          child: CircularProgressIndicator(
-            value: event == null
-                ? 0
-                : event.cumulativeBytesLoaded / (event.expectedTotalBytes ?? 1),
-          ),
-        ),
-        errorBuilder: (context, error, stackTrace) => Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.error_outline, color: Colors.red, size: 48),
-              const SizedBox(height: 8),
-              Text(
-                'Failed to load page ${index + 1}',
-                style: const TextStyle(color: Colors.white),
+  Widget _buildVerticalPage(int index) {
+    final imageUrl = _viewModel.pages[index];
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return Container(
+          width: constraints.maxWidth,
+          color: Colors.black,
+          child: InteractiveViewer(
+            minScale: 1,
+            maxScale: 3,
+            clipBehavior: Clip.none,
+            child: Image.network(
+              imageUrl,
+              width: constraints.maxWidth,
+              fit: BoxFit.fitWidth,
+              alignment: Alignment.topCenter,
+              loadingBuilder: (context, child, loadingProgress) {
+                if (loadingProgress == null) {
+                  return child;
+                }
+
+                final expectedBytes = loadingProgress.expectedTotalBytes;
+                final loadedBytes = loadingProgress.cumulativeBytesLoaded;
+
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 24),
+                  child: Center(
+                    child: CircularProgressIndicator(
+                      value: expectedBytes != null
+                          ? loadedBytes / expectedBytes
+                          : null,
+                    ),
+                  ),
+                );
+              },
+              errorBuilder: (context, error, stackTrace) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 32),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(
+                      Icons.error_outline,
+                      color: Colors.red,
+                      size: 48,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Failed to load page ${index + 1}',
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                  ],
+                ),
               ),
-            ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 

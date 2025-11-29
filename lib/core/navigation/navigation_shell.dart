@@ -7,13 +7,12 @@ import 'navigation_controller.dart';
 import '../../features/home/presentation/screens/home_screen.dart';
 import '../../features/home/presentation/screens/anime_screen.dart';
 import '../../features/home/presentation/screens/manga_screen.dart';
-import '../../features/search/presentation/screens/search_screen.dart';
+import '../../features/home/presentation/screens/novel_screen.dart';
 import '../../features/library/presentation/screens/library_screen.dart';
 import '../../features/extensions/presentation/screens/extension_screen.dart';
 import '../../features/settings/presentation/screens/settings_screen.dart';
 import '../../features/home/presentation/viewmodels/home_viewmodel.dart';
 import '../../features/home/presentation/viewmodels/browse_viewmodel.dart';
-import '../../features/search/presentation/viewmodels/search_viewmodel.dart';
 import '../../features/library/presentation/viewmodels/library_viewmodel.dart';
 import '../../features/settings/presentation/viewmodels/settings_viewmodel.dart';
 
@@ -96,10 +95,10 @@ class _NavigationShellState extends State<NavigationShell>
           value: getIt<BrowseViewModel>(),
           child: const MangaScreen(),
         );
-      case AppDestination.search:
+      case AppDestination.novel:
         return ChangeNotifierProvider.value(
-          value: getIt<SearchViewModel>(),
-          child: const SearchScreen(),
+          value: getIt<BrowseViewModel>(),
+          child: const NovelScreen(),
         );
       case AppDestination.library:
         return ChangeNotifierProvider.value(

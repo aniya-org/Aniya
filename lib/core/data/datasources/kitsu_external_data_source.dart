@@ -51,7 +51,9 @@ class KitsuExternalDataSourceImpl {
         tag: 'KitsuDataSource',
       );
 
-      if (type != MediaType.anime && type != MediaType.manga) {
+      if (type != MediaType.anime &&
+          type != MediaType.manga &&
+          type != MediaType.novel) {
         Logger.debug(
           'Kitsu does not support type: $type',
           tag: 'KitsuDataSource',
@@ -65,6 +67,7 @@ class KitsuExternalDataSourceImpl {
         );
       }
 
+      // Novels are under manga endpoint in Kitsu with subtype filter
       final endpoint = type == MediaType.anime ? 'anime' : 'manga';
 
       // Build query parameters

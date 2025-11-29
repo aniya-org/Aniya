@@ -144,6 +144,46 @@ class MediaRepositoryImpl implements MediaRepository {
   }
 
   @override
+  Future<Either<Failure, String>> getNovelChapterContent(
+    String chapterId,
+    String chapterTitle,
+    String sourceId,
+  ) async {
+    try {
+      final content = await remoteDataSource.getNovelChapterContent(
+        chapterId,
+        chapterTitle,
+        sourceId,
+      );
+      return Right(content);
+    } on ServerException catch (e) {
+      Logger.error(
+        'Server exception in getNovelChapterContent',
+        tag: 'MediaRepositoryImpl',
+        error: e,
+      );
+      return Left(ServerFailure(e.message));
+    } on NetworkException catch (e) {
+      Logger.error(
+        'Network exception in getNovelChapterContent',
+        tag: 'MediaRepositoryImpl',
+        error: e,
+      );
+      return Left(NetworkFailure(e.message));
+    } catch (e, stackTrace) {
+      Logger.error(
+        'Unexpected error in getNovelChapterContent',
+        tag: 'MediaRepositoryImpl',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      return Left(
+        UnknownFailure('Failed to get novel chapter content: ${e.toString()}'),
+      );
+    }
+  }
+
+  @override
   Future<Either<Failure, MediaEntity>> getMediaDetails(
     String id,
     String sourceId,
@@ -657,6 +697,8 @@ class MediaRepositoryImpl implements MediaRepository {
         return ItemType.anime;
       case MediaType.manga:
         return ItemType.manga;
+      case MediaType.novel:
+        return ItemType.novel;
       case MediaType.movie:
         return ItemType.movie;
       case MediaType.tvShow:

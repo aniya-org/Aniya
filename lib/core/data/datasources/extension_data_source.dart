@@ -4,12 +4,13 @@ import 'package:dartotsu_extension_bridge/Models/DEpisode.dart';
 import 'package:dartotsu_extension_bridge/Models/DMedia.dart';
 import 'package:dartotsu_extension_bridge/Models/Source.dart';
 
+import '../../domain/entities/media_entity.dart';
+import '../../domain/services/lazy_extension_loader.dart';
+import '../../error/exceptions.dart';
+import '../../utils/logger.dart';
 import '../models/extension_model.dart';
 import '../models/media_model.dart';
 import '../models/source_model.dart';
-import '../../error/exceptions.dart';
-import '../../utils/logger.dart';
-import '../../domain/services/lazy_extension_loader.dart';
 
 // Re-export ItemType from bridge for convenience
 export 'package:dartotsu_extension_bridge/Models/Source.dart' show ItemType;
@@ -432,6 +433,7 @@ class ExtensionDataSourceImpl implements ExtensionDataSource {
               dMedia,
               source.id ?? extensionId,
               source.name ?? 'Unknown',
+              fallbackType: _mapBridgeItemTypeToMediaType(itemType),
             ),
           )
           .toList();
@@ -454,31 +456,33 @@ class ExtensionDataSourceImpl implements ExtensionDataSource {
     required ItemType itemType,
     required int episodeNumber,
   }) async {
+    Source? source;
     try {
       final manager = await _getExtensionManager(extensionType);
-      final source = await _findSourceById(manager, extensionId);
+      source = await _findSourceById(manager, extensionId);
 
       if (source == null) {
         throw ServerException('Extension not found: $extensionId');
       }
 
+      final resolvedSource = source;
       final media = DMedia.withUrl(mediaId);
-      final detail = await source.methods.getDetail(media);
+      final detail = await resolvedSource.methods.getDetail(media);
 
       final targetEpisode =
           _matchEpisode(detail.episodes, mediaId, episodeNumber) ??
           _buildEpisodeFallback(mediaId, episodeNumber);
 
       if (itemType == ItemType.anime) {
-        final videos = await source.methods.getVideoList(targetEpisode);
+        final videos = await resolvedSource.methods.getVideoList(targetEpisode);
         return videos
             .map(
               (video) => SourceModel(
-                id: '${source.id}-${video.url.hashCode}',
-                name: video.title ?? source.name ?? 'Video',
-                providerId: source.id ?? extensionId,
+                id: '${resolvedSource.id}-${video.url.hashCode}',
+                name: video.title ?? resolvedSource.name ?? 'Video',
+                providerId: resolvedSource.id ?? extensionId,
                 quality: video.quality,
-                language: source.lang,
+                language: resolvedSource.lang,
                 sourceLink: video.url,
                 headers: video.headers,
               ),
@@ -489,11 +493,11 @@ class ExtensionDataSourceImpl implements ExtensionDataSource {
       final chapterUrl = targetEpisode.url ?? mediaId;
       return [
         SourceModel(
-          id: '${source.id}-${chapterUrl.hashCode}',
-          name: source.name ?? 'Chapter',
-          providerId: source.id ?? extensionId,
+          id: '${resolvedSource.id}-${chapterUrl.hashCode}',
+          name: resolvedSource.name ?? 'Chapter',
+          providerId: resolvedSource.id ?? extensionId,
           quality: null,
-          language: source.lang,
+          language: resolvedSource.lang,
           sourceLink: chapterUrl,
         ),
       ];
@@ -504,7 +508,35 @@ class ExtensionDataSourceImpl implements ExtensionDataSource {
         error: e,
         stackTrace: stackTrace,
       );
-      throw ServerException('Failed to get sources: ${e.toString()}');
+      final sourceLabel = source?.name?.isNotEmpty == true
+          ? source!.name!
+          : 'this extension';
+      throw ServerException(
+        'Failed to load sources from $sourceLabel. Please try again shortly.',
+      );
+    }
+  }
+
+  MediaType _mapBridgeItemTypeToMediaType(ItemType type) {
+    switch (type) {
+      case ItemType.anime:
+        return MediaType.anime;
+      case ItemType.manga:
+        return MediaType.manga;
+      case ItemType.novel:
+        return MediaType.novel;
+      case ItemType.movie:
+        return MediaType.movie;
+      case ItemType.tvShow:
+        return MediaType.tvShow;
+      case ItemType.cartoon:
+        return MediaType.anime;
+      case ItemType.documentary:
+        return MediaType.tvShow;
+      case ItemType.livestream:
+        return MediaType.tvShow;
+      case ItemType.nsfw:
+        return MediaType.anime;
     }
   }
 }

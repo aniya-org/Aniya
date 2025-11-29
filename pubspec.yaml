@@ -98,6 +98,10 @@ dependencies:
   # Permissions
   permission_handler: ^11.3.1
 
+  # Novel Reader
+  markdown_widget: ^2.3.2+8
+  html: ^0.15.4
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

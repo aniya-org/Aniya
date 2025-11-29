@@ -69,11 +69,14 @@ class MediaModel extends MediaEntity {
   factory MediaModel.fromDMedia(
     DMedia dMedia,
     String sourceId,
-    String sourceName,
-  ) {
-    // Infer type from episodes - if present, could be anime/manga
-    // This is a simplified approach; in production, you'd check the source type
+    String sourceName, {
+    MediaType? fallbackType,
+  }) {
+    // Prefer provided fallback type (derived from extension item type)
+    // otherwise infer from available episode data.
     final hasEpisodes = dMedia.episodes != null && dMedia.episodes!.isNotEmpty;
+    final inferredType =
+        fallbackType ?? (hasEpisodes ? MediaType.anime : MediaType.manga);
 
     return MediaModel(
       id: dMedia.url ?? '',
@@ -81,7 +84,7 @@ class MediaModel extends MediaEntity {
       coverImage: dMedia.cover,
       bannerImage: null,
       description: dMedia.description,
-      type: hasEpisodes ? MediaType.anime : MediaType.manga,
+      type: inferredType,
       rating: null,
       genres: dMedia.genre ?? [],
       status: MediaStatus.ongoing,

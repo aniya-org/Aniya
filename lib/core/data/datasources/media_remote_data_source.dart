@@ -32,6 +32,13 @@ abstract class MediaRemoteDataSource {
 
   /// Get pages for a manga chapter
   Future<List<String>> getChapterPages(String chapterId, String sourceId);
+
+  /// Get novel chapter content (HTML/text) for a chapter
+  Future<String> getNovelChapterContent(
+    String chapterId,
+    String chapterTitle,
+    String sourceId,
+  );
 }
 
 class MediaRemoteDataSourceImpl implements MediaRemoteDataSource {
@@ -237,6 +244,33 @@ class MediaRemoteDataSourceImpl implements MediaRemoteDataSource {
       return pageList.map((page) => page.url).toList();
     } catch (e) {
       throw ServerException('Failed to get chapter pages: ${e.toString()}');
+    }
+  }
+
+  @override
+  Future<String> getNovelChapterContent(
+    String chapterId,
+    String chapterTitle,
+    String sourceId,
+  ) async {
+    try {
+      final source = _getSourceById(sourceId);
+      if (source == null) {
+        throw ServerException('Source not found: $sourceId');
+      }
+
+      final methods = source.methods;
+      final content = await methods.getNovelContent(chapterTitle, chapterId);
+
+      if (content == null || content.trim().isEmpty) {
+        throw ServerException('No content returned for chapter: $chapterId');
+      }
+
+      return content;
+    } catch (e) {
+      throw ServerException(
+        'Failed to get novel chapter content: ${e.toString()}',
+      );
     }
   }
 }

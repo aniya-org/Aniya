@@ -121,7 +121,8 @@ class MediaDetailsViewModel extends ChangeNotifier {
                 );
               }, (episodeList) => _episodes = episodeList);
             }
-          } else if (mediaEntity.type == MediaType.manga) {
+          } else if (mediaEntity.type == MediaType.manga ||
+              mediaEntity.type == MediaType.novel) {
             if (isExternalSource) {
               // Use aggregation for external sources
               Logger.info(

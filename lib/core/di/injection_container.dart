@@ -427,6 +427,7 @@ Future<void> initializeDependencies() async {
     () => BrowseViewModel(
       getPopularMedia: sl<GetPopularMediaUseCase>(),
       getTrendingMedia: sl<GetTrendingMediaUseCase>(),
+      searchMedia: sl<SearchMediaUseCase>(),
     ),
   );
   sl.registerLazySingleton<SearchViewModel>(

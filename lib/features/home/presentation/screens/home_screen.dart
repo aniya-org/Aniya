@@ -5,6 +5,9 @@ import '../../../../core/services/responsive_layout_manager.dart';
 import '../../../../core/widgets/widgets.dart';
 import '../../../../core/widgets/source_selector.dart';
 import '../../../../core/widgets/app_settings_menu.dart';
+import 'package:get_it/get_it.dart';
+import '../../../search/presentation/screens/search_screen.dart';
+import '../../../search/presentation/viewmodels/search_viewmodel.dart';
 import '../../../../core/navigation/navigation_controller.dart';
 import '../../../../core/navigation/app_navigation.dart';
 import '../viewmodels/home_viewmodel.dart';
@@ -58,6 +61,22 @@ class _HomeScreenState extends State<HomeScreen> with HomeScreenTmdbMethods {
                       title: const Text('Aniya'),
                       floating: true,
                       actions: [
+                        // Search button
+                        IconButton(
+                          icon: const Icon(Icons.search),
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) =>
+                                    ChangeNotifierProvider.value(
+                                      value: GetIt.instance<SearchViewModel>(),
+                                      child: const SearchScreen(),
+                                    ),
+                              ),
+                            );
+                          },
+                        ),
                         AppSettingsMenu(
                           onSettings: () {
                             NavigationController.of(

@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../../core/domain/entities/entities.dart';
 import '../../../../core/services/responsive_layout_manager.dart';
+import 'package:get_it/get_it.dart';
 import '../../../../core/widgets/widgets.dart';
 import '../../../../core/widgets/source_selector.dart';
 import '../../../../core/widgets/app_settings_menu.dart';
+import '../../../search/presentation/screens/search_screen.dart';
+import '../../../search/presentation/viewmodels/search_viewmodel.dart';
 import '../../../../core/navigation/navigation_controller.dart';
 import '../../../../core/navigation/app_navigation.dart';
 import '../../../details/presentation/screens/anime_manga_details_screen.dart';
@@ -107,6 +110,22 @@ class _MangaScreenState extends State<MangaScreen> {
                     title: const Text('Manga'),
                     floating: true,
                     actions: [
+                      // Search button
+                      IconButton(
+                        icon: const Icon(Icons.search),
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  ChangeNotifierProvider.value(
+                                    value: GetIt.instance<SearchViewModel>(),
+                                    child: const SearchScreen(),
+                                  ),
+                            ),
+                          );
+                        },
+                      ),
                       // Sort button
                       PopupMenuButton<SortOption>(
                         icon: const Icon(Icons.sort),

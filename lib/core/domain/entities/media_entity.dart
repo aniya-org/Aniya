@@ -1,6 +1,6 @@
 import 'package:equatable/equatable.dart';
 
-enum MediaType { anime, manga, movie, tvShow }
+enum MediaType { anime, manga, novel, movie, tvShow }
 
 enum MediaStatus { ongoing, completed, upcoming }
 

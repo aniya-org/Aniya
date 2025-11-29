@@ -255,6 +255,8 @@ class SimklExternalDataSourceImpl {
         return 'anime';
       case MediaType.manga:
         return 'manga';
+      case MediaType.novel:
+        return 'manga'; // Simkl doesn't have separate novel type
       case MediaType.movie:
         return 'movie';
       case MediaType.tvShow:

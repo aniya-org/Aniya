@@ -327,6 +327,8 @@ class _SearchScreenState extends State<SearchScreen> {
         return 'Anime';
       case MediaType.manga:
         return 'Manga';
+      case MediaType.novel:
+        return 'Novels';
       case MediaType.movie:
         return 'Movies';
       case MediaType.tvShow:

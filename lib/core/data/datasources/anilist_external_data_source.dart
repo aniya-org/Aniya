@@ -83,10 +83,85 @@ class AnilistExternalDataSourceImpl {
       );
 
       final String mediaType = _mapMediaTypeToAnilist(type);
+      // For novels, we need to filter by format NOVEL
+      final bool isNovel = type == MediaType.novel;
 
       // Advanced GraphQL query with filtering
       // Note: Only include parameters that are actually being used to avoid 400 errors
-      final String queryBody = '''
+      final String queryBody = isNovel
+          ? '''
+        query (
+          \$search: String,
+          \$type: MediaType,
+          \$format: MediaFormat,
+          \$page: Int,
+          \$perPage: Int
+        ) {
+          Page(page: \$page, perPage: \$perPage) {
+            pageInfo {
+              total
+              currentPage
+              lastPage
+              hasNextPage
+              perPage
+            }
+            media(
+              search: \$search,
+              type: \$type,
+              format: \$format,
+              sort: [SEARCH_MATCH, POPULARITY_DESC]
+            ) {
+              id
+              title {
+                romaji
+                english
+                native
+              }
+              coverImage {
+                extraLarge
+                large
+                medium
+              }
+              bannerImage
+              description
+              format
+              status
+              episodes
+              chapters
+              volumes
+              duration
+              startDate {
+                year
+                month
+                day
+              }
+              endDate {
+                year
+                month
+                day
+              }
+              genres
+              averageScore
+              meanScore
+              popularity
+              favourites
+              studios(isMain: true) {
+                edges {
+                  node {
+                    id
+                    name
+                  }
+                }
+              }
+              season
+              seasonYear
+              isAdult
+              siteUrl
+            }
+          }
+        }
+      '''
+          : '''
         query (
           \$search: String,
           \$type: MediaType,
@@ -163,6 +238,11 @@ class AnilistExternalDataSourceImpl {
         'page': page,
         'perPage': perPage,
       };
+
+      // Add format filter for novels
+      if (isNovel) {
+        variables['format'] = 'NOVEL';
+      }
 
       final response = await _dio.post(
         '',
@@ -407,7 +487,51 @@ class AnilistExternalDataSourceImpl {
   Future<List<MediaEntity>> getTrending(MediaType type, {int page = 1}) async {
     try {
       final String mediaType = _mapMediaTypeToAnilist(type);
-      final String queryBody = '''
+      final bool isNovel = type == MediaType.novel;
+
+      // Use format filter for novels
+      final String queryBody = isNovel
+          ? '''
+        query (\$type: MediaType, \$format: MediaFormat, \$page: Int, \$perPage: Int) {
+          Page(page: \$page, perPage: \$perPage) {
+            media(type: \$type, format: \$format, sort: [TRENDING_DESC], status: RELEASING) {
+              id
+              title {
+                romaji
+                english
+                native
+              }
+              coverImage {
+                extraLarge
+                large
+              }
+              bannerImage
+              description
+              format
+              status
+              episodes
+              chapters
+              volumes
+              startDate {
+                year
+                month
+                day
+              }
+              endDate {
+                year
+                month
+                day
+              }
+              genres
+              averageScore
+              meanScore
+              popularity
+              favourites
+            }
+          }
+        }
+      '''
+          : '''
         query (\$type: MediaType, \$page: Int, \$perPage: Int) {
           Page(page: \$page, perPage: \$perPage) {
             media(type: \$type, sort: [TRENDING_DESC], status: RELEASING) {
@@ -448,12 +572,18 @@ class AnilistExternalDataSourceImpl {
         }
       ''';
 
+      final variables = <String, dynamic>{
+        'type': mediaType,
+        'page': page,
+        'perPage': 20,
+      };
+      if (isNovel) {
+        variables['format'] = 'NOVEL';
+      }
+
       final response = await _dio.post(
         '',
-        data: {
-          'query': queryBody,
-          'variables': {'type': mediaType, 'page': page, 'perPage': 20},
-        },
+        data: {'query': queryBody, 'variables': variables},
       );
 
       final List mediaList = response.data['data']['Page']['media'] ?? [];
@@ -469,7 +599,51 @@ class AnilistExternalDataSourceImpl {
   Future<List<MediaEntity>> getPopular(MediaType type, {int page = 1}) async {
     try {
       final String mediaType = _mapMediaTypeToAnilist(type);
-      final String queryBody = '''
+      final bool isNovel = type == MediaType.novel;
+
+      // Use format filter for novels
+      final String queryBody = isNovel
+          ? '''
+        query (\$type: MediaType, \$format: MediaFormat, \$page: Int, \$perPage: Int) {
+          Page(page: \$page, perPage: \$perPage) {
+            media(type: \$type, format: \$format, sort: [POPULARITY_DESC]) {
+              id
+              title {
+                romaji
+                english
+                native
+              }
+              coverImage {
+                extraLarge
+                large
+              }
+              bannerImage
+              description
+              format
+              status
+              episodes
+              chapters
+              volumes
+              startDate {
+                year
+                month
+                day
+              }
+              endDate {
+                year
+                month
+                day
+              }
+              genres
+              averageScore
+              meanScore
+              popularity
+              favourites
+            }
+          }
+        }
+      '''
+          : '''
         query (\$type: MediaType, \$page: Int, \$perPage: Int) {
           Page(page: \$page, perPage: \$perPage) {
             media(type: \$type, sort: [POPULARITY_DESC]) {
@@ -510,12 +684,18 @@ class AnilistExternalDataSourceImpl {
         }
       ''';
 
+      final variables = <String, dynamic>{
+        'type': mediaType,
+        'page': page,
+        'perPage': 20,
+      };
+      if (isNovel) {
+        variables['format'] = 'NOVEL';
+      }
+
       final response = await _dio.post(
         '',
-        data: {
-          'query': queryBody,
-          'variables': {'type': mediaType, 'page': page, 'perPage': 20},
-        },
+        data: {'query': queryBody, 'variables': variables},
       );
 
       final List mediaList = response.data['data']['Page']['media'] ?? [];
@@ -534,6 +714,8 @@ class AnilistExternalDataSourceImpl {
         return 'ANIME';
       case MediaType.manga:
         return 'MANGA';
+      case MediaType.novel:
+        return 'MANGA'; // AniList treats novels as MANGA with format NOVEL
       case MediaType.movie:
         return 'ANIME'; // AniList treats movies as anime
       case MediaType.tvShow:

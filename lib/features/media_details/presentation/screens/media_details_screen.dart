@@ -573,6 +573,8 @@ class _MediaDetailsScreenState extends State<MediaDetailsScreen> {
         return Icons.movie;
       case MediaType.manga:
         return Icons.book;
+      case MediaType.novel:
+        return Icons.auto_stories;
       case MediaType.movie:
         return Icons.theaters;
       case MediaType.tvShow:
@@ -586,6 +588,8 @@ class _MediaDetailsScreenState extends State<MediaDetailsScreen> {
         return 'Anime';
       case MediaType.manga:
         return 'Manga';
+      case MediaType.novel:
+        return 'Novel';
       case MediaType.movie:
         return 'Movie';
       case MediaType.tvShow:

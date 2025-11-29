@@ -147,4 +147,11 @@ abstract class MediaRepository {
     String chapterId,
     String sourceId,
   );
+
+  /// Get the raw text/HTML content for a novel chapter from a source
+  Future<Either<Failure, String>> getNovelChapterContent(
+    String chapterId,
+    String chapterTitle,
+    String sourceId,
+  );
 }

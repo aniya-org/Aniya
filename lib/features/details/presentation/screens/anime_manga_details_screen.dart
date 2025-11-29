@@ -12,6 +12,7 @@ import '../../../../core/widgets/provider_attribution_dialog.dart';
 import '../../../../core/widgets/provider_badge.dart';
 import '../../../auth/presentation/viewmodels/auth_viewmodel.dart';
 import '../../../manga_reader/presentation/screens/manga_reader_screen.dart';
+import '../../../novel_reader/presentation/screens/novel_reader_screen.dart';
 import '../../../media_details/presentation/screens/episode_source_selection_sheet.dart';
 import '../../../settings/presentation/screens/settings_screen.dart';
 import '../../../video_player/presentation/screens/video_player_screen.dart';
@@ -260,7 +261,10 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
   }
 
   Future<void> _fetchChapters() async {
-    if (widget.media.type != MediaType.manga) return;
+    if (widget.media.type != MediaType.manga &&
+        widget.media.type != MediaType.novel) {
+      return;
+    }
 
     setState(() {
       _isLoadingChapters = true;
@@ -1479,7 +1483,7 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
     );
   }
 
-  /// Navigate to manga reader after selecting a source for a chapter
+  /// Navigate to manga/novel reader after selecting a source for a chapter
   void _navigateToMangaReader(
     BuildContext context,
     ChapterEntity chapter,
@@ -1489,16 +1493,32 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
       id: source.sourceLink,
       sourceProvider: source.providerId,
     );
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => MangaReaderScreen(
-          chapter: providerChapter,
-          sourceId: source.providerId,
-          itemId: widget.media.id,
+
+    // Check if this is a novel - use novel reader instead
+    if (widget.media.type == MediaType.novel) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => NovelReaderScreen(
+            chapter: providerChapter,
+            media: widget.media,
+            allChapters: _chapters,
+            source: source,
+          ),
         ),
-      ),
-    );
+      );
+    } else {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => MangaReaderScreen(
+            chapter: providerChapter,
+            sourceId: source.providerId,
+            itemId: widget.media.id,
+          ),
+        ),
+      );
+    }
   }
 }
 
