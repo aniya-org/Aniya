@@ -1363,8 +1363,13 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
         media: media,
         episode: episode,
         isChapter: false,
-        onSourceSelected: (source, allSources) {
-          _navigateToVideoPlayer(media, episode, source, allSources);
+        onSourceSelected: (selection) {
+          _navigateToVideoPlayer(
+            media,
+            episode,
+            selection.source,
+            selection.allSources,
+          );
         },
       ),
     );
@@ -1393,8 +1398,13 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
         media: media,
         episode: episode,
         isChapter: false,
-        onSourceSelected: (source, allSources) {
-          _navigateToVideoPlayer(media, episode, source, allSources);
+        onSourceSelected: (selection) {
+          _navigateToVideoPlayer(
+            media,
+            episode,
+            selection.source,
+            selection.allSources,
+          );
         },
       ),
     );

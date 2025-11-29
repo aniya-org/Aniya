@@ -5,7 +5,8 @@ import '../../../../core/domain/entities/source_entity.dart';
 import '../../../../core/widgets/widgets.dart';
 import '../viewmodels/media_details_viewmodel.dart';
 import '../../../video_player/presentation/screens/video_player_screen.dart';
-import '../screens/episode_source_selection_sheet.dart';
+import 'episode_source_selection_sheet.dart';
+import '../models/source_selection_result.dart';
 import '../../../manga_reader/presentation/screens/manga_reader_screen.dart';
 
 /// Screen for displaying detailed media information
@@ -483,8 +484,13 @@ class _MediaDetailsScreenState extends State<MediaDetailsScreen> {
         media: widget.media,
         episode: episode,
         isChapter: false,
-        onSourceSelected: (source, allSources) {
-          _navigateToVideoPlayer(context, episode, source, allSources);
+        onSourceSelected: (selection) {
+          _navigateToVideoPlayer(
+            context,
+            episode,
+            selection.source,
+            selection.allSources,
+          );
         },
       ),
     );
@@ -529,8 +535,8 @@ class _MediaDetailsScreenState extends State<MediaDetailsScreen> {
           sourceProvider: chapter.sourceProvider,
         ),
         isChapter: true,
-        onSourceSelected: (source, allSources) {
-          _navigateToMangaReader(context, chapter, source);
+        onSourceSelected: (selection) {
+          _navigateToMangaReader(context, chapter, selection);
         },
       ),
     );
@@ -541,8 +547,9 @@ class _MediaDetailsScreenState extends State<MediaDetailsScreen> {
   void _navigateToMangaReader(
     BuildContext context,
     ChapterEntity chapter,
-    SourceEntity source,
+    SourceSelectionResult selection,
   ) {
+    final source = selection.source;
     Navigator.push(
       context,
       MaterialPageRoute(

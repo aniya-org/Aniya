@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../../../../core/domain/entities/chapter_entity.dart';
 import '../../../../core/domain/entities/media_entity.dart';
 import '../../../../core/domain/entities/source_entity.dart';
+import '../../../../core/domain/usecases/get_chapters_usecase.dart';
 import '../../../../core/domain/usecases/get_novel_chapter_content_usecase.dart';
 import '../../../../core/di/injection_container.dart';
 import '../../../../core/error/failures.dart';
@@ -11,6 +12,7 @@ import '../../../../core/utils/error_message_mapper.dart';
 import '../../../../core/utils/logger.dart';
 import '../../../../features/media_details/presentation/widgets/empty_state_widgets.dart';
 import '../widgets/novel_markdown_renderer.dart';
+import '../../../media_details/presentation/models/source_selection_result.dart';
 
 /// Novel reader screen for reading light novel chapters
 ///
@@ -25,6 +27,7 @@ class NovelReaderScreen extends StatefulWidget {
   final List<ChapterEntity>? allChapters;
   final String? chapterContent;
   final SourceEntity? source;
+  final SourceSelectionResult? sourceSelection;
 
   const NovelReaderScreen({
     super.key,
@@ -33,6 +36,7 @@ class NovelReaderScreen extends StatefulWidget {
     this.allChapters,
     this.chapterContent,
     this.source,
+    this.sourceSelection,
   });
 
   @override
@@ -54,7 +58,11 @@ class _NovelReaderScreenState extends State<NovelReaderScreen> {
   int? _currentChapterIndex;
   String? _selectedSourceId;
   bool _initialContentConsumed = false;
+  SourceSelectionResult? _sourceSelection;
+  List<ChapterEntity>? _extensionChapters;
+  bool _isLoadingExtensionChapters = false;
   late final GetNovelChapterContentUseCase _getChapterContent;
+  late final GetChaptersUseCase _getChapters;
 
   // Available font sizes
   static const List<double> _fontSizes = [12, 14, 16, 18, 20, 22, 24];
@@ -67,13 +75,20 @@ class _NovelReaderScreenState extends State<NovelReaderScreen> {
     } catch (_) {
       _getChapterContent = GetNovelChapterContentUseCase(sl());
     }
+    try {
+      _getChapters = sl<GetChaptersUseCase>();
+    } catch (_) {
+      _getChapters = GetChaptersUseCase(sl());
+    }
     _selectedSourceId =
         widget.source?.providerId ?? widget.chapter.sourceProvider;
     _currentChapter = widget.chapter.copyWith(
       sourceProvider: _selectedSourceId ?? widget.chapter.sourceProvider,
     );
+    _sourceSelection = widget.sourceSelection;
     _currentChapterIndex = _findChapterIndex(widget.chapter);
     _loadChapterContent();
+    _loadExtensionChaptersIfNeeded();
     // Hide system UI for immersive reading
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
@@ -113,8 +128,15 @@ class _NovelReaderScreenState extends State<NovelReaderScreen> {
     );
   }
 
+  List<ChapterEntity>? get _availableChapters {
+    if (_extensionChapters != null && _extensionChapters!.isNotEmpty) {
+      return _extensionChapters;
+    }
+    return widget.allChapters;
+  }
+
   int? _ensureCurrentIndex() {
-    final chapters = widget.allChapters;
+    final chapters = _availableChapters;
     if (chapters == null || chapters.isEmpty) return null;
     final currentIndex = _currentChapterIndex;
     final isValidIndex =
@@ -133,7 +155,7 @@ class _NovelReaderScreenState extends State<NovelReaderScreen> {
   }
 
   int? _findChapterIndex(ChapterEntity chapter) {
-    final chapters = widget.allChapters;
+    final chapters = _availableChapters;
     if (chapters == null || chapters.isEmpty) return null;
 
     final idMatch = chapters.indexWhere((c) => c.id == chapter.id);
@@ -218,6 +240,65 @@ class _NovelReaderScreenState extends State<NovelReaderScreen> {
           _error = 'Failed to load chapter content. Please try again.';
         }
         _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _loadExtensionChaptersIfNeeded() async {
+    if (_sourceSelection == null) return;
+    if (_isLoadingExtensionChapters) return;
+    if (_extensionChapters != null && _extensionChapters!.isNotEmpty) return;
+    if (widget.allChapters != null && widget.allChapters!.isNotEmpty) return;
+
+    final mediaId = _sourceSelection!.selectedMedia.id;
+    final sourceId = _sourceSelection!.source.providerId;
+
+    if (mediaId.isEmpty || sourceId.isEmpty) {
+      Logger.warning(
+        'Skipping extension chapter load due to missing media/source information',
+        tag: 'NovelReaderScreen',
+      );
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _isLoadingExtensionChapters = true;
+      });
+    }
+
+    try {
+      final result = await _getChapters(
+        GetChaptersParams(mediaId: mediaId, sourceId: sourceId),
+      );
+
+      result.fold(
+        (failure) {
+          Logger.error(
+            'Failed to load extension chapters',
+            tag: 'NovelReaderScreen',
+            error: failure,
+          );
+        },
+        (chapters) {
+          if (!mounted || chapters.isEmpty) return;
+          setState(() {
+            _extensionChapters = chapters;
+            _currentChapterIndex = _findChapterIndex(_activeChapter);
+          });
+        },
+      );
+    } catch (e, stackTrace) {
+      Logger.error(
+        'Unexpected error while loading extension chapters',
+        tag: 'NovelReaderScreen',
+        error: e,
+        stackTrace: stackTrace,
+      );
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingExtensionChapters = false;
       });
     }
   }
@@ -320,7 +401,7 @@ class _NovelReaderScreenState extends State<NovelReaderScreen> {
   }
 
   ChapterEntity? get _previousChapter {
-    final chapters = widget.allChapters;
+    final chapters = _availableChapters;
     if (chapters == null) return null;
     final index = _ensureCurrentIndex();
     if (index != null && index > 0) {
@@ -330,7 +411,7 @@ class _NovelReaderScreenState extends State<NovelReaderScreen> {
   }
 
   ChapterEntity? get _nextChapter {
-    final chapters = widget.allChapters;
+    final chapters = _availableChapters;
     if (chapters == null) return null;
     final index = _ensureCurrentIndex();
     if (index != null && index >= 0 && index < chapters.length - 1) {

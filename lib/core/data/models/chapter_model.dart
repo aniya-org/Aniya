@@ -38,7 +38,11 @@ class ChapterModel extends ChapterEntity {
     };
   }
 
-  factory ChapterModel.fromDEpisode(DEpisode dEpisode, String mediaId) {
+  factory ChapterModel.fromDEpisode(
+    DEpisode dEpisode,
+    String mediaId, {
+    String? sourceProvider,
+  }) {
     final chapterNumber = double.tryParse(dEpisode.episodeNumber) ?? 0.0;
 
     return ChapterModel(
@@ -50,6 +54,7 @@ class ChapterModel extends ChapterEntity {
           ? DateTime.tryParse(dEpisode.dateUpload!)
           : null,
       pageCount: null,
+      sourceProvider: sourceProvider,
     );
   }
 

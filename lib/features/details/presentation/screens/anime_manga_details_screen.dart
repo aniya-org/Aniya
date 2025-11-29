@@ -13,6 +13,7 @@ import '../../../../core/widgets/provider_badge.dart';
 import '../../../auth/presentation/viewmodels/auth_viewmodel.dart';
 import '../../../manga_reader/presentation/screens/manga_reader_screen.dart';
 import '../../../novel_reader/presentation/screens/novel_reader_screen.dart';
+import '../../../media_details/presentation/models/source_selection_result.dart';
 import '../../../media_details/presentation/screens/episode_source_selection_sheet.dart';
 import '../../../settings/presentation/screens/settings_screen.dart';
 import '../../../video_player/presentation/screens/video_player_screen.dart';
@@ -1422,8 +1423,13 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
           media: widget.media,
           episode: episode,
           isChapter: false,
-          onSourceSelected: (source, allSources) {
-            _navigateToVideoPlayer(context, episode, source, allSources);
+          onSourceSelected: (selection) {
+            _navigateToVideoPlayer(
+              context,
+              episode,
+              selection.source,
+              selection.allSources,
+            );
           },
         );
       },
@@ -1475,8 +1481,8 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
           media: widget.media,
           episode: episodeFromChapter,
           isChapter: true,
-          onSourceSelected: (source, allSources) {
-            _navigateToMangaReader(context, chapter, source);
+          onSourceSelected: (selection) {
+            _navigateToMangaReader(context, chapter, selection);
           },
         );
       },
@@ -1487,8 +1493,9 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
   void _navigateToMangaReader(
     BuildContext context,
     ChapterEntity chapter,
-    SourceEntity source,
+    SourceSelectionResult selection,
   ) {
+    final source = selection.source;
     final providerChapter = chapter.copyWith(
       id: source.sourceLink,
       sourceProvider: source.providerId,
@@ -1504,6 +1511,7 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
             media: widget.media,
             allChapters: _chapters,
             source: source,
+            sourceSelection: selection,
           ),
         ),
       );

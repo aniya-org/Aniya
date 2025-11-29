@@ -8,6 +8,7 @@ import '../../../../core/domain/entities/episode_entity.dart';
 import '../../../../core/domain/entities/source_entity.dart';
 import '../../../../core/enums/episode_source_selection_step.dart';
 import '../../../../core/utils/logger.dart';
+import '../models/source_selection_result.dart';
 import '../viewmodels/episode_source_selection_viewmodel.dart';
 import '../widgets/extension_list_widget.dart';
 import '../widgets/media_search_widget.dart';
@@ -33,9 +34,8 @@ class EpisodeSourceSelectionSheet extends StatefulWidget {
   final bool isChapter;
 
   /// Callback when a source is selected and navigation should occur
-  /// Receives the selected source entity and all available sources
-  final Function(SourceEntity selectedSource, List<SourceEntity> allSources)
-  onSourceSelected;
+  /// Receives the selection context with source, all sources, media, extension
+  final Function(SourceSelectionResult result) onSourceSelected;
 
   const EpisodeSourceSelectionSheet({
     required this.media,
@@ -422,7 +422,23 @@ class _EpisodeSourceSelectionSheetState
       Navigator.of(context).pop();
 
       // Call the callback with the selected source and all available sources
-      widget.onSourceSelected(source, _viewModel.availableSources);
+      if (_viewModel.selectedMedia == null ||
+          _viewModel.selectedExtension == null) {
+        Logger.error(
+          'Source selection missing media or extension context',
+          tag: 'EpisodeSourceSelectionSheet',
+        );
+        return;
+      }
+
+      widget.onSourceSelected(
+        SourceSelectionResult(
+          source: source,
+          allSources: _viewModel.availableSources,
+          selectedMedia: _viewModel.selectedMedia!,
+          selectedExtension: _viewModel.selectedExtension!,
+        ),
+      );
     }
   }
 
