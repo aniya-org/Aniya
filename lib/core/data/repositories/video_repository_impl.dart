@@ -1,5 +1,7 @@
 import 'package:dartz/dartz.dart';
-import 'package:dartotsu_extension_bridge/ExtensionManager.dart';
+import 'package:dartotsu_extension_bridge/ExtensionManager.dart' as bridge;
+import 'package:dartotsu_extension_bridge/Extensions/ExtractorService.dart'
+    show ExtractorResult, ExtractorService;
 import 'package:dartotsu_extension_bridge/Models/DEpisode.dart';
 import 'package:dartotsu_extension_bridge/Models/Video.dart';
 
@@ -14,15 +16,18 @@ import '../../utils/logger.dart';
 /// Handles video source fetching and URL extraction from extensions
 /// Validates: Requirements 5.3, 5.4
 class VideoRepositoryImpl implements VideoRepository {
-  final ExtensionManager? extensionManager;
+  final bridge.ExtensionManager? extensionManager;
 
   VideoRepositoryImpl({this.extensionManager});
+
+  final ExtractorService _extractorService = ExtractorService();
 
   /// Get a source by ID from the current extension manager
   dynamic _getSourceById(String sourceId) {
     if (extensionManager == null) {
       return null;
     }
+
     final extension = extensionManager!.currentManager;
 
     // Check all installed extension lists
@@ -35,6 +40,43 @@ class VideoRepositoryImpl implements VideoRepository {
     try {
       return allSources.firstWhere((source) => source.id == sourceId);
     } catch (e) {
+      return null;
+    }
+  }
+
+  Future<String?> _tryExtractorService(VideoSource source) async {
+    try {
+      if (!await _extractorService.isInitialized) {
+        final initialized = await _extractorService.initialize();
+        if (!initialized) {
+          Logger.warning('ExtractorService failed to initialize');
+          return null;
+        }
+      }
+
+      final referer = source.headers?['referer'] ?? source.headers?['Referer'];
+      final ExtractorResult result = await _extractorService.extract(
+        source.url,
+        referer: referer,
+      );
+
+      if (!result.hasLinks) {
+        Logger.info('ExtractorService returned no links for ${source.name}');
+        return null;
+      }
+
+      final bestLink = result.bestQualityLink ?? result.links.first;
+      Logger.info(
+        'ExtractorService selected ${bestLink.qualityString} for ${source.name}',
+      );
+      return bestLink.url;
+    } catch (e, stackTrace) {
+      Logger.error(
+        'ExtractorService failed for ${source.name}: $e',
+        tag: 'VideoRepositoryImpl',
+        error: e,
+        stackTrace: stackTrace,
+      );
       return null;
     }
   }
@@ -149,9 +191,19 @@ class VideoRepositoryImpl implements VideoRepository {
         return Right(source.url);
       }
 
-      // For embed URLs, we need to extract the actual video URL
-      // This requires using the extension's loadVideo method
-      Logger.info('Attempting to extract video from embed URL');
+      // Try the CloudStream extractor service first (supports all video sources)
+      final extractorUrl = await _tryExtractorService(source);
+      if (extractorUrl != null) {
+        Logger.info(
+          'ExtractorService resolved playable URL for ${source.name}',
+        );
+        return Right(extractorUrl);
+      }
+
+      // For embed URLs, fall back to extension-specific loadVideo
+      Logger.info(
+        'ExtractorService unavailable, falling back to extension load',
+      );
 
       // Get the source extension from the server name
       final sourceExtension = _getSourceByServerName(source.server);

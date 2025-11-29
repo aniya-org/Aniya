@@ -45,6 +45,9 @@ dependencies:
   # State Management
   provider: ^6.1.5
 
+  # Reactive Controllers
+  get: ^4.6.6
+
   # Local Storage
   hive: ^2.2.3
   hive_flutter: ^1.1.0
@@ -56,7 +59,10 @@ dependencies:
 
   # Extension Bridge
   dartotsu_extension_bridge:
-    path: packages/dartotsu_extension_bridge
+    # path: packages/dartotsu_extension_bridge
+    path: ref/DartotsuExtensionBridge
+    # git:
+    #   url: https://github.com/wuxnz/DartotsuExtensionBridge.git
 
   # Extension Bridge Dependencies
   install_plugin: ^2.1.0

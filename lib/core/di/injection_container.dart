@@ -46,21 +46,28 @@ import '../domain/usecases/get_installed_extensions_usecase.dart';
 import '../domain/usecases/install_extension_usecase.dart';
 import '../domain/usecases/uninstall_extension_usecase.dart';
 import '../domain/usecases/get_video_sources_usecase.dart';
+import '../domain/usecases/extract_video_url_usecase.dart';
+import '../domain/usecases/save_playback_position_usecase.dart';
+import '../domain/usecases/get_playback_position_usecase.dart';
 import '../domain/usecases/update_progress_usecase.dart';
 import '../domain/usecases/update_library_item_usecase.dart';
 import '../domain/usecases/remove_from_library_usecase.dart';
 import '../domain/usecases/get_media_details_usecase.dart';
 import '../domain/usecases/get_episodes_usecase.dart';
 import '../domain/usecases/get_chapters_usecase.dart';
+import '../domain/usecases/get_chapter_pages_usecase.dart';
+import '../domain/usecases/save_reading_position_usecase.dart';
+import '../domain/usecases/get_reading_position_usecase.dart';
 import '../domain/usecases/add_to_library_usecase.dart';
 import '../../features/home/presentation/viewmodels/home_viewmodel.dart';
 import '../../features/home/presentation/viewmodels/browse_viewmodel.dart';
 import '../../features/search/presentation/viewmodels/search_viewmodel.dart';
 import '../../features/library/presentation/viewmodels/library_viewmodel.dart';
-import '../../features/extensions/presentation/viewmodels/extension_viewmodel.dart';
+import '../../features/extensions/controllers/extensions_controller.dart';
 import '../../features/settings/presentation/viewmodels/settings_viewmodel.dart';
 import '../../features/media_details/presentation/viewmodels/media_details_viewmodel.dart';
 import '../../features/media_details/presentation/viewmodels/episode_source_selection_viewmodel.dart';
+import '../../features/manga_reader/presentation/viewmodels/manga_reader_viewmodel.dart';
 import '../domain/repositories/extension_search_repository.dart';
 import '../domain/repositories/recent_extensions_repository.dart';
 import '../data/repositories/extension_search_repository_impl.dart';
@@ -93,6 +100,19 @@ Future<void> initializeDependencies() async {
   // Open and register settings box
   final settingsBox = await Hive.openBox('settings');
   sl.registerSingleton<Box>(settingsBox, instanceName: 'settingsBox');
+
+  // Open and register themeData box (used for extension repo preferences)
+  final themeDataBox = await Hive.openBox('themeData');
+  sl.registerSingleton<Box>(themeDataBox, instanceName: 'themeDataBox');
+
+  // Initialize GetX ExtensionsController (port of AnymeX SourceController)
+  final extensionsController = ExtensionsController(themeBox: themeDataBox);
+  if (!Get.isRegistered<ExtensionsController>()) {
+    Get.put<ExtensionsController>(extensionsController, permanent: true);
+  }
+  if (!sl.isRegistered<ExtensionsController>()) {
+    sl.registerSingleton<ExtensionsController>(extensionsController);
+  }
 
   // Register SharedPreferences
   final sharedPreferences = await SharedPreferences.getInstance();
@@ -293,6 +313,15 @@ Future<void> initializeDependencies() async {
   sl.registerLazySingleton<GetVideoSourcesUseCase>(
     () => GetVideoSourcesUseCase(sl<VideoRepository>()),
   );
+  sl.registerLazySingleton<ExtractVideoUrlUseCase>(
+    () => ExtractVideoUrlUseCase(sl<VideoRepository>()),
+  );
+  sl.registerLazySingleton<SavePlaybackPositionUseCase>(
+    () => SavePlaybackPositionUseCase(sl<LibraryRepository>()),
+  );
+  sl.registerLazySingleton<GetPlaybackPositionUseCase>(
+    () => GetPlaybackPositionUseCase(sl<LibraryRepository>()),
+  );
   sl.registerLazySingleton<UpdateProgressUseCase>(
     () => UpdateProgressUseCase(sl<LibraryRepository>()),
   );
@@ -310,6 +339,15 @@ Future<void> initializeDependencies() async {
   );
   sl.registerLazySingleton<GetChaptersUseCase>(
     () => GetChaptersUseCase(sl<MediaRepository>()),
+  );
+  sl.registerLazySingleton<GetChapterPagesUseCase>(
+    () => GetChapterPagesUseCase(sl<MediaRepository>()),
+  );
+  sl.registerLazySingleton<SaveReadingPositionUseCase>(
+    () => SaveReadingPositionUseCase(sl<LibraryRepository>()),
+  );
+  sl.registerLazySingleton<GetReadingPositionUseCase>(
+    () => GetReadingPositionUseCase(sl<LibraryRepository>()),
   );
   sl.registerLazySingleton<AddToLibraryUseCase>(
     () => AddToLibraryUseCase(sl<LibraryRepository>()),
@@ -344,17 +382,6 @@ Future<void> initializeDependencies() async {
       removeFromLibrary: sl<RemoveFromLibraryUseCase>(),
     ),
   );
-  sl.registerLazySingleton<ExtensionViewModel>(
-    () => ExtensionViewModel(
-      getAvailableExtensions: sl<GetAvailableExtensionsUseCase>(),
-      getInstalledExtensions: sl<GetInstalledExtensionsUseCase>(),
-      installExtension: sl<InstallExtensionUseCase>(),
-      uninstallExtension: sl<UninstallExtensionUseCase>(),
-      extensionDiscoveryService: sl<ExtensionDiscoveryService>(),
-      repositoryRepository: sl<RepositoryRepository>(),
-      permissionService: sl<PermissionService>(),
-    ),
-  );
   sl.registerLazySingleton<SettingsViewModel>(
     () => SettingsViewModel(
       sl<TrackingAuthService>(),
@@ -375,6 +402,13 @@ Future<void> initializeDependencies() async {
     () => EpisodeSourceSelectionViewModel(
       extensionSearchRepository: sl<ExtensionSearchRepository>(),
       recentExtensionsRepository: sl<RecentExtensionsRepository>(),
+    ),
+  );
+  sl.registerFactory<MangaReaderViewModel>(
+    () => MangaReaderViewModel(
+      getChapterPages: sl<GetChapterPagesUseCase>(),
+      saveReadingPosition: sl<SaveReadingPositionUseCase>(),
+      getReadingPosition: sl<GetReadingPositionUseCase>(),
     ),
   );
 }

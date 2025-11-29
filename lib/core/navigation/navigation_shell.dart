@@ -15,7 +15,6 @@ import '../../features/home/presentation/viewmodels/home_viewmodel.dart';
 import '../../features/home/presentation/viewmodels/browse_viewmodel.dart';
 import '../../features/search/presentation/viewmodels/search_viewmodel.dart';
 import '../../features/library/presentation/viewmodels/library_viewmodel.dart';
-import '../../features/extensions/presentation/viewmodels/extension_viewmodel.dart';
 import '../../features/settings/presentation/viewmodels/settings_viewmodel.dart';
 
 /// Main navigation shell that manages app-wide navigation
@@ -108,10 +107,7 @@ class _NavigationShellState extends State<NavigationShell>
           child: const LibraryScreen(),
         );
       case AppDestination.extensions:
-        return ChangeNotifierProvider.value(
-          value: getIt<ExtensionViewModel>(),
-          child: const ExtensionScreen(),
-        );
+        return const ExtensionScreen();
       case AppDestination.settings:
         return ChangeNotifierProvider.value(
           value: getIt<SettingsViewModel>(),

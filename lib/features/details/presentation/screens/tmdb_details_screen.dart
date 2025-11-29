@@ -1363,8 +1363,8 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
         media: media,
         episode: episode,
         isChapter: false,
-        onSourceSelected: (source) {
-          _navigateToVideoPlayer(episode, source);
+        onSourceSelected: (source, allSources) {
+          _navigateToVideoPlayer(media, episode, source, allSources);
         },
       ),
     );
@@ -1393,8 +1393,8 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
         media: media,
         episode: episode,
         isChapter: false,
-        onSourceSelected: (source) {
-          _navigateToVideoPlayer(episode, source);
+        onSourceSelected: (source, allSources) {
+          _navigateToVideoPlayer(media, episode, source, allSources);
         },
       ),
     );
@@ -1402,7 +1402,12 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
 
   /// Navigate to video player with selected source
   /// Requirements: 5.1, 5.3
-  void _navigateToVideoPlayer(EpisodeEntity episode, SourceEntity source) {
+  void _navigateToVideoPlayer(
+    MediaEntity media,
+    EpisodeEntity episode,
+    SourceEntity source,
+    List<SourceEntity> allSources,
+  ) {
     Logger.info(
       'Navigating to video player for episode ${episode.number} with source ${source.name}',
       tag: 'TmdbDetailsScreen',
@@ -1410,12 +1415,11 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
 
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (context) => VideoPlayerScreen(
-          episodeId: episode.id,
-          sourceId: source.id,
-          itemId: widget.tmdbData['id'].toString(),
-          episodeNumber: episode.number,
-          episodeTitle: episode.title,
+        builder: (context) => VideoPlayerScreen.fromSourceSelection(
+          media: media,
+          episode: episode,
+          source: source,
+          allSources: allSources,
         ),
       ),
     );

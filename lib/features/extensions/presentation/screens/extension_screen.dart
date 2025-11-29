@@ -1,10 +1,12 @@
 import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import '../../../../core/domain/entities/entities.dart';
+import 'package:get/get.dart';
+import 'package:dartotsu_extension_bridge/ExtensionManager.dart' as bridge;
+import 'package:dartotsu_extension_bridge/CloudStream/CloudStreamExtensions.dart'
+    show CloudStreamExtensionGroup, CloudStreamGroupInstallResult;
+import '../../../../core/domain/entities/entities.dart' as domain;
 import '../../../../core/services/responsive_layout_manager.dart';
-import '../../../../core/widgets/widgets.dart';
-import '../viewmodels/extension_viewmodel.dart';
+import '../../controllers/extensions_controller.dart';
 import '../widgets/extension_details_sheet.dart';
 import '../widgets/extension_list.dart';
 import '../widgets/repo_settings_sheet.dart';
@@ -26,12 +28,17 @@ class _ExtensionScreenState extends State<ExtensionScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   final TextEditingController _searchController = TextEditingController();
+  late final ExtensionsController _extensionsController;
   bool _isAndroid = false;
+  String _selectedLanguage = 'All';
+  String _searchQuery = '';
+  bridge.ExtensionType _currentExtensionType = bridge.ExtensionType.mangayomi;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 8, vsync: this);
+    _extensionsController = Get.find<ExtensionsController>();
 
     // Check if running on Android
     try {
@@ -42,7 +49,7 @@ class _ExtensionScreenState extends State<ExtensionScreen>
 
     // Load extensions when screen initializes
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<ExtensionViewModel>().loadExtensions();
+      _extensionsController.fetchRepos();
     });
   }
 
@@ -58,89 +65,68 @@ class _ExtensionScreenState extends State<ExtensionScreen>
     return ResponsiveBuilder(
       builder: (context, screenType) {
         return Scaffold(
-          body: Consumer<ExtensionViewModel>(
-            builder: (context, viewModel, child) {
-              return NestedScrollView(
-                headerSliverBuilder: (context, innerBoxIsScrolled) {
-                  return [_buildAppBar(context, viewModel, innerBoxIsScrolled)];
-                },
-                body: Column(
-                  children: [
-                    // Installation Progress
-                    if (viewModel.installationProgress != null)
-                      _buildProgressIndicator(context, viewModel),
+          body: Obx(() {
+            final isLoading = _extensionsController.isInitializing;
+            final operationMessage =
+                _extensionsController.operationMessage.value;
+            final counts = _computeExtensionCounts();
+            final progressText =
+                operationMessage ??
+                (isLoading ? 'Refreshing extensions...' : null);
 
-                    // Error message
-                    if (viewModel.error != null)
-                      ErrorMessage(message: viewModel.error!),
+            final languages = _buildLanguageList();
+            if (!languages.contains(_selectedLanguage)) {
+              _selectedLanguage = 'All';
+            }
 
-                    // Tab Content
-                    Expanded(
-                      child: TabBarView(
-                        controller: _tabController,
-                        children: [
-                          // Installed Anime Tab
-                          _buildExtensionList(
-                            context,
-                            viewModel,
-                            installed: true,
-                            itemType: ItemType.anime,
-                          ),
-                          // Available Anime Tab
-                          _buildExtensionList(
-                            context,
-                            viewModel,
-                            installed: false,
-                            itemType: ItemType.anime,
-                          ),
-                          // Installed Manga Tab
-                          _buildExtensionList(
-                            context,
-                            viewModel,
-                            installed: true,
-                            itemType: ItemType.manga,
-                          ),
-                          // Available Manga Tab
-                          _buildExtensionList(
-                            context,
-                            viewModel,
-                            installed: false,
-                            itemType: ItemType.manga,
-                          ),
-                          // Installed Novel Tab
-                          _buildExtensionList(
-                            context,
-                            viewModel,
-                            installed: true,
-                            itemType: ItemType.novel,
-                          ),
-                          // Available Novel Tab
-                          _buildExtensionList(
-                            context,
-                            viewModel,
-                            installed: false,
-                            itemType: ItemType.novel,
-                          ),
-                          // Installed CloudStream Tab (Requirement 12.1, 12.2, 12.3, 12.4)
-                          _buildCloudStreamExtensionList(
-                            context,
-                            viewModel,
-                            installed: true,
-                          ),
-                          // Available CloudStream Tab (Requirement 12.1, 12.2, 12.3, 12.4)
-                          _buildCloudStreamExtensionList(
-                            context,
-                            viewModel,
-                            installed: false,
-                          ),
-                        ],
-                      ),
+            return NestedScrollView(
+              headerSliverBuilder: (context, innerBoxIsScrolled) {
+                return [
+                  _buildAppBar(context, innerBoxIsScrolled, counts, languages),
+                ];
+              },
+              body: Column(
+                children: [
+                  if (progressText != null)
+                    _buildProgressIndicator(context, progressText),
+
+                  Expanded(
+                    child: TabBarView(
+                      controller: _tabController,
+                      children: [
+                        _buildExtensionList(
+                          installed: true,
+                          itemType: domain.ItemType.anime,
+                        ),
+                        _buildExtensionList(
+                          installed: false,
+                          itemType: domain.ItemType.anime,
+                        ),
+                        _buildExtensionList(
+                          installed: true,
+                          itemType: domain.ItemType.manga,
+                        ),
+                        _buildExtensionList(
+                          installed: false,
+                          itemType: domain.ItemType.manga,
+                        ),
+                        _buildExtensionList(
+                          installed: true,
+                          itemType: domain.ItemType.novel,
+                        ),
+                        _buildExtensionList(
+                          installed: false,
+                          itemType: domain.ItemType.novel,
+                        ),
+                        _buildCloudStreamExtensionList(installed: true),
+                        _buildCloudStreamExtensionList(installed: false),
+                      ],
                     ),
-                  ],
-                ),
-              );
-            },
-          ),
+                  ),
+                ],
+              ),
+            );
+          }),
         );
       },
     );
@@ -149,36 +135,41 @@ class _ExtensionScreenState extends State<ExtensionScreen>
   /// Builds the app bar with tabs, search, and actions
   Widget _buildAppBar(
     BuildContext context,
-    ExtensionViewModel viewModel,
     bool innerBoxIsScrolled,
+    Map<String, int> counts,
+    List<String> languages,
   ) {
-    final counts = viewModel.extensionCounts;
-
     return SliverAppBar(
       title: const Text('Extensions'),
       floating: true,
       pinned: true,
       forceElevated: innerBoxIsScrolled,
       actions: [
+        if (_currentExtensionType == bridge.ExtensionType.cloudstream)
+          IconButton(
+            icon: const Icon(Icons.link),
+            tooltip: 'Install CloudStream extension from URL',
+            onPressed: () => _showCloudStreamUrlDialog(context),
+          ),
         // Update All button (if updates available)
-        if (viewModel.updatePendingExtensions.isNotEmpty)
+        if (_extensionsController.updatePendingExtensions.isNotEmpty)
           TextButton.icon(
-            onPressed: () => viewModel.updateAll(),
+            onPressed: () => _extensionsController.updateAllPendingExtensions(),
             icon: const Icon(Icons.system_update, size: 18),
             label: Text(
-              'Update All (${viewModel.updatePendingExtensions.length})',
+              'Update All (${_extensionsController.updatePendingExtensions.length})',
             ),
           ),
         // Repository settings button (Requirement 2.1)
         IconButton(
           icon: const Icon(Icons.settings),
-          onPressed: () => _openRepoSettings(context, viewModel),
+          onPressed: () => _openRepoSettings(context),
           tooltip: 'Repository Settings',
         ),
         // Refresh button
         IconButton(
           icon: const Icon(Icons.refresh),
-          onPressed: () => viewModel.loadExtensions(),
+          onPressed: () => _extensionsController.fetchRepos(),
           tooltip: 'Refresh',
         ),
       ],
@@ -188,10 +179,10 @@ class _ExtensionScreenState extends State<ExtensionScreen>
           mainAxisSize: MainAxisSize.min,
           children: [
             // Extension type selector (Android only) - Requirement 11.1
-            if (_isAndroid) _buildExtensionTypeSelector(context, viewModel),
+            if (_isAndroid) _buildExtensionTypeSelector(context),
 
             // Search bar and language filter - Requirements 7.1, 7.2
-            _buildSearchAndFilter(context, viewModel),
+            _buildSearchAndFilter(context, languages),
 
             // Tab bar with 8 tabs - Requirements 1.1, 1.4, 12.1
             TabBar(
@@ -253,10 +244,7 @@ class _ExtensionScreenState extends State<ExtensionScreen>
   }
 
   /// Builds the extension type selector for Android (Requirement 11.1, 11.2, 12.1)
-  Widget _buildExtensionTypeSelector(
-    BuildContext context,
-    ExtensionViewModel viewModel,
-  ) {
+  Widget _buildExtensionTypeSelector(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
 
@@ -274,24 +262,26 @@ class _ExtensionScreenState extends State<ExtensionScreen>
           Expanded(
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
-              child: SegmentedButton<ExtensionType>(
+              child: SegmentedButton<bridge.ExtensionType>(
                 segments: const [
                   ButtonSegment(
-                    value: ExtensionType.mangayomi,
+                    value: bridge.ExtensionType.mangayomi,
                     label: Text('Mangayomi'),
                   ),
                   ButtonSegment(
-                    value: ExtensionType.aniyomi,
+                    value: bridge.ExtensionType.aniyomi,
                     label: Text('Aniyomi'),
                   ),
                   ButtonSegment(
-                    value: ExtensionType.cloudstream,
+                    value: bridge.ExtensionType.cloudstream,
                     label: Text('CloudStream'),
                   ),
                 ],
-                selected: {viewModel.currentExtensionType},
+                selected: {_currentExtensionType},
                 onSelectionChanged: (selected) {
-                  viewModel.setExtensionType(selected.first);
+                  setState(() {
+                    _currentExtensionType = selected.first;
+                  });
                 },
                 style: SegmentedButton.styleFrom(
                   visualDensity: VisualDensity.compact,
@@ -305,10 +295,7 @@ class _ExtensionScreenState extends State<ExtensionScreen>
   }
 
   /// Builds the search bar and language filter (Requirements 7.1, 7.2)
-  Widget _buildSearchAndFilter(
-    BuildContext context,
-    ExtensionViewModel viewModel,
-  ) {
+  Widget _buildSearchAndFilter(BuildContext context, List<String> languages) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
 
@@ -322,16 +309,22 @@ class _ExtensionScreenState extends State<ExtensionScreen>
               height: 40,
               child: TextField(
                 controller: _searchController,
-                onChanged: viewModel.setSearchQuery,
+                onChanged: (value) {
+                  setState(() {
+                    _searchQuery = value;
+                  });
+                },
                 decoration: InputDecoration(
                   hintText: 'Search extensions...',
                   prefixIcon: const Icon(Icons.search, size: 20),
-                  suffixIcon: viewModel.searchQuery.isNotEmpty
+                  suffixIcon: _searchQuery.isNotEmpty
                       ? IconButton(
                           icon: const Icon(Icons.clear, size: 18),
                           onPressed: () {
                             _searchController.clear();
-                            viewModel.setSearchQuery('');
+                            setState(() {
+                              _searchQuery = '';
+                            });
                           },
                         )
                       : null,
@@ -360,9 +353,9 @@ class _ExtensionScreenState extends State<ExtensionScreen>
             ),
             child: DropdownButtonHideUnderline(
               child: DropdownButton<String>(
-                value: viewModel.selectedLanguage,
+                value: _selectedLanguage,
                 icon: const Icon(Icons.arrow_drop_down, size: 20),
-                items: viewModel.availableLanguages.map((lang) {
+                items: languages.map((lang) {
                   return DropdownMenuItem(
                     value: lang,
                     child: Text(
@@ -373,7 +366,9 @@ class _ExtensionScreenState extends State<ExtensionScreen>
                 }).toList(),
                 onChanged: (value) {
                   if (value != null) {
-                    viewModel.setLanguageFilter(value);
+                    setState(() {
+                      _selectedLanguage = value;
+                    });
                   }
                 },
               ),
@@ -385,45 +380,41 @@ class _ExtensionScreenState extends State<ExtensionScreen>
   }
 
   /// Builds the extension list for a specific tab
-  Widget _buildExtensionList(
-    BuildContext context,
-    ExtensionViewModel viewModel, {
+  Widget _buildExtensionList({
     required bool installed,
-    required ItemType itemType,
+    required domain.ItemType itemType,
   }) {
-    final extensions = installed
-        ? viewModel.filteredInstalledExtensions
-        : viewModel.filteredAvailableExtensions;
-
-    // Filter by item type and exclude already installed from available
-    final filteredExtensions = extensions.where((e) {
-      // Filter by item type
-      if (e.itemType != itemType) return false;
-      // For available list, exclude already installed
-      if (!installed) {
-        return !viewModel.installedExtensions.any((i) => i.id == e.id);
-      }
-      return true;
-    }).toList();
+    final filteredExtensions = _getFilteredExtensions(
+      installed: installed,
+      itemType: itemType,
+    );
+    final pending = installed
+        ? _getFilteredExtensions(
+            installed: true,
+            itemType: itemType,
+            base: _extensionsController.updatePendingExtensions,
+          )
+        : <domain.ExtensionEntity>[];
 
     return ExtensionList(
       extensions: filteredExtensions,
       installed: installed,
       itemType: itemType,
-      query: viewModel.searchQuery,
-      selectedLanguage: viewModel.selectedLanguage,
+      query: _searchQuery,
+      selectedLanguage: _selectedLanguage,
       showRecommended: !installed,
-      isLoading: viewModel.isLoading,
-      updatePendingExtensions: viewModel.updatePendingExtensions,
-      onInstall: (extension) => viewModel.install(extension.id, extension.type),
-      onUninstall: (extension) =>
-          _confirmUninstall(context, extension, viewModel),
-      onUpdate: (extension) => viewModel.update(extension.id),
-      onTap: (extension) =>
-          _showExtensionDetails(context, extension, viewModel),
-      isOperationInProgress: viewModel.installationProgress != null,
-      installingExtensionId: viewModel.installingExtensionId,
-      uninstallingExtensionId: viewModel.uninstallingExtensionId,
+      isLoading: _extensionsController.isInitializing,
+      updatePendingExtensions: pending,
+      onInstall: (extension) =>
+          _extensionsController.installExtensionById(extension.id),
+      onUninstall: (extension) => _confirmUninstall(context, extension),
+      onUpdate: (extension) =>
+          _extensionsController.updateExtensionById(extension.id),
+      onTap: (extension) => _showExtensionDetails(context, extension),
+      isOperationInProgress:
+          _extensionsController.operationMessage.value != null,
+      installingExtensionId: _extensionsController.installingSourceId.value,
+      uninstallingExtensionId: _extensionsController.uninstallingSourceId.value,
     );
   }
 
@@ -431,50 +422,286 @@ class _ExtensionScreenState extends State<ExtensionScreen>
   ///
   /// CloudStream extensions support multiple content types:
   /// anime, movie, tv_show, cartoon, documentary, livestream
-  Widget _buildCloudStreamExtensionList(
-    BuildContext context,
-    ExtensionViewModel viewModel, {
-    required bool installed,
-  }) {
-    final extensions = installed
-        ? viewModel.filteredInstalledExtensions
-        : viewModel.filteredAvailableExtensions;
+  Widget _buildCloudStreamExtensionList({required bool installed}) {
+    final cloudStreamExtensions = _getFilteredExtensions(
+      installed: installed,
+      cloudStreamOnly: true,
+    );
 
-    // Filter CloudStream extensions (type == cloudstream)
-    final cloudStreamExtensions = extensions.where((e) {
-      // Check if it's a CloudStream extension
-      if (e.type != ExtensionType.cloudstream) return false;
-      // For available list, exclude already installed
-      if (!installed) {
-        return !viewModel.installedExtensions.any((i) => i.id == e.id);
-      }
-      return true;
-    }).toList();
-
-    return ExtensionList(
+    final listWidget = ExtensionList(
       extensions: cloudStreamExtensions,
       installed: installed,
-      itemType: ItemType.anime, // CloudStream can handle multiple types
-      query: viewModel.searchQuery,
-      selectedLanguage: viewModel.selectedLanguage,
+      itemType: domain.ItemType.anime, // CloudStream handles multiple types
+      query: _searchQuery,
+      selectedLanguage: _selectedLanguage,
       showRecommended: !installed,
-      isLoading: viewModel.isLoading,
-      updatePendingExtensions: viewModel.updatePendingExtensions,
-      onInstall: (extension) => viewModel.install(extension.id, extension.type),
-      onUninstall: (extension) =>
-          _confirmUninstall(context, extension, viewModel),
-      onUpdate: (extension) => viewModel.update(extension.id),
-      onTap: (extension) =>
-          _showExtensionDetails(context, extension, viewModel),
-      isOperationInProgress: viewModel.installationProgress != null,
+      isLoading: _extensionsController.isInitializing,
+      updatePendingExtensions: installed
+          ? _extensionsController.updatePendingExtensions
+                .where((e) => e.type == domain.ExtensionType.cloudstream)
+                .toList()
+          : <domain.ExtensionEntity>[],
+      onInstall: (extension) =>
+          _extensionsController.installExtensionById(extension.id),
+      onUninstall: (extension) => _confirmUninstall(context, extension),
+      onUpdate: (extension) =>
+          _extensionsController.updateExtensionById(extension.id),
+      onTap: (extension) => _showExtensionDetails(context, extension),
+      isOperationInProgress:
+          _extensionsController.operationMessage.value != null,
+      installingExtensionId: _extensionsController.installingSourceId.value,
+      uninstallingExtensionId: _extensionsController.uninstallingSourceId.value,
+      shrinkWrap: !installed,
+      physics: installed ? null : const NeverScrollableScrollPhysics(),
+    );
+
+    if (installed) {
+      return listWidget;
+    }
+
+    final groups = _extensionsController.allCloudStreamGroups;
+    return ListView(
+      padding: EdgeInsets.zero,
+      children: [
+        if (groups.isNotEmpty) _buildCloudStreamGroupSection(context, groups),
+        listWidget,
+      ],
+    );
+  }
+
+  Widget _buildCloudStreamGroupSection(
+    BuildContext context,
+    List<CloudStreamExtensionGroup> groups,
+  ) {
+    if (groups.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    final bundleMap = <String, _CloudStreamGroupBundle>{};
+    for (final group in groups) {
+      final key = _CloudStreamGroupBundle.keyFor(group);
+      bundleMap.putIfAbsent(
+        key,
+        () => _CloudStreamGroupBundle(
+          id: key,
+          name: group.name,
+          repoUrl: group.repoUrl,
+          pluginListUrl: group.pluginListUrl,
+          repoName: group.repoName,
+        ),
+      );
+      bundleMap[key]!.addGroup(group);
+    }
+    final bundles = bundleMap.values.toList()
+      ..sort((a, b) => a.name.compareTo(b.name));
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.auto_awesome_mosaic, color: colorScheme.primary),
+              const SizedBox(width: 8),
+              Text(
+                'Extension Groups',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                bundles.length == 1 ? '1 bundle' : '${bundles.length} bundles',
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ...bundles.map(
+            (bundle) => Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: _buildCloudStreamGroupCard(bundle),
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCloudStreamGroupCard(_CloudStreamGroupBundle bundle) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final installingId = _extensionsController.installingGroupId.value;
+    final combinedFailures = bundle.combineFailures(_extensionsController);
+    final isInstalling = bundle.isInstalling(installingId);
+    final hasFailures = combinedFailures.isNotEmpty;
+
+    return SizedBox(
+      width: double.infinity,
+      child: Card(
+        elevation: hasFailures ? 4 : 1,
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(
+            color: hasFailures ? colorScheme.error : colorScheme.outlineVariant,
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(bundle.name, style: theme.textTheme.titleMedium),
+              const SizedBox(height: 4),
+              Text(
+                bundle.repoName ?? Uri.parse(bundle.repoUrl).host,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  Chip(
+                    avatar: const Icon(Icons.extension, size: 16),
+                    label: Text('${bundle.pluginCount} plugins'),
+                    side: BorderSide.none,
+                    backgroundColor: colorScheme.surfaceContainerHighest,
+                  ),
+                  Chip(
+                    avatar: const Icon(Icons.category, size: 16),
+                    label: Text(
+                      bundle.itemTypeLabels.length == 1
+                          ? bundle.itemTypeLabels.first
+                          : '${bundle.itemTypeLabels.length} categories',
+                    ),
+                    side: BorderSide.none,
+                    backgroundColor: colorScheme.surfaceContainerLowest,
+                  ),
+                ],
+              ),
+              if (bundle.itemTypeLabels.length > 1) ...[
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: bundle.itemTypeLabels
+                      .map(
+                        (label) => Chip(
+                          label: Text(label),
+                          visualDensity: VisualDensity.compact,
+                          side: BorderSide.none,
+                        ),
+                      )
+                      .toList(),
+                ),
+              ],
+              if (combinedFailures.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text(
+                  'Failed installs:',
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    color: colorScheme.error,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                ...combinedFailures.entries
+                    .take(3)
+                    .map(
+                      (entry) => Text(
+                        '• ${entry.key}',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colorScheme.error,
+                        ),
+                      ),
+                    ),
+                if (combinedFailures.length > 3)
+                  Text(
+                    '+${combinedFailures.length - 3} more',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: colorScheme.error,
+                    ),
+                  ),
+              ],
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: isInstalling
+                      ? null
+                      : () => _installCloudStreamBundle(bundle),
+                  icon: isInstalling
+                      ? const SizedBox(
+                          height: 18,
+                          width: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.download),
+                  label: Text(isInstalling ? 'Installing...' : 'Install All'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _installCloudStreamBundle(_CloudStreamGroupBundle bundle) async {
+    final installed = <String>[];
+    final failures = <String, String>{};
+    try {
+      for (final group in bundle.groups) {
+        final result = await _extensionsController.installCloudStreamGroup(
+          group,
+        );
+        installed.addAll(result.installed);
+        failures.addAll(result.failures);
+      }
+      _showBundleResultSnackBar(bundle.name, installed.length, failures);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to install ${bundle.name}: $error')),
+      );
+    }
+  }
+
+  void _showBundleResultSnackBar(
+    String bundleName,
+    int successCount,
+    Map<String, String> failures,
+  ) {
+    if (!mounted) return;
+    final failureCount = failures.length;
+    final theme = Theme.of(context);
+
+    final message = failureCount == 0
+        ? 'Installed $bundleName ($successCount plugins)'
+        : 'Installed $successCount, $failureCount failed in $bundleName';
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message, style: theme.textTheme.bodyMedium),
+        backgroundColor: failureCount == 0
+            ? theme.colorScheme.primary
+            : theme.colorScheme.error,
+      ),
     );
   }
 
   /// Builds the progress indicator for installation/update operations
-  Widget _buildProgressIndicator(
-    BuildContext context,
-    ExtensionViewModel viewModel,
-  ) {
+  Widget _buildProgressIndicator(BuildContext context, String message) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
 
@@ -491,7 +718,7 @@ class _ExtensionScreenState extends State<ExtensionScreen>
           const SizedBox(width: 12),
           Expanded(
             child: Text(
-              viewModel.installationProgress!,
+              message,
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: colorScheme.onPrimaryContainer,
               ),
@@ -503,19 +730,25 @@ class _ExtensionScreenState extends State<ExtensionScreen>
   }
 
   /// Opens the repository settings sheet (Requirement 2.1)
-  void _openRepoSettings(BuildContext context, ExtensionViewModel viewModel) {
-    final currentConfig =
-        viewModel.repositoryConfigs[viewModel.currentExtensionType];
+  void _openRepoSettings(BuildContext context) {
+    final currentConfig = _extensionsController.getRepositoryConfig(
+      _currentExtensionType,
+    );
 
     RepoSettingsSheet.show(
       context: context,
       currentConfig: currentConfig,
-      currentExtensionType: viewModel.currentExtensionType,
+      currentExtensionType: _mapBridgeTypeToDomain(_currentExtensionType),
       onSave: (type, config) {
-        viewModel.saveRepository(type, config);
+        _extensionsController.applyRepositoryConfig(
+          _mapDomainTypeToBridge(type),
+          config,
+        );
       },
       onExtensionTypeChanged: (type) {
-        viewModel.setExtensionType(type);
+        setState(() {
+          _currentExtensionType = _mapDomainTypeToBridge(type);
+        });
       },
     );
   }
@@ -523,8 +756,7 @@ class _ExtensionScreenState extends State<ExtensionScreen>
   /// Shows confirmation dialog before uninstalling
   void _confirmUninstall(
     BuildContext context,
-    ExtensionEntity extension,
-    ExtensionViewModel viewModel,
+    domain.ExtensionEntity extension,
   ) {
     showDialog(
       context: context,
@@ -540,7 +772,7 @@ class _ExtensionScreenState extends State<ExtensionScreen>
           ),
           FilledButton(
             onPressed: () {
-              viewModel.uninstall(extension.id);
+              _extensionsController.uninstallExtensionById(extension.id);
               Navigator.pop(context);
             },
             child: const Text('Uninstall'),
@@ -553,16 +785,266 @@ class _ExtensionScreenState extends State<ExtensionScreen>
   /// Shows extension details in a bottom sheet
   void _showExtensionDetails(
     BuildContext context,
-    ExtensionEntity extension,
-    ExtensionViewModel viewModel,
+    domain.ExtensionEntity extension,
   ) {
     ExtensionDetailsSheet.show(
       context: context,
       extension: extension,
-      onInstall: () => viewModel.install(extension.id, extension.type),
-      onUninstall: () => viewModel.uninstall(extension.id),
-      onUpdate: () => viewModel.update(extension.id),
-      isLoading: viewModel.installationProgress != null,
+      onInstall: () => _extensionsController.installExtensionById(extension.id),
+      onUninstall: () =>
+          _extensionsController.uninstallExtensionById(extension.id),
+      onUpdate: () => _extensionsController.updateExtensionById(extension.id),
+      isLoading: _extensionsController.operationMessage.value != null,
     );
+  }
+
+  List<String> _buildLanguageList() {
+    final languages = _extensionsController.availableLanguages.toSet();
+    languages.add('All');
+    return languages.toList()..sort();
+  }
+
+  Map<String, int> _computeExtensionCounts() {
+    final installed = _groupByItemType(_extensionsController.installedEntities);
+    final available = _groupByItemType(_extensionsController.availableEntities);
+    final installedCloud = _extensionsController.installedEntities
+        .where((e) => e.type == domain.ExtensionType.cloudstream)
+        .length;
+    final availableCloud = _extensionsController.availableEntities
+        .where((e) => e.type == domain.ExtensionType.cloudstream)
+        .length;
+
+    return {
+      'installedAnime': installed[domain.ItemType.anime]?.length ?? 0,
+      'availableAnime': available[domain.ItemType.anime]?.length ?? 0,
+      'installedManga': installed[domain.ItemType.manga]?.length ?? 0,
+      'availableManga': available[domain.ItemType.manga]?.length ?? 0,
+      'installedNovel': installed[domain.ItemType.novel]?.length ?? 0,
+      'availableNovel': available[domain.ItemType.novel]?.length ?? 0,
+      'installedCloudStream': installedCloud,
+      'availableCloudStream': availableCloud,
+    };
+  }
+
+  Map<domain.ItemType, List<domain.ExtensionEntity>> _groupByItemType(
+    List<domain.ExtensionEntity> extensions,
+  ) {
+    final map = <domain.ItemType, List<domain.ExtensionEntity>>{};
+    for (final ext in extensions) {
+      map.putIfAbsent(ext.itemType, () => []).add(ext);
+    }
+    return map;
+  }
+
+  List<domain.ExtensionEntity> _getFilteredExtensions({
+    required bool installed,
+    domain.ItemType? itemType,
+    bool cloudStreamOnly = false,
+    List<domain.ExtensionEntity>? base,
+  }) {
+    final installedList = _extensionsController.installedEntities;
+    final availableList = _extensionsController.availableEntities;
+    final installedIds = installedList.map((e) => e.id).toSet();
+    final data = base ?? (installed ? installedList : availableList);
+
+    return data.where((extension) {
+      if (!installed && installedIds.contains(extension.id)) {
+        return false;
+      }
+      if (cloudStreamOnly) {
+        if (extension.type != domain.ExtensionType.cloudstream) return false;
+      } else {
+        if (itemType != null && extension.itemType != itemType) {
+          return false;
+        }
+      }
+      if (_selectedLanguage != 'All' &&
+          extension.language.toLowerCase() != _selectedLanguage.toLowerCase()) {
+        return false;
+      }
+      if (_searchQuery.isNotEmpty &&
+          !extension.name.toLowerCase().contains(_searchQuery.toLowerCase())) {
+        return false;
+      }
+      return true;
+    }).toList();
+  }
+
+  domain.ExtensionType _mapBridgeTypeToDomain(bridge.ExtensionType type) {
+    switch (type) {
+      case bridge.ExtensionType.mangayomi:
+        return domain.ExtensionType.mangayomi;
+      case bridge.ExtensionType.aniyomi:
+        return domain.ExtensionType.aniyomi;
+      case bridge.ExtensionType.cloudstream:
+        return domain.ExtensionType.cloudstream;
+      case bridge.ExtensionType.lnreader:
+        return domain.ExtensionType.lnreader;
+    }
+  }
+
+  bridge.ExtensionType _mapDomainTypeToBridge(domain.ExtensionType type) {
+    switch (type) {
+      case domain.ExtensionType.mangayomi:
+        return bridge.ExtensionType.mangayomi;
+      case domain.ExtensionType.aniyomi:
+        return bridge.ExtensionType.aniyomi;
+      case domain.ExtensionType.cloudstream:
+        return bridge.ExtensionType.cloudstream;
+      case domain.ExtensionType.lnreader:
+        return bridge.ExtensionType.lnreader;
+    }
+  }
+
+  void _showCloudStreamUrlDialog(BuildContext context) {
+    final urlController = TextEditingController();
+    domain.ItemType selectedType = domain.ItemType.anime;
+    final domainItems = [
+      domain.ItemType.anime,
+      domain.ItemType.movie,
+      domain.ItemType.tvShow,
+      domain.ItemType.cartoon,
+      domain.ItemType.documentary,
+      domain.ItemType.livestream,
+      domain.ItemType.nsfw,
+    ];
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setState) {
+            return AlertDialog(
+              title: const Text('Install CloudStream Extension'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: urlController,
+                    decoration: const InputDecoration(
+                      labelText: 'Extension URL',
+                      hintText: 'https://example.com/plugin.cs3',
+                    ),
+                    keyboardType: TextInputType.url,
+                    autofocus: true,
+                  ),
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<domain.ItemType>(
+                    value: selectedType,
+                    decoration: const InputDecoration(
+                      labelText: 'Content type',
+                    ),
+                    items: domainItems
+                        .map(
+                          (item) => DropdownMenuItem(
+                            value: item,
+                            child: Text(item.toString()),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value != null) {
+                        setState(() => selectedType = value);
+                      }
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () async {
+                    final url = urlController.text.trim();
+                    if (url.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Please enter a URL.')),
+                      );
+                      return;
+                    }
+                    Navigator.of(dialogContext).pop();
+                    try {
+                      await _extensionsController
+                          .installCloudStreamExtensionFromUrl(
+                            url,
+                            selectedType,
+                          );
+                    } catch (e) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Install failed: $e')),
+                      );
+                    }
+                  },
+                  child: const Text('Install'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _CloudStreamGroupBundle {
+  _CloudStreamGroupBundle({
+    required this.id,
+    required this.name,
+    required this.repoUrl,
+    required this.pluginListUrl,
+    this.repoName,
+  });
+
+  final String id;
+  final String name;
+  final String repoUrl;
+  final String pluginListUrl;
+  final String? repoName;
+  final List<CloudStreamExtensionGroup> groups = [];
+  final Set<String> _itemTypeLabels = {};
+  int _pluginCount = 0;
+
+  void addGroup(CloudStreamExtensionGroup group) {
+    groups.add(group);
+    _pluginCount += group.pluginCount;
+    _itemTypeLabels.add(_formatItemType(group.itemType));
+  }
+
+  int get pluginCount => _pluginCount;
+
+  List<String> get itemTypeLabels => _itemTypeLabels.toList()..sort();
+
+  bool isInstalling(String? installingId) {
+    if (installingId == null) return false;
+    return groups.any((group) => group.id == installingId);
+  }
+
+  Map<String, String> combineFailures(ExtensionsController controller) {
+    final failures = <String, String>{};
+    for (final group in groups) {
+      final status = controller.groupInstallStatus(group.id);
+      if (status == null) continue;
+      failures.addAll(status.failures);
+    }
+    return failures;
+  }
+
+  static String keyFor(CloudStreamExtensionGroup group) =>
+      '${group.repoUrl}:${group.pluginListUrl}';
+
+  static String _formatItemType(dynamic itemType) {
+    if (itemType == null) return 'Unknown';
+    final raw = itemType.toString();
+    final lastSegment = raw.contains('.') ? raw.split('.').last : raw;
+    if (lastSegment.isEmpty) return 'Unknown';
+    final spaced = lastSegment
+        .replaceAllMapped(RegExp('([A-Z])'), (match) => ' ${match.group(0)}')
+        .replaceAll('_', ' ')
+        .trim();
+    if (spaced.isEmpty) return 'Unknown';
+    return spaced[0].toUpperCase() + spaced.substring(1);
   }
 }

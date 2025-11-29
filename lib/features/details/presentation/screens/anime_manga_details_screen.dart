@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../../core/domain/entities/entities.dart';
+import '../../../../core/domain/entities/source_entity.dart';
 import '../../../../core/data/datasources/external_remote_data_source.dart';
 import '../../../../core/di/injection_container.dart';
+import '../../../../core/widgets/provider_badge.dart';
+import '../../../../core/widgets/provider_attribution_dialog.dart';
+import '../../../manga_reader/presentation/screens/manga_reader_screen.dart';
 import '../../../media_details/presentation/screens/episode_source_selection_sheet.dart';
+import '../../../video_player/presentation/screens/video_player_screen.dart';
 
 /// Details screen for Anime and Manga from external sources
 class AnimeMangaDetailsScreen extends StatefulWidget {
@@ -25,6 +30,11 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
   bool _isLoading = true;
   bool _hasError = false;
 
+  // Provider attribution
+  List<String> _contributingProviders = [];
+  Map<String, String>? _dataSourceAttribution;
+  Map<String, double>? _matchConfidences;
+
   // Episodes state
   List<EpisodeEntity> _episodes = [];
   bool _isLoadingEpisodes = false;
@@ -40,12 +50,28 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
     // 3 tabs for Anime/Manga (Overview, Episodes/Chapters, More Info)
     final isAnime = widget.media.type == MediaType.anime;
     _tabController = TabController(length: 3, vsync: this);
+    _initializeAttributionFromMedia(widget.media);
     _fetchFullDetails();
     if (isAnime) {
       _fetchEpisodes();
     } else {
       _fetchChapters();
     }
+  }
+
+  void _initializeAttributionFromMedia(MediaEntity media) {
+    _contributingProviders = [media.sourceId];
+    _dataSourceAttribution = null;
+    _matchConfidences = null;
+  }
+
+  void _updateProviderAttribution(MediaDetailsEntity details) {
+    final providers = details.contributingProviders;
+    _contributingProviders = (providers != null && providers.isNotEmpty)
+        ? providers
+        : [details.sourceId];
+    _dataSourceAttribution = details.dataSourceAttribution;
+    _matchConfidences = details.matchConfidences;
   }
 
   @override
@@ -66,6 +92,7 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
         setState(() {
           _fullDetails = result;
           _isLoading = false;
+          _updateProviderAttribution(result);
         });
       }
     } catch (e) {
@@ -305,27 +332,99 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
-                child: Row(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: FilledButton.icon(
-                        onPressed: () {
-                          // TODO: Implement Add to Library
-                        },
-                        icon: const Icon(Icons.add),
-                        label: const Text('Add to Library'),
-                      ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: FilledButton.icon(
+                            onPressed: () {
+                              // TODO: Implement Add to Library
+                            },
+                            icon: const Icon(Icons.add),
+                            label: const Text('Add to Library'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () {
+                              // TODO: Implement Custom List
+                            },
+                            icon: const Icon(Icons.playlist_add),
+                            label: const Text('Custom List'),
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () {
-                          // TODO: Implement Custom List
-                        },
-                        icon: const Icon(Icons.playlist_add),
-                        label: const Text('Custom List'),
+                    if (_contributingProviders.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerHighest
+                              .withValues(alpha: 0.3),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.outline.withValues(alpha: 0.1),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.source,
+                                  size: 16,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'Data Sources',
+                                  style: Theme.of(context).textTheme.labelMedium
+                                      ?.copyWith(
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.onSurfaceVariant,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                ),
+                                const Spacer(),
+                                TextButton.icon(
+                                  onPressed: () =>
+                                      _showProviderAttributionDialog(context),
+                                  style: TextButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                    ),
+                                  ),
+                                  icon: const Icon(
+                                    Icons.info_outline,
+                                    size: 16,
+                                  ),
+                                  label: const Text('Details'),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            ProviderBadgeList(
+                              providers: _contributingProviders,
+                              isSmall: false,
+                              onProviderTap: (_) =>
+                                  _showProviderAttributionDialog(context),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),
@@ -390,6 +489,16 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
                 ],
               ),
       ),
+    );
+  }
+
+  void _showProviderAttributionDialog(BuildContext context) {
+    showProviderAttributionDialog(
+      context,
+      dataSourceAttribution: _dataSourceAttribution,
+      contributingProviders: _contributingProviders,
+      matchConfidences: _matchConfidences,
+      primaryProvider: widget.media.sourceId,
     );
   }
 
@@ -1085,19 +1194,31 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
           media: widget.media,
           episode: episode,
           isChapter: false,
-          onSourceSelected: (source) {
-            // TODO: Navigate to video player with source
-            // Navigator.of(context).push(
-            //   MaterialPageRoute(
-            //     builder: (context) => VideoPlayerScreen(
-            //       episode: episode,
-            //       source: source,
-            //     ),
-            //   ),
-            // );
+          onSourceSelected: (source, allSources) {
+            _navigateToVideoPlayer(context, episode, source, allSources);
           },
         );
       },
+    );
+  }
+
+  /// Navigate to video player with selected source
+  /// Requirements: 5.1, 5.3
+  void _navigateToVideoPlayer(
+    BuildContext context,
+    EpisodeEntity episode,
+    SourceEntity source,
+    List<SourceEntity> allSources,
+  ) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => VideoPlayerScreen.fromSourceSelection(
+          media: widget.media,
+          episode: episode,
+          source: source,
+          allSources: allSources,
+        ),
+      ),
     );
   }
 
@@ -1107,6 +1228,16 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
     BuildContext context,
     ChapterEntity chapter,
   ) {
+    // Create an EpisodeEntity from the chapter for the selection sheet
+    final episodeFromChapter = EpisodeEntity(
+      id: chapter.id,
+      mediaId: chapter.mediaId,
+      title: chapter.title,
+      number: chapter.number.toInt(),
+      releaseDate: chapter.releaseDate,
+      sourceProvider: chapter.sourceProvider,
+    );
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1114,21 +1245,35 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
       builder: (context) {
         return EpisodeSourceSelectionSheet(
           media: widget.media,
-          episode: chapter as EpisodeEntity, // Cast chapter to episode for now
+          episode: episodeFromChapter,
           isChapter: true,
-          onSourceSelected: (source) {
-            // TODO: Navigate to manga reader with source
-            // Navigator.of(context).push(
-            //   MaterialPageRoute(
-            //     builder: (context) => MangaReaderScreen(
-            //       chapter: chapter,
-            //       source: source,
-            //     ),
-            //   ),
-            // );
+          onSourceSelected: (source, allSources) {
+            _navigateToMangaReader(context, chapter, source);
           },
         );
       },
+    );
+  }
+
+  /// Navigate to manga reader after selecting a source for a chapter
+  void _navigateToMangaReader(
+    BuildContext context,
+    ChapterEntity chapter,
+    SourceEntity source,
+  ) {
+    final providerChapter = chapter.copyWith(
+      id: source.sourceLink,
+      sourceProvider: source.providerId,
+    );
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => MangaReaderScreen(
+          chapter: providerChapter,
+          sourceId: source.providerId,
+          itemId: widget.media.id,
+        ),
+      ),
     );
   }
 }

@@ -66,6 +66,7 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
   late final TextEditingController _cartoonUrlController;
   late final TextEditingController _documentaryUrlController;
   late final TextEditingController _livestreamUrlController;
+  late final TextEditingController _nsfwUrlController;
 
   late ExtensionType _selectedType;
   TabController? _tabController;
@@ -104,6 +105,9 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
     );
     _livestreamUrlController = TextEditingController(
       text: widget.currentConfig?.livestreamRepoUrl ?? '',
+    );
+    _nsfwUrlController = TextEditingController(
+      text: widget.currentConfig?.nsfwRepoUrl ?? '',
     );
 
     // Check if running on Android
@@ -160,6 +164,7 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
     _cartoonUrlController.dispose();
     _documentaryUrlController.dispose();
     _livestreamUrlController.dispose();
+    _nsfwUrlController.dispose();
     _tabController?.removeListener(_onTabChanged);
     _tabController?.dispose();
     super.dispose();
@@ -216,6 +221,9 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
         livestreamRepoUrl: _livestreamUrlController.text.isEmpty
             ? null
             : _livestreamUrlController.text.trim(),
+        nsfwRepoUrl: _nsfwUrlController.text.isEmpty
+            ? null
+            : _nsfwUrlController.text.trim(),
       );
       widget.onSave?.call(_selectedType, config);
       Navigator.of(context).pop();
@@ -414,6 +422,16 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
                               label: 'Livestream Repository URL',
                               hint: 'https://example.com/livestream-repo.json',
                               icon: Icons.live_tv_outlined,
+                            ),
+
+                            const SizedBox(height: 16),
+
+                            // NSFW Repository URL
+                            _buildUrlField(
+                              controller: _nsfwUrlController,
+                              label: 'NSFW Repository URL',
+                              hint: 'https://example.com/nsfw-repo.json',
+                              icon: Icons.no_adult_content_outlined,
                             ),
                           ],
 

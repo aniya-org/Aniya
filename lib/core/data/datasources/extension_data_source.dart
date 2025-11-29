@@ -1,10 +1,12 @@
 import 'package:dartotsu_extension_bridge/ExtensionManager.dart';
 import 'package:dartotsu_extension_bridge/Extensions/Extensions.dart';
+import 'package:dartotsu_extension_bridge/Models/DEpisode.dart';
+import 'package:dartotsu_extension_bridge/Models/DMedia.dart';
 import 'package:dartotsu_extension_bridge/Models/Source.dart';
 
 import '../models/extension_model.dart';
-import '../models/source_model.dart';
 import '../models/media_model.dart';
+import '../models/source_model.dart';
 import '../../error/exceptions.dart';
 import '../../utils/logger.dart';
 import '../../domain/services/lazy_extension_loader.dart';
@@ -85,6 +87,67 @@ class ExtensionDataSourceImpl implements ExtensionDataSource {
   /// Uses LazyExtensionLoader to get extension managers from GetX
   Future<Extension> _getExtensionManager(ExtensionType type) async {
     return await lazyLoader.getOrLoadExtension(type);
+  }
+
+  Source? _findSourceById(Extension manager, String extensionId) {
+    final allInstalled = [
+      ...manager.installedAnimeExtensions.value,
+      ...manager.installedMangaExtensions.value,
+      ...manager.installedNovelExtensions.value,
+      ...manager.installedMovieExtensions.value,
+      ...manager.installedTvShowExtensions.value,
+      ...manager.installedCartoonExtensions.value,
+      ...manager.installedDocumentaryExtensions.value,
+      ...manager.installedLivestreamExtensions.value,
+      ...manager.installedNsfwExtensions.value,
+    ];
+
+    try {
+      return allInstalled.firstWhere((source) => source.id == extensionId);
+    } catch (_) {
+      final available = [
+        ...manager.availableAnimeExtensions.value,
+        ...manager.availableMangaExtensions.value,
+        ...manager.availableNovelExtensions.value,
+        ...manager.availableMovieExtensions.value,
+        ...manager.availableTvShowExtensions.value,
+        ...manager.availableCartoonExtensions.value,
+        ...manager.availableDocumentaryExtensions.value,
+        ...manager.availableLivestreamExtensions.value,
+        ...manager.availableNsfwExtensions.value,
+      ];
+      try {
+        return available.firstWhere((source) => source.id == extensionId);
+      } catch (_) {
+        return null;
+      }
+    }
+  }
+
+  DEpisode _buildEpisodeFallback(String mediaId, int episodeNumber) {
+    return DEpisode(
+      url: mediaId,
+      episodeNumber: episodeNumber.toString(),
+      name: 'Episode $episodeNumber',
+    );
+  }
+
+  DEpisode? _matchEpisode(
+    List<DEpisode>? episodes,
+    String mediaId,
+    int episodeNumber,
+  ) {
+    if (episodes == null) return null;
+    for (final episode in episodes) {
+      final matchesNumber =
+          episode.episodeNumber == episodeNumber.toString() ||
+          double.tryParse(episode.episodeNumber)?.round() == episodeNumber;
+      final matchesUrl = episode.url == mediaId;
+      if (matchesNumber || matchesUrl) {
+        return episode;
+      }
+    }
+    return null;
   }
 
   @override
@@ -355,14 +418,23 @@ class ExtensionDataSourceImpl implements ExtensionDataSource {
     required int page,
   }) async {
     try {
-      // Search for media in the extension
-      // This would call the extension's search method
-      // For now, return empty list as this requires extension-specific implementation
-      Logger.warning(
-        'searchMedia not yet fully implemented for extension: $extensionId',
-        tag: 'ExtensionDataSource',
-      );
-      return [];
+      final manager = await _getExtensionManager(extensionType);
+      final source = _findSourceById(manager, extensionId);
+
+      if (source == null) {
+        throw ServerException('Extension not found: $extensionId');
+      }
+
+      final pages = await source.methods.search(query, page, const []);
+      return pages.list
+          .map(
+            (dMedia) => MediaModel.fromDMedia(
+              dMedia,
+              source.id ?? extensionId,
+              source.name ?? 'Unknown',
+            ),
+          )
+          .toList();
     } catch (e, stackTrace) {
       Logger.error(
         'Failed to search media in extension: $extensionId',
@@ -383,14 +455,48 @@ class ExtensionDataSourceImpl implements ExtensionDataSource {
     required int episodeNumber,
   }) async {
     try {
-      // Get sources for a media item from the extension
-      // This would call the extension's getSources method
-      // For now, return empty list as this requires extension-specific implementation
-      Logger.warning(
-        'getSources not yet fully implemented for extension: $extensionId',
-        tag: 'ExtensionDataSource',
-      );
-      return [];
+      final manager = await _getExtensionManager(extensionType);
+      final source = await _findSourceById(manager, extensionId);
+
+      if (source == null) {
+        throw ServerException('Extension not found: $extensionId');
+      }
+
+      final media = DMedia.withUrl(mediaId);
+      final detail = await source.methods.getDetail(media);
+
+      final targetEpisode =
+          _matchEpisode(detail.episodes, mediaId, episodeNumber) ??
+          _buildEpisodeFallback(mediaId, episodeNumber);
+
+      if (itemType == ItemType.anime) {
+        final videos = await source.methods.getVideoList(targetEpisode);
+        return videos
+            .map(
+              (video) => SourceModel(
+                id: '${source.id}-${video.url.hashCode}',
+                name: video.title ?? source.name ?? 'Video',
+                providerId: source.id ?? extensionId,
+                quality: video.quality,
+                language: source.lang,
+                sourceLink: video.url,
+                headers: video.headers,
+              ),
+            )
+            .toList();
+      }
+
+      final chapterUrl = targetEpisode.url ?? mediaId;
+      return [
+        SourceModel(
+          id: '${source.id}-${chapterUrl.hashCode}',
+          name: source.name ?? 'Chapter',
+          providerId: source.id ?? extensionId,
+          quality: null,
+          language: source.lang,
+          sourceLink: chapterUrl,
+        ),
+      ];
     } catch (e, stackTrace) {
       Logger.error(
         'Failed to get sources from extension: $extensionId',

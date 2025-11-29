@@ -473,16 +473,39 @@ class _MediaDetailsScreenState extends State<MediaDetailsScreen> {
   }
 
   void _playEpisode(BuildContext context, EpisodeEntity episode) {
-    // VideoPlayerScreen automatically loads saved playback position
+    // Show EpisodeSourceSelectionSheet for episode source selection
+    // Requirements: 1.1, 5.1, 5.3
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => EpisodeSourceSelectionSheet(
+        media: widget.media,
+        episode: episode,
+        isChapter: false,
+        onSourceSelected: (source, allSources) {
+          _navigateToVideoPlayer(context, episode, source, allSources);
+        },
+      ),
+    );
+  }
+
+  /// Navigate to video player with selected source
+  /// Requirements: 5.1, 5.3
+  void _navigateToVideoPlayer(
+    BuildContext context,
+    EpisodeEntity episode,
+    SourceEntity source,
+    List<SourceEntity> allSources,
+  ) {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => VideoPlayerScreen(
-          episodeId: episode.id,
-          sourceId: widget.media.sourceId,
-          itemId: widget.media.id,
-          episodeNumber: episode.number,
-          episodeTitle: episode.title,
+        builder: (context) => VideoPlayerScreen.fromSourceSelection(
+          media: widget.media,
+          episode: episode,
+          source: source,
+          allSources: allSources,
         ),
       ),
     );
@@ -506,7 +529,7 @@ class _MediaDetailsScreenState extends State<MediaDetailsScreen> {
           sourceProvider: chapter.sourceProvider,
         ),
         isChapter: true,
-        onSourceSelected: (source) {
+        onSourceSelected: (source, allSources) {
           _navigateToMangaReader(context, chapter, source);
         },
       ),

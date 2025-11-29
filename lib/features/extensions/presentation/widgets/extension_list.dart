@@ -56,6 +56,12 @@ class ExtensionList extends StatelessWidget {
   /// ID of the extension currently being uninstalled
   final String? uninstallingExtensionId;
 
+  /// Whether the internal ListView should shrink-wrap its contents
+  final bool shrinkWrap;
+
+  /// Custom scroll physics for the internal ListView
+  final ScrollPhysics? physics;
+
   const ExtensionList({
     super.key,
     required this.extensions,
@@ -73,6 +79,8 @@ class ExtensionList extends StatelessWidget {
     this.isOperationInProgress = false,
     this.installingExtensionId,
     this.uninstallingExtensionId,
+    this.shrinkWrap = false,
+    this.physics,
   });
 
   @override
@@ -137,6 +145,9 @@ class ExtensionList extends StatelessWidget {
 
     return ListView.builder(
       padding: const EdgeInsets.all(16),
+      primary: false,
+      shrinkWrap: shrinkWrap,
+      physics: physics,
       itemCount: sections.length,
       itemBuilder: (context, index) {
         final section = sections[index];
@@ -286,8 +297,10 @@ class ExtensionList extends StatelessWidget {
                   : null,
               onUpdate: onUpdate != null ? () => onUpdate!(extension) : null,
               onTap: onTap != null ? () => onTap!(extension) : null,
-              isInstalling: installingExtensionId == extension.id && !extension.hasUpdate,
-              isUpdating: installingExtensionId == extension.id && extension.hasUpdate,
+              isInstalling:
+                  installingExtensionId == extension.id && !extension.hasUpdate,
+              isUpdating:
+                  installingExtensionId == extension.id && extension.hasUpdate,
               isUninstalling: uninstallingExtensionId == extension.id,
             ),
           );
@@ -348,6 +361,9 @@ class ExtensionList extends StatelessWidget {
   Widget _buildSkeletonList(BuildContext context) {
     return ListView.builder(
       padding: const EdgeInsets.all(16),
+      primary: false,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
       itemCount: 5,
       itemBuilder: (context, index) => Padding(
         padding: const EdgeInsets.only(bottom: 12),

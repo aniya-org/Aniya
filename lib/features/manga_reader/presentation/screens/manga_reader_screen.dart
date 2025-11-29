@@ -239,10 +239,9 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
   }
 
   Widget _buildPageWithZoom(int index) {
-    return Container(
-      constraints: BoxConstraints(
-        minHeight: MediaQuery.of(context).size.height,
-      ),
+    final screenHeight = MediaQuery.of(context).size.height;
+    return SizedBox(
+      height: screenHeight,
       child: PhotoView(
         imageProvider: NetworkImage(_viewModel.pages[index]),
         initialScale: PhotoViewComputedScale.contained,

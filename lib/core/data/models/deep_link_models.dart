@@ -15,23 +15,63 @@ class DeepLinkParams extends Equatable {
   /// URL for novel extension repository
   final String? novelRepoUrl;
 
+  /// CloudStream-specific repositories
+  final String? movieRepoUrl;
+  final String? tvShowRepoUrl;
+  final String? cartoonRepoUrl;
+  final String? documentaryRepoUrl;
+  final String? livestreamRepoUrl;
+  final String? nsfwRepoUrl;
+
   const DeepLinkParams({
     required this.extensionType,
     this.animeRepoUrl,
     this.mangaRepoUrl,
     this.novelRepoUrl,
+    this.movieRepoUrl,
+    this.tvShowRepoUrl,
+    this.cartoonRepoUrl,
+    this.documentaryRepoUrl,
+    this.livestreamRepoUrl,
+    this.nsfwRepoUrl,
   });
 
   /// Returns true if at least one repository URL is provided
   bool get hasAnyUrl =>
-      animeRepoUrl != null || mangaRepoUrl != null || novelRepoUrl != null;
+      animeRepoUrl != null ||
+      mangaRepoUrl != null ||
+      novelRepoUrl != null ||
+      movieRepoUrl != null ||
+      tvShowRepoUrl != null ||
+      cartoonRepoUrl != null ||
+      documentaryRepoUrl != null ||
+      livestreamRepoUrl != null ||
+      nsfwRepoUrl != null;
 
-  /// Returns a list of all non-null repository URLs
-  List<String> get allUrls => [
-    if (animeRepoUrl != null) animeRepoUrl!,
-    if (mangaRepoUrl != null) mangaRepoUrl!,
-    if (novelRepoUrl != null) novelRepoUrl!,
-  ];
+  /// Returns a list of all non-null repository URLs (deduplicated)
+  List<String> get allUrls {
+    final seen = <String>{};
+    final urls = <String>[];
+
+    void addIfUnique(String? value) {
+      if (value == null) return;
+      if (seen.add(value)) {
+        urls.add(value);
+      }
+    }
+
+    addIfUnique(animeRepoUrl);
+    addIfUnique(mangaRepoUrl);
+    addIfUnique(novelRepoUrl);
+    addIfUnique(movieRepoUrl);
+    addIfUnique(tvShowRepoUrl);
+    addIfUnique(cartoonRepoUrl);
+    addIfUnique(documentaryRepoUrl);
+    addIfUnique(livestreamRepoUrl);
+    addIfUnique(nsfwRepoUrl);
+
+    return urls;
+  }
 
   @override
   List<Object?> get props => [
@@ -39,11 +79,17 @@ class DeepLinkParams extends Equatable {
     animeRepoUrl,
     mangaRepoUrl,
     novelRepoUrl,
+    movieRepoUrl,
+    tvShowRepoUrl,
+    cartoonRepoUrl,
+    documentaryRepoUrl,
+    livestreamRepoUrl,
+    nsfwRepoUrl,
   ];
 
   @override
   String toString() =>
-      'DeepLinkParams(type: $extensionType, anime: $animeRepoUrl, manga: $mangaRepoUrl, novel: $novelRepoUrl)';
+      'DeepLinkParams(type: $extensionType, anime: $animeRepoUrl, manga: $mangaRepoUrl, novel: $novelRepoUrl, movie: $movieRepoUrl, tvShow: $tvShowRepoUrl, cartoon: $cartoonRepoUrl, documentary: $documentaryRepoUrl, livestream: $livestreamRepoUrl, nsfw: $nsfwRepoUrl)';
 }
 
 /// Result of processing a deep link for extension repository installation

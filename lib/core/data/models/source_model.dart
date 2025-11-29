@@ -6,9 +6,11 @@ class SourceModel extends SourceEntity {
   const SourceModel({
     required super.id,
     required super.name,
+    required super.providerId,
     super.quality,
     super.language,
     required super.sourceLink,
+    super.headers,
   });
 
   /// Create a SourceModel from JSON
@@ -16,9 +18,13 @@ class SourceModel extends SourceEntity {
     return SourceModel(
       id: json['id'] as String,
       name: json['name'] as String,
+      providerId: json['providerId'] as String,
       quality: json['quality'] as String?,
       language: json['language'] as String?,
       sourceLink: json['sourceLink'] as String,
+      headers: json['headers'] != null
+          ? Map<String, String>.from(json['headers'] as Map)
+          : null,
     );
   }
 
@@ -27,9 +33,11 @@ class SourceModel extends SourceEntity {
     return {
       'id': id,
       'name': name,
+      'providerId': providerId,
       'quality': quality,
       'language': language,
       'sourceLink': sourceLink,
+      'headers': headers,
     };
   }
 
@@ -37,19 +45,24 @@ class SourceModel extends SourceEntity {
   SourceEntity toEntity() => this;
 
   /// Create a copy with optional field replacements
+  @override
   SourceModel copyWith({
     String? id,
     String? name,
+    String? providerId,
     String? quality,
     String? language,
     String? sourceLink,
+    Map<String, String>? headers,
   }) {
     return SourceModel(
       id: id ?? this.id,
       name: name ?? this.name,
+      providerId: providerId ?? this.providerId,
       quality: quality ?? this.quality,
       language: language ?? this.language,
       sourceLink: sourceLink ?? this.sourceLink,
+      headers: headers ?? this.headers,
     );
   }
 }

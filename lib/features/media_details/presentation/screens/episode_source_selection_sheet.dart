@@ -33,8 +33,9 @@ class EpisodeSourceSelectionSheet extends StatefulWidget {
   final bool isChapter;
 
   /// Callback when a source is selected and navigation should occur
-  /// Receives the selected source entity
-  final Function(SourceEntity) onSourceSelected;
+  /// Receives the selected source entity and all available sources
+  final Function(SourceEntity selectedSource, List<SourceEntity> allSources)
+  onSourceSelected;
 
   const EpisodeSourceSelectionSheet({
     required this.media,
@@ -420,8 +421,8 @@ class _EpisodeSourceSelectionSheetState
       // Close the bottom sheet
       Navigator.of(context).pop();
 
-      // Call the callback with the selected source
-      widget.onSourceSelected(source);
+      // Call the callback with the selected source and all available sources
+      widget.onSourceSelected(source, _viewModel.availableSources);
     }
   }
 

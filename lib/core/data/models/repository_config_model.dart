@@ -29,6 +29,9 @@ class RepositoryConfig extends Equatable {
   /// URL for livestream extension repository (CloudStream)
   final String? livestreamRepoUrl;
 
+  /// URL for NSFW extension repository (CloudStream)
+  final String? nsfwRepoUrl;
+
   const RepositoryConfig({
     this.animeRepoUrl,
     this.mangaRepoUrl,
@@ -38,6 +41,7 @@ class RepositoryConfig extends Equatable {
     this.cartoonRepoUrl,
     this.documentaryRepoUrl,
     this.livestreamRepoUrl,
+    this.nsfwRepoUrl,
   });
 
   /// Creates an empty configuration with no URLs
@@ -49,7 +53,8 @@ class RepositoryConfig extends Equatable {
       tvShowRepoUrl = null,
       cartoonRepoUrl = null,
       documentaryRepoUrl = null,
-      livestreamRepoUrl = null;
+      livestreamRepoUrl = null,
+      nsfwRepoUrl = null;
 
   /// Returns true if at least one repository URL is configured
   bool get hasAnyUrl =>
@@ -60,7 +65,8 @@ class RepositoryConfig extends Equatable {
       tvShowRepoUrl != null ||
       cartoonRepoUrl != null ||
       documentaryRepoUrl != null ||
-      livestreamRepoUrl != null;
+      livestreamRepoUrl != null ||
+      nsfwRepoUrl != null;
 
   /// Returns true if all basic repository URLs are configured (anime, manga, novel)
   bool get hasAllUrls =>
@@ -72,7 +78,8 @@ class RepositoryConfig extends Equatable {
       tvShowRepoUrl != null ||
       cartoonRepoUrl != null ||
       documentaryRepoUrl != null ||
-      livestreamRepoUrl != null;
+      livestreamRepoUrl != null ||
+      nsfwRepoUrl != null;
 
   /// Returns a list of all non-null repository URLs
   List<String> get allUrls => [
@@ -84,6 +91,7 @@ class RepositoryConfig extends Equatable {
     if (cartoonRepoUrl != null) cartoonRepoUrl!,
     if (documentaryRepoUrl != null) documentaryRepoUrl!,
     if (livestreamRepoUrl != null) livestreamRepoUrl!,
+    if (nsfwRepoUrl != null) nsfwRepoUrl!,
   ];
 
   /// Creates a RepositoryConfig from JSON
@@ -97,6 +105,7 @@ class RepositoryConfig extends Equatable {
       cartoonRepoUrl: json['cartoonRepoUrl'] as String?,
       documentaryRepoUrl: json['documentaryRepoUrl'] as String?,
       livestreamRepoUrl: json['livestreamRepoUrl'] as String?,
+      nsfwRepoUrl: json['nsfwRepoUrl'] as String?,
     );
   }
 
@@ -111,6 +120,7 @@ class RepositoryConfig extends Equatable {
       'cartoonRepoUrl': cartoonRepoUrl,
       'documentaryRepoUrl': documentaryRepoUrl,
       'livestreamRepoUrl': livestreamRepoUrl,
+      'nsfwRepoUrl': nsfwRepoUrl,
     };
   }
 
@@ -124,6 +134,7 @@ class RepositoryConfig extends Equatable {
     String? cartoonRepoUrl,
     String? documentaryRepoUrl,
     String? livestreamRepoUrl,
+    String? nsfwRepoUrl,
     bool clearAnimeUrl = false,
     bool clearMangaUrl = false,
     bool clearNovelUrl = false,
@@ -132,6 +143,7 @@ class RepositoryConfig extends Equatable {
     bool clearCartoonUrl = false,
     bool clearDocumentaryUrl = false,
     bool clearLivestreamUrl = false,
+    bool clearNsfwUrl = false,
   }) {
     return RepositoryConfig(
       animeRepoUrl: clearAnimeUrl ? null : (animeRepoUrl ?? this.animeRepoUrl),
@@ -150,6 +162,7 @@ class RepositoryConfig extends Equatable {
       livestreamRepoUrl: clearLivestreamUrl
           ? null
           : (livestreamRepoUrl ?? this.livestreamRepoUrl),
+      nsfwRepoUrl: clearNsfwUrl ? null : (nsfwRepoUrl ?? this.nsfwRepoUrl),
     );
   }
 
@@ -163,9 +176,10 @@ class RepositoryConfig extends Equatable {
     cartoonRepoUrl,
     documentaryRepoUrl,
     livestreamRepoUrl,
+    nsfwRepoUrl,
   ];
 
   @override
   String toString() =>
-      'RepositoryConfig(anime: $animeRepoUrl, manga: $mangaRepoUrl, novel: $novelRepoUrl, movie: $movieRepoUrl, tvShow: $tvShowRepoUrl, cartoon: $cartoonRepoUrl, documentary: $documentaryRepoUrl, livestream: $livestreamRepoUrl)';
+      'RepositoryConfig(anime: $animeRepoUrl, manga: $mangaRepoUrl, novel: $novelRepoUrl, movie: $movieRepoUrl, tvShow: $tvShowRepoUrl, cartoon: $cartoonRepoUrl, documentary: $documentaryRepoUrl, livestream: $livestreamRepoUrl, nsfw: $nsfwRepoUrl)';
 }

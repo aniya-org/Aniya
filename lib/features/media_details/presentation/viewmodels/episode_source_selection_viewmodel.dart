@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:get/get.dart';
 
 import '../../../../core/domain/entities/extension_entity.dart';
 import '../../../../core/domain/entities/media_entity.dart';
@@ -8,6 +9,7 @@ import '../../../../core/domain/repositories/extension_search_repository.dart';
 import '../../../../core/domain/repositories/recent_extensions_repository.dart';
 import '../../../../core/error/failures.dart';
 import '../../../../core/utils/logger.dart';
+import '../../../extensions/controllers/extensions_controller.dart';
 
 /// ViewModel for managing the episode/chapter source selection workflow
 /// Handles extension selection, media search, source scraping, and navigation
@@ -15,6 +17,7 @@ import '../../../../core/utils/logger.dart';
 class EpisodeSourceSelectionViewModel extends ChangeNotifier {
   final ExtensionSearchRepository extensionSearchRepository;
   final RecentExtensionsRepository recentExtensionsRepository;
+  final ExtensionsController extensionsController;
 
   // ============================================================================
   // State Properties
@@ -122,7 +125,9 @@ class EpisodeSourceSelectionViewModel extends ChangeNotifier {
   EpisodeSourceSelectionViewModel({
     required this.extensionSearchRepository,
     required this.recentExtensionsRepository,
-  });
+    ExtensionsController? extensionsController,
+  }) : extensionsController =
+           extensionsController ?? Get.find<ExtensionsController>();
 
   // ============================================================================
   // Public Methods
@@ -289,6 +294,14 @@ class EpisodeSourceSelectionViewModel extends ChangeNotifier {
     }
   }
 
+  Set<ItemType> _resolveDesiredItemTypes(MediaType mediaType) {
+    if (mediaType == MediaType.anime && !_isChapter) {
+      return {ItemType.anime};
+    }
+    // For manga/chapters prefer manga + novel sources (AnymeX parity)
+    return {ItemType.manga, ItemType.novel};
+  }
+
   /// Select a media item and trigger source scraping
   /// Requirements: 3.5, 4.1
   Future<void> selectMedia(MediaEntity media) async {
@@ -365,10 +378,11 @@ class EpisodeSourceSelectionViewModel extends ChangeNotifier {
   /// Load compatible extensions based on media type
   Future<void> _loadCompatibleExtensions(MediaType mediaType) async {
     try {
-      // Get all installed extensions (this would come from a repository)
-      // For now, we'll use an empty list as a placeholder
-      // The actual implementation would fetch from ExtensionRepository
-      _compatibleExtensions = [];
+      final installed = extensionsController.installedEntities;
+      final desiredItemTypes = _resolveDesiredItemTypes(mediaType);
+      _compatibleExtensions = installed
+          .where((extension) => desiredItemTypes.contains(extension.itemType))
+          .toList();
 
       Logger.info(
         'Loaded ${_compatibleExtensions.length} compatible extensions',

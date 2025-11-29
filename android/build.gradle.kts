@@ -1,11 +1,12 @@
-allprojects {
+subprojects {
     repositories {
         google()
         mavenCentral()
+        mavenLocal()
+        maven("https://jitpack.io")
+        maven("https://storage.googleapis.com/download.flutter.io")
     }
-}
 
-subprojects {
     afterEvaluate {
         // Handle both Android application and library plugins
         if (plugins.hasPlugin("com.android.application") || 

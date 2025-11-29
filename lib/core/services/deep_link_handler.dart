@@ -151,9 +151,21 @@ class DeepLinkHandler {
       repoUrl = '$repoUrl?${uri.query}';
     }
 
+    return _buildCloudStreamParams(repoUrl);
+  }
+
+  DeepLinkParams _buildCloudStreamParams(String repoUrl) {
     return DeepLinkParams(
       extensionType: ExtensionType.cloudstream,
       animeRepoUrl: repoUrl,
+      mangaRepoUrl: repoUrl,
+      novelRepoUrl: repoUrl,
+      movieRepoUrl: repoUrl,
+      tvShowRepoUrl: repoUrl,
+      cartoonRepoUrl: repoUrl,
+      documentaryRepoUrl: repoUrl,
+      livestreamRepoUrl: repoUrl,
+      nsfwRepoUrl: repoUrl,
     );
   }
 
@@ -186,10 +198,7 @@ class DeepLinkHandler {
       repoUrl = 'https://$repoUrl';
     }
 
-    return DeepLinkParams(
-      extensionType: ExtensionType.cloudstream,
-      animeRepoUrl: repoUrl,
-    );
+    return _buildCloudStreamParams(repoUrl);
   }
 
   /// Processes a deep link URI and adds the repositories.
@@ -210,6 +219,12 @@ class DeepLinkHandler {
         animeRepoUrl: params.animeRepoUrl,
         mangaRepoUrl: params.mangaRepoUrl,
         novelRepoUrl: params.novelRepoUrl,
+        movieRepoUrl: params.movieRepoUrl,
+        tvShowRepoUrl: params.tvShowRepoUrl,
+        cartoonRepoUrl: params.cartoonRepoUrl,
+        documentaryRepoUrl: params.documentaryRepoUrl,
+        livestreamRepoUrl: params.livestreamRepoUrl,
+        nsfwRepoUrl: params.nsfwRepoUrl,
       );
 
       // Save the repository configuration if callback is provided

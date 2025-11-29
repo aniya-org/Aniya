@@ -1,11 +1,20 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import '../../../../core/di/injection_container.dart';
+import '../../../../core/domain/entities/media_entity.dart';
+import '../../../../core/domain/entities/episode_entity.dart';
+import '../../../../core/domain/entities/source_entity.dart';
+import '../../../../core/domain/entities/video_source_entity.dart';
+import '../../../../core/domain/usecases/get_video_sources_usecase.dart';
+import '../../../../core/domain/usecases/extract_video_url_usecase.dart';
 import '../../../../core/domain/usecases/save_playback_position_usecase.dart';
 import '../../../../core/domain/usecases/get_playback_position_usecase.dart';
 import '../../../../core/domain/usecases/update_progress_usecase.dart';
+import '../viewmodels/video_player_viewmodel.dart';
 
 /// Video player screen for playing episodes
 ///
@@ -17,12 +26,18 @@ import '../../../../core/domain/usecases/update_progress_usecase.dart';
 /// - Resume from saved position
 /// - Error handling with fallback sources
 class VideoPlayerScreen extends StatefulWidget {
-  final String episodeId;
-  final String sourceId;
-  final String itemId;
-  final int episodeNumber;
-  final String episodeTitle;
+  final String? episodeId;
+  final String? sourceId;
+  final String? itemId;
+  final int? episodeNumber;
+  final String? episodeTitle;
 
+  final MediaEntity? media;
+  final EpisodeEntity? episode;
+  final SourceEntity? source;
+  final List<SourceEntity>? allSources;
+
+  /// Legacy constructor used by screens that only know the media/source IDs.
   const VideoPlayerScreen({
     super.key,
     required this.episodeId,
@@ -30,7 +45,29 @@ class VideoPlayerScreen extends StatefulWidget {
     required this.itemId,
     required this.episodeNumber,
     required this.episodeTitle,
-  });
+  }) : media = null,
+       episode = null,
+       source = null,
+       allSources = null;
+
+  /// Constructor used when a concrete SourceEntity has already been selected.
+  const VideoPlayerScreen.fromSourceSelection({
+    super.key,
+    required MediaEntity media,
+    required EpisodeEntity episode,
+    required SourceEntity source,
+    List<SourceEntity>? allSources,
+  }) : media = media,
+       episode = episode,
+       source = source,
+       allSources = allSources,
+       episodeId = null,
+       sourceId = null,
+       itemId = null,
+       episodeNumber = null,
+       episodeTitle = null;
+
+  bool get isDirectSourceMode => source != null;
 
   @override
   State<VideoPlayerScreen> createState() => _VideoPlayerScreenState();
@@ -39,56 +76,65 @@ class VideoPlayerScreen extends StatefulWidget {
 class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   late final Player _player;
   late final VideoController _videoController;
-  SavePlaybackPositionUseCase? _savePlaybackPositionUseCase;
-  GetPlaybackPositionUseCase? _getPlaybackPositionUseCase;
-  UpdateProgressUseCase? _updateProgressUseCase;
+  late final VideoPlayerViewModel _viewModel;
+  late final SavePlaybackPositionUseCase _savePlaybackPositionUseCase;
+  late final GetPlaybackPositionUseCase _getPlaybackPositionUseCase;
+  late final UpdateProgressUseCase _updateProgressUseCase;
 
-  bool _isFullscreen = false;
-  bool _showControls = true;
   bool _isInitialized = false;
-  bool _isLoading = true;
-  String? _error;
+  bool _isLoadingPlayer = true;
+  bool _isLoadingSources = true;
+  bool _showControls = true;
+  bool _isDisposed = false;
+  bool _isSeeking = false;
+  bool _isPlaying = false;
+  bool _isBuffering = false;
+  Duration _currentPosition = Duration.zero;
+  Duration _currentDuration = Duration.zero;
+  double _seekValue = 0.0;
   Duration? _savedPosition;
+  Timer? _hideControlsTimer;
+  final List<StreamSubscription> _subscriptions = [];
 
-  // Mock video sources for demonstration
-  // TODO: Replace with actual video source fetching from ViewModel
-  final List<_VideoSource> _sources = [
-    _VideoSource(
-      quality: '1080p',
-      server: 'Server 1',
-      url:
-          'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-    ),
-    _VideoSource(
-      quality: '720p',
-      server: 'Server 2',
-      url:
-          'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
-    ),
-    _VideoSource(
-      quality: '480p',
-      server: 'Server 3',
-      url:
-          'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-    ),
-  ];
+  List<VideoSource> get _sources => _viewModel.sources;
+  VideoSource? get _selectedSource => _viewModel.selectedSource;
+  String? get _viewModelError => _viewModel.error;
 
-  _VideoSource? _selectedSource;
+  String get _resolvedEpisodeId =>
+      widget.isDirectSourceMode ? widget.episode!.id : widget.episodeId!;
+
+  String get _resolvedItemId =>
+      widget.isDirectSourceMode ? widget.media!.id : widget.itemId!;
+
+  int get _resolvedEpisodeNumber => widget.isDirectSourceMode
+      ? widget.episode!.number
+      : widget.episodeNumber!;
+
+  String get _resolvedEpisodeTitle =>
+      widget.isDirectSourceMode ? widget.episode!.title : widget.episodeTitle!;
 
   @override
   void initState() {
     super.initState();
-    // Initialize use cases from dependency injection
-    // Note: In production, these should be injected via constructor
-    // For now, we'll use a fallback approach
-    try {
-      _savePlaybackPositionUseCase = sl<SavePlaybackPositionUseCase>();
-      _getPlaybackPositionUseCase = sl<GetPlaybackPositionUseCase>();
-      _updateProgressUseCase = sl<UpdateProgressUseCase>();
-    } catch (e) {
-      // Use cases not registered yet - will use mock implementation
-      debugPrint('Use cases not registered: $e');
-    }
+    _savePlaybackPositionUseCase = sl<SavePlaybackPositionUseCase>();
+    _getPlaybackPositionUseCase = sl<GetPlaybackPositionUseCase>();
+    _updateProgressUseCase = sl<UpdateProgressUseCase>();
+
+    _viewModel = VideoPlayerViewModel(
+      getVideoSources: sl<GetVideoSourcesUseCase>(),
+      extractVideoUrl: sl<ExtractVideoUrlUseCase>(),
+      savePlaybackPosition: _savePlaybackPositionUseCase,
+      getPlaybackPosition: _getPlaybackPositionUseCase,
+      updateProgress: _updateProgressUseCase,
+    )..addListener(_onViewModelChanged);
+
+    // Set landscape orientation, allow rotation between landscape modes
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+
     _initializePlayer();
   }
 
@@ -102,44 +148,91 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     // Set up position listener for auto-save
     // Save progress every 10 seconds during playback
     Duration? lastSavedPosition;
-    _player.stream.position.listen((position) {
-      // Auto-save progress every 10 seconds
-      if (lastSavedPosition == null ||
-          (position.inSeconds - lastSavedPosition!.inSeconds).abs() >= 10) {
-        lastSavedPosition = position;
-        _saveProgress(position);
-      }
-    });
+    _subscriptions.add(
+      _player.stream.position.listen((position) {
+        if (_isDisposed) return;
+        // Auto-save progress every 10 seconds
+        if (lastSavedPosition == null ||
+            (position.inSeconds - lastSavedPosition!.inSeconds).abs() >= 10) {
+          lastSavedPosition = position;
+          _saveProgress(position);
+        }
+      }),
+    );
 
     // Mark episode as complete when playback finishes
-    _player.stream.completed.listen((completed) {
-      if (completed) {
-        _markEpisodeComplete();
-      }
-    });
+    _subscriptions.add(
+      _player.stream.completed.listen((completed) {
+        if (_isDisposed) return;
+        if (completed) {
+          _markEpisodeComplete();
+        }
+      }),
+    );
 
-    // Auto-select first source and play
-    if (_sources.isNotEmpty) {
-      await _selectSource(_sources.first);
-    }
+    // Track position for seek bar
+    _subscriptions.add(
+      _player.stream.position.listen((position) {
+        if (_isDisposed || !mounted || _isSeeking) return;
+        setState(() {
+          _currentPosition = position;
+        });
+      }),
+    );
 
+    // Track duration for seek bar
+    _subscriptions.add(
+      _player.stream.duration.listen((duration) {
+        if (_isDisposed || !mounted) return;
+        setState(() {
+          _currentDuration = duration;
+        });
+      }),
+    );
+
+    // Track playing state
+    _subscriptions.add(
+      _player.stream.playing.listen((playing) {
+        if (_isDisposed || !mounted) return;
+        setState(() {
+          _isPlaying = playing;
+        });
+      }),
+    );
+
+    // Track buffering state
+    _subscriptions.add(
+      _player.stream.buffering.listen((buffering) {
+        if (_isDisposed || !mounted) return;
+        setState(() {
+          _isBuffering = buffering;
+        });
+      }),
+    );
+
+    if (!mounted) return;
     setState(() {
       _isInitialized = true;
-      _isLoading = false;
+      _isLoadingPlayer = false;
     });
+
+    // Trigger source loading via view model
+    if (widget.isDirectSourceMode) {
+      await _viewModel.loadSourceEntity(
+        widget.source!,
+        allSources: widget.allSources,
+      );
+    } else {
+      await _viewModel.loadSources(widget.episodeId!, widget.sourceId!);
+    }
   }
 
   Future<void> _loadSavedPosition() async {
-    if (_getPlaybackPositionUseCase == null) {
-      debugPrint('GetPlaybackPositionUseCase not available');
-      return;
-    }
-
     try {
-      final result = await _getPlaybackPositionUseCase!(
+      final result = await _getPlaybackPositionUseCase(
         GetPlaybackPositionParams(
-          itemId: widget.itemId,
-          episodeId: widget.episodeId,
+          itemId: _resolvedItemId,
+          episodeId: _resolvedEpisodeId,
         ),
       );
 
@@ -164,53 +257,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     }
   }
 
-  Future<void> _selectSource(_VideoSource source) async {
-    setState(() {
-      _selectedSource = source;
-      _isLoading = true;
-      _error = null;
-    });
-
-    try {
-      await _player.open(Media(source.url));
-
-      // Seek to saved position if available
-      if (_savedPosition != null && _savedPosition!.inSeconds > 0) {
-        await _player.seek(_savedPosition!);
-        debugPrint(
-          'Resumed from saved position: ${_savedPosition!.inSeconds}s',
-        );
-      }
-
-      await _player.play();
-
-      setState(() {
-        _isLoading = false;
-      });
-    } catch (e) {
-      setState(() {
-        _error = 'Failed to play video: $e';
-        _isLoading = false;
-      });
-
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Failed to play video: $e')));
-      }
-    }
-  }
-
   Future<void> _saveProgress(Duration position) async {
-    if (_savePlaybackPositionUseCase == null) {
-      return;
-    }
-
     try {
-      final result = await _savePlaybackPositionUseCase!(
+      final result = await _savePlaybackPositionUseCase(
         SavePlaybackPositionParams(
-          itemId: widget.itemId,
-          episodeId: widget.episodeId,
+          itemId: _resolvedItemId,
+          episodeId: _resolvedEpisodeId,
           position: position.inMilliseconds,
         ),
       );
@@ -221,7 +273,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         },
         (_) {
           debugPrint(
-            'Progress saved: ${position.inSeconds}s for episode ${widget.episodeId}',
+            'Progress saved: ${position.inSeconds}s for episode $_resolvedEpisodeId',
           );
         },
       );
@@ -231,19 +283,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   }
 
   Future<void> _markEpisodeComplete() async {
-    if (_updateProgressUseCase == null) {
-      return;
-    }
-
     try {
       // Save final position
       await _saveProgress(_player.state.position);
 
       // Update episode progress
-      final result = await _updateProgressUseCase!(
+      final result = await _updateProgressUseCase(
         UpdateProgressParams(
-          itemId: widget.itemId,
-          episode: widget.episodeNumber,
+          itemId: _resolvedItemId,
+          episode: _resolvedEpisodeNumber,
           chapter: 0,
         ),
       );
@@ -253,7 +301,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           debugPrint('Failed to mark episode complete: ${failure.message}');
         },
         (_) {
-          debugPrint('Episode ${widget.episodeNumber} marked as complete');
+          debugPrint('Episode $_resolvedEpisodeNumber marked as complete');
         },
       );
     } catch (e) {
@@ -261,96 +309,194 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     }
   }
 
-  void _toggleFullscreen() {
-    setState(() {
-      _isFullscreen = !_isFullscreen;
-    });
-
-    if (_isFullscreen) {
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-      SystemChrome.setPreferredOrientations([
-        DeviceOrientation.landscapeLeft,
-        DeviceOrientation.landscapeRight,
-      ]);
-    } else {
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-    }
-  }
-
   @override
   void dispose() {
-    // Save final position before disposing
-    _saveProgress(_player.state.position);
+    _isDisposed = true;
+    _hideControlsTimer?.cancel();
 
-    // Reset orientation
+    // Cancel all stream subscriptions first
+    for (final sub in _subscriptions) {
+      sub.cancel();
+    }
+    _subscriptions.clear();
+
+    _viewModel.removeListener(_onViewModelChanged);
+    _viewModel.dispose();
+
+    // Reset orientation and system UI
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
 
+    // Stop playback before disposing
+    _player.stop();
     _player.dispose();
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: SafeArea(child: _buildBody()),
+  void _toggleControls() {
+    setState(() {
+      _showControls = !_showControls;
+    });
+    _resetHideControlsTimer();
+  }
+
+  void _resetHideControlsTimer() {
+    _hideControlsTimer?.cancel();
+    if (_showControls) {
+      _hideControlsTimer = Timer(const Duration(seconds: 4), () {
+        if (mounted && _player.state.playing) {
+          setState(() {
+            _showControls = false;
+          });
+        }
+      });
+    }
+  }
+
+  void _showSourceSelectionSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.grey[900],
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => _buildSourceSelectionSheet(),
     );
   }
 
-  Widget _buildBody() {
-    if (_isLoading && !_isInitialized) {
-      return const Center(child: CircularProgressIndicator());
-    }
+  Widget _buildSourceSelectionSheet() {
+    final allSourceEntities = _viewModel.allSourceEntities;
+    final selectedSourceEntity = _viewModel.selectedSourceEntity;
 
-    if (_error != null && _selectedSource == null) {
-      return _buildErrorView(_error!);
-    }
-
-    return Column(
-      children: [
-        if (!_isFullscreen) _buildHeader(),
-        Expanded(child: _buildVideoPlayer()),
-        if (!_isFullscreen) _buildSourceSelector(),
-      ],
-    );
-  }
-
-  Widget _buildHeader() {
-    return Container(
-      color: Colors.black87,
-      padding: const EdgeInsets.all(8.0),
-      child: Row(
-        children: [
-          IconButton(
-            icon: const Icon(Icons.arrow_back, color: Colors.white),
-            onPressed: () => Navigator.of(context).pop(),
-          ),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  widget.episodeTitle,
+                  'Sources (${allSourceEntities.length})',
                   style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 16,
+                    fontSize: 18,
                     fontWeight: FontWeight.bold,
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                 ),
-                Text(
-                  'Episode ${widget.episodeNumber}',
-                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white),
+                  onPressed: () => Navigator.pop(context),
                 ),
               ],
             ),
-          ),
-        ],
+            const SizedBox(height: 16),
+            if (allSourceEntities.isEmpty)
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(16.0),
+                  child: Text(
+                    'No sources available',
+                    style: TextStyle(color: Colors.white70),
+                  ),
+                ),
+              )
+            else
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: allSourceEntities.length,
+                  itemBuilder: (context, index) {
+                    final source = allSourceEntities[index];
+                    final isSelected = selectedSourceEntity?.id == source.id;
+                    return ListTile(
+                      leading: Icon(
+                        isSelected ? Icons.check_circle : Icons.circle_outlined,
+                        color: isSelected
+                            ? Theme.of(context).colorScheme.primary
+                            : Colors.white54,
+                      ),
+                      title: Text(
+                        source.name,
+                        style: TextStyle(
+                          color: isSelected ? Colors.white : Colors.white70,
+                          fontWeight: isSelected
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                        ),
+                      ),
+                      subtitle: Text(
+                        _buildSourceSubtitle(source),
+                        style: TextStyle(
+                          color: isSelected ? Colors.white60 : Colors.white38,
+                          fontSize: 12,
+                        ),
+                      ),
+                      onTap: () {
+                        if (!isSelected) {
+                          _switchToSource(source);
+                        }
+                        Navigator.pop(context);
+                      },
+                    );
+                  },
+                ),
+              ),
+          ],
+        ),
       ),
     );
+  }
+
+  String _buildSourceSubtitle(SourceEntity source) {
+    final parts = <String>[];
+    if (source.quality != null && source.quality!.isNotEmpty) {
+      parts.add(source.quality!);
+    }
+    if (source.language != null && source.language!.isNotEmpty) {
+      parts.add(source.language!);
+    }
+    return parts.isEmpty ? 'Unknown quality' : parts.join(' • ');
+  }
+
+  Future<void> _switchToSource(SourceEntity source) async {
+    // Save current position before switching
+    if (_currentPosition.inSeconds > 0) {
+      await _saveProgress(_currentPosition);
+    }
+
+    // Stop current playback
+    await _player.stop();
+
+    // Load the new source
+    await _viewModel.loadSourceEntity(
+      source,
+      allSources: _viewModel.allSourceEntities,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(backgroundColor: Colors.black, body: _buildBody());
+  }
+
+  Widget _buildBody() {
+    if ((_isLoadingPlayer || _isLoadingSources) && !_isInitialized) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_viewModelError != null && _selectedSource == null) {
+      return _buildErrorView(_viewModelError!);
+    }
+
+    return _buildVideoPlayer();
   }
 
   Widget _buildVideoPlayer() {
@@ -359,16 +505,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     }
 
     return GestureDetector(
-      onTap: () {
-        setState(() {
-          _showControls = !_showControls;
-        });
-      },
+      onTap: _toggleControls,
       child: Stack(
         children: [
           Video(controller: _videoController, controls: NoVideoControls),
-          if (_showControls) _buildCustomControls(),
-          if (_isLoading)
+          if (_showControls) _buildControlsOverlay(),
+          if (_isLoadingPlayer || _isLoadingSources)
             Container(
               color: Colors.black54,
               child: const Center(child: CircularProgressIndicator()),
@@ -378,7 +520,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     );
   }
 
-  Widget _buildCustomControls() {
+  Widget _buildControlsOverlay() {
     return Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -387,257 +529,190 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           colors: [
             Colors.black.withValues(alpha: 0.7),
             Colors.transparent,
+            Colors.transparent,
             Colors.black.withValues(alpha: 0.7),
           ],
+          stops: const [0.0, 0.3, 0.7, 1.0],
         ),
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          if (_isFullscreen)
-            Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.arrow_back, color: Colors.white),
-                    onPressed: () {
-                      if (_isFullscreen) {
-                        _toggleFullscreen();
-                      } else {
-                        Navigator.of(context).pop();
-                      }
-                    },
-                  ),
-                  Expanded(
-                    child: Text(
-                      widget.episodeTitle,
-                      style: const TextStyle(color: Colors.white, fontSize: 16),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          _buildPlaybackControls(),
-          _buildBottomControls(),
+          // Top bar with back button, title, and settings
+          _buildTopBar(),
+          // Center play/pause
+          Expanded(child: _buildCenterControls()),
+          // Bottom bar with seek and controls
+          _buildBottomBar(),
         ],
       ),
     );
   }
 
-  Widget _buildPlaybackControls() {
-    return StreamBuilder<bool>(
-      stream: _player.stream.playing,
-      builder: (context, snapshot) {
-        final isPlaying = snapshot.data ?? false;
-        return Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.replay_10, color: Colors.white, size: 32),
-              onPressed: () {
-                final currentPosition = _player.state.position;
-                _player.seek(currentPosition - const Duration(seconds: 10));
-              },
+  Widget _buildTopBar() {
+    return Padding(
+      padding: const EdgeInsets.all(8.0),
+      child: Row(
+        children: [
+          IconButton(
+            icon: const Icon(Icons.arrow_back, color: Colors.white),
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  _resolvedEpisodeTitle,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(
+                  'Episode $_resolvedEpisodeNumber',
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+              ],
             ),
-            const SizedBox(width: 20),
-            IconButton(
-              icon: Icon(
-                isPlaying ? Icons.pause : Icons.play_arrow,
-                color: Colors.white,
-                size: 48,
-              ),
-              onPressed: () {
-                if (isPlaying) {
-                  _player.pause();
-                } else {
-                  _player.play();
-                }
-              },
-            ),
-            const SizedBox(width: 20),
-            IconButton(
-              icon: const Icon(Icons.forward_10, color: Colors.white, size: 32),
-              onPressed: () {
-                final currentPosition = _player.state.position;
-                _player.seek(currentPosition + const Duration(seconds: 10));
-              },
-            ),
-          ],
-        );
-      },
+          ),
+          // Settings button for source selection
+          IconButton(
+            icon: const Icon(Icons.settings, color: Colors.white),
+            onPressed: _showSourceSelectionSheet,
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _buildBottomControls() {
+  Widget _buildCenterControls() {
+    return Center(
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          // Rewind 10s
+          IconButton(
+            iconSize: 40,
+            icon: const Icon(Icons.replay_10, color: Colors.white),
+            onPressed: () {
+              _player.seek(_currentPosition - const Duration(seconds: 10));
+            },
+          ),
+          const SizedBox(width: 32),
+          // Play/Pause
+          if (_isBuffering)
+            const SizedBox(
+              width: 64,
+              height: 64,
+              child: CircularProgressIndicator(color: Colors.white),
+            )
+          else
+            IconButton(
+              iconSize: 64,
+              icon: Icon(
+                _isPlaying
+                    ? Icons.pause_circle_filled
+                    : Icons.play_circle_filled,
+                color: Colors.white,
+              ),
+              onPressed: () => _player.playOrPause(),
+            ),
+          const SizedBox(width: 32),
+          // Forward 10s
+          IconButton(
+            iconSize: 40,
+            icon: const Icon(Icons.forward_10, color: Colors.white),
+            onPressed: () {
+              _player.seek(_currentPosition + const Duration(seconds: 10));
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBottomBar() {
     return Padding(
       padding: const EdgeInsets.all(8.0),
       child: Column(
-        children: [
-          StreamBuilder<Duration>(
-            stream: _player.stream.position,
-            builder: (context, positionSnapshot) {
-              return StreamBuilder<Duration>(
-                stream: _player.stream.duration,
-                builder: (context, durationSnapshot) {
-                  final position = positionSnapshot.data ?? Duration.zero;
-                  final duration = durationSnapshot.data ?? Duration.zero;
-
-                  return Column(
-                    children: [
-                      Slider(
-                        value: duration.inMilliseconds > 0
-                            ? position.inMilliseconds.toDouble()
-                            : 0,
-                        max: duration.inMilliseconds > 0
-                            ? duration.inMilliseconds.toDouble()
-                            : 1,
-                        onChanged: (value) {
-                          _player.seek(Duration(milliseconds: value.toInt()));
-                        },
-                        activeColor: Theme.of(context).colorScheme.primary,
-                        inactiveColor: Colors.white30,
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              _formatDuration(position),
-                              style: const TextStyle(color: Colors.white),
-                            ),
-                            Text(
-                              _formatDuration(duration),
-                              style: const TextStyle(color: Colors.white),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  );
-                },
-              );
-            },
-          ),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _buildVolumeControl(),
-              IconButton(
-                icon: Icon(
-                  _isFullscreen ? Icons.fullscreen_exit : Icons.fullscreen,
-                  color: Colors.white,
-                ),
-                onPressed: _toggleFullscreen,
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildVolumeControl() {
-    return StreamBuilder<double>(
-      stream: _player.stream.volume,
-      builder: (context, snapshot) {
-        final volume = snapshot.data ?? 100.0;
-        final isMuted = volume == 0.0;
-
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              icon: Icon(
-                isMuted
-                    ? Icons.volume_off
-                    : volume < 50
-                    ? Icons.volume_down
-                    : Icons.volume_up,
-                color: Colors.white,
-              ),
-              onPressed: () {
-                if (isMuted) {
-                  _player.setVolume(100.0);
-                } else {
-                  _player.setVolume(0.0);
-                }
-              },
-            ),
-            SizedBox(
-              width: 100,
-              child: Slider(
-                value: volume,
-                min: 0,
-                max: 100,
-                onChanged: (value) {
-                  _player.setVolume(value);
-                },
-                activeColor: Theme.of(context).colorScheme.primary,
-                inactiveColor: Colors.white30,
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _buildSourceSelector() {
-    if (_sources.isEmpty) {
-      return const SizedBox.shrink();
-    }
-
-    return Container(
-      color: Colors.black87,
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text(
-            'Quality / Server',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 8),
-          SizedBox(
-            height: 50,
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              itemCount: _sources.length,
-              itemBuilder: (context, index) {
-                final source = _sources[index];
-                final isSelected = _selectedSource == source;
-
-                return Padding(
-                  padding: const EdgeInsets.only(right: 8.0),
-                  child: ChoiceChip(
-                    label: Text('${source.quality} - ${source.server}'),
-                    selected: isSelected,
-                    onSelected: (selected) {
-                      if (selected && !isSelected) {
-                        _selectSource(source);
-                      }
-                    },
-                    selectedColor: Theme.of(context).colorScheme.primary,
-                    labelStyle: TextStyle(
-                      color: isSelected ? Colors.white : Colors.white70,
-                    ),
-                  ),
-                );
-              },
-            ),
+          // Seek bar
+          _buildSeekBar(),
+          const SizedBox(height: 4),
+          // Position indicator
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            child: Row(children: [_buildPositionIndicator(), const Spacer()]),
           ),
         ],
       ),
     );
+  }
+
+  Widget _buildSeekBar() {
+    final progress = _currentDuration.inMilliseconds > 0
+        ? _currentPosition.inMilliseconds / _currentDuration.inMilliseconds
+        : 0.0;
+
+    final displayValue = _isSeeking ? _seekValue : progress.clamp(0.0, 1.0);
+
+    return SliderTheme(
+      data: SliderTheme.of(context).copyWith(
+        trackHeight: 4,
+        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+        overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+        activeTrackColor: Theme.of(context).colorScheme.primary,
+        inactiveTrackColor: Colors.white30,
+        thumbColor: Theme.of(context).colorScheme.primary,
+      ),
+      child: Slider(
+        value: displayValue,
+        onChangeStart: (value) {
+          setState(() {
+            _isSeeking = true;
+            _seekValue = value;
+          });
+        },
+        onChanged: (value) {
+          setState(() {
+            _seekValue = value;
+          });
+        },
+        onChangeEnd: (value) {
+          final newPosition = Duration(
+            milliseconds: (value * _currentDuration.inMilliseconds).round(),
+          );
+          _player.seek(newPosition);
+          setState(() {
+            _isSeeking = false;
+          });
+        },
+      ),
+    );
+  }
+
+  Widget _buildPositionIndicator() {
+    return Text(
+      '${_formatDuration(_currentPosition)} / ${_formatDuration(_currentDuration)}',
+      style: const TextStyle(color: Colors.white, fontSize: 12),
+    );
+  }
+
+  String _formatDuration(Duration duration) {
+    final hours = duration.inHours;
+    final minutes = duration.inMinutes.remainder(60);
+    final seconds = duration.inSeconds.remainder(60);
+    if (hours > 0) {
+      return '$hours:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+    }
+    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
   }
 
   Widget _buildErrorView(String error) {
@@ -668,7 +743,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                   // Try next source
                   final currentIndex = _sources.indexOf(_selectedSource!);
                   final nextIndex = (currentIndex + 1) % _sources.length;
-                  _selectSource(_sources[nextIndex]);
+                  _viewModel.selectSource(_sources[nextIndex]);
                 },
                 icon: const Icon(Icons.refresh),
                 label: const Text('Try Alternative Source'),
@@ -685,41 +760,46 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     );
   }
 
-  String _formatDuration(Duration duration) {
-    String twoDigits(int n) => n.toString().padLeft(2, '0');
-    final hours = duration.inHours;
-    final minutes = duration.inMinutes.remainder(60);
-    final seconds = duration.inSeconds.remainder(60);
+  void _onViewModelChanged() {
+    if (_isDisposed || !mounted) return;
 
-    if (hours > 0) {
-      return '$hours:${twoDigits(minutes)}:${twoDigits(seconds)}';
+    final hasVideoUrl = _viewModel.videoUrl != null;
+    final isLoading = _viewModel.isLoading;
+
+    setState(() {
+      _isLoadingSources = isLoading;
+    });
+
+    if (hasVideoUrl) {
+      _playCurrentUrl();
     }
-    return '${twoDigits(minutes)}:${twoDigits(seconds)}';
   }
-}
 
-/// Temporary video source model for demonstration
-/// TODO: Replace with actual VideoSource entity from domain layer
-class _VideoSource {
-  final String quality;
-  final String server;
-  final String url;
+  Future<void> _playCurrentUrl() async {
+    if (_isDisposed) return;
 
-  _VideoSource({
-    required this.quality,
-    required this.server,
-    required this.url,
-  });
+    final url = _viewModel.videoUrl;
+    if (url == null) return;
 
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is _VideoSource &&
-          runtimeType == other.runtimeType &&
-          quality == other.quality &&
-          server == other.server &&
-          url == other.url;
+    try {
+      await _player.open(
+        Media(url, httpHeaders: _selectedSource?.headers ?? {}),
+      );
 
-  @override
-  int get hashCode => quality.hashCode ^ server.hashCode ^ url.hashCode;
+      if (_isDisposed) return;
+
+      if (_savedPosition != null && _savedPosition!.inSeconds > 0) {
+        await _player.seek(_savedPosition!);
+      }
+
+      if (_isDisposed) return;
+      await _player.play();
+    } catch (e) {
+      if (mounted && !_isDisposed) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to play video: $e')));
+      }
+    }
+  }
 }

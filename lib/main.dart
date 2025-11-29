@@ -5,6 +5,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:dartotsu_extension_bridge/dartotsu_extension_bridge.dart';
+import 'package:dartotsu_extension_bridge/ExtensionManager.dart' as bridge;
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:aniya/core/di/injection_container.dart';
@@ -21,8 +22,9 @@ import 'package:aniya/core/widgets/mobile_status_bar_controller.dart';
 import 'package:aniya/core/widgets/mobile_navigation_bar_controller.dart';
 import 'package:aniya/features/media_details/presentation/screens/media_details_screen.dart';
 import 'package:aniya/features/media_details/presentation/viewmodels/media_details_viewmodel.dart';
-import 'package:aniya/features/extensions/presentation/viewmodels/extension_viewmodel.dart';
+import 'package:aniya/features/extensions/controllers/extensions_controller.dart';
 import 'package:aniya/core/domain/entities/media_entity.dart';
+import 'package:aniya/core/domain/entities/extension_entity.dart' as domain;
 
 void main() async {
   // Initialize Flutter bindings BEFORE creating zones
@@ -132,7 +134,7 @@ class _AniyaAppState extends State<AniyaApp> {
   /// Supports schemes: aniyomi, tachiyomi, mangayomi, dar, cloudstreamrepo, cs.repo
   /// Requirements: 3.1, 3.2, 3.3, 3.4, 3.5
   Future<void> _initializeDeepLinks() async {
-    final extensionViewModel = sl<ExtensionViewModel>();
+    final extensionsController = sl<ExtensionsController>();
 
     _deepLinkService = DeepLinkService(
       onDeepLinkProcessed: (result) {
@@ -140,7 +142,7 @@ class _AniyaAppState extends State<AniyaApp> {
         Logger.info('Deep link processed: ${result.message}', tag: 'DeepLink');
         _showDeepLinkSnackBar(result.message, isError: false);
         // Reload extensions to show newly added repositories
-        extensionViewModel.loadExtensions();
+        extensionsController.fetchRepos();
       },
       onDeepLinkError: (error) {
         // Show error message (Requirement 3.5)
@@ -149,7 +151,10 @@ class _AniyaAppState extends State<AniyaApp> {
       },
       onSaveRepository: (type, config) async {
         // Save repository configuration through the viewmodel
-        await extensionViewModel.saveRepository(type, config);
+        await extensionsController.applyRepositoryConfig(
+          _mapDomainTypeToBridge(type),
+          config,
+        );
       },
     );
 
@@ -248,6 +253,19 @@ class _AniyaAppState extends State<AniyaApp> {
         return app;
       },
     );
+  }
+
+  bridge.ExtensionType _mapDomainTypeToBridge(domain.ExtensionType type) {
+    switch (type) {
+      case domain.ExtensionType.mangayomi:
+        return bridge.ExtensionType.mangayomi;
+      case domain.ExtensionType.aniyomi:
+        return bridge.ExtensionType.aniyomi;
+      case domain.ExtensionType.cloudstream:
+        return bridge.ExtensionType.cloudstream;
+      case domain.ExtensionType.lnreader:
+        return bridge.ExtensionType.lnreader;
+    }
   }
 }
 

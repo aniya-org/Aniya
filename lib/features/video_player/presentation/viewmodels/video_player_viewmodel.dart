@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import '../../../../core/domain/entities/source_entity.dart';
 import '../../../../core/domain/entities/video_source_entity.dart';
 import '../../../../core/domain/usecases/get_video_sources_usecase.dart';
 import '../../../../core/domain/usecases/extract_video_url_usecase.dart';
@@ -30,8 +31,16 @@ class VideoPlayerViewModel extends ChangeNotifier {
   bool _isLoading = false;
   String? _error;
 
+  /// All available SourceEntity objects (from episode source selection)
+  List<SourceEntity> _allSourceEntities = [];
+
+  /// Currently selected SourceEntity
+  SourceEntity? _selectedSourceEntity;
+
   List<VideoSource> get sources => _sources;
   VideoSource? get selectedSource => _selectedSource;
+  List<SourceEntity> get allSourceEntities => _allSourceEntities;
+  SourceEntity? get selectedSourceEntity => _selectedSourceEntity;
   String? get videoUrl => _videoUrl;
   Duration get currentPosition => _currentPosition;
   bool get isLoading => _isLoading;
@@ -105,6 +114,88 @@ class VideoPlayerViewModel extends ChangeNotifier {
       _error = 'An unexpected error occurred. Please try again.';
       Logger.error(
         'Unexpected error extracting video URL',
+        tag: 'VideoPlayerViewModel',
+        error: e,
+        stackTrace: stackTrace,
+      );
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Load a video directly from a SourceEntity (used when source is already selected)
+  ///
+  /// This bypasses the source fetching step and directly uses the sourceLink
+  /// from the SourceEntity as the video URL.
+  ///
+  /// [source] - The selected source to play
+  /// [allSources] - Optional list of all available sources for switching
+  Future<void> loadSourceEntity(
+    SourceEntity source, {
+    List<SourceEntity>? allSources,
+  }) async {
+    _isLoading = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      // Store all source entities for switching
+      _allSourceEntities = allSources ?? [source];
+      _selectedSourceEntity = source;
+
+      // Create a VideoSource from the SourceEntity for consistency
+      final videoSource = VideoSource(
+        id: source.id,
+        name: source.name,
+        url: source.sourceLink,
+        quality: source.quality ?? 'Auto',
+        server: source.name,
+        headers: source.headers,
+      );
+
+      // Convert all source entities to VideoSource for the sources list
+      _sources = _allSourceEntities
+          .map(
+            (s) => VideoSource(
+              id: s.id,
+              name: s.name,
+              url: s.sourceLink,
+              quality: s.quality ?? 'Auto',
+              server: s.name,
+              headers: s.headers,
+            ),
+          )
+          .toList();
+      _selectedSource = videoSource;
+
+      // The sourceLink may be a direct URL or an embed URL that needs extraction
+      // Try extraction first, fall back to direct URL if it fails
+      final result = await extractVideoUrl(
+        ExtractVideoUrlParams(source: videoSource),
+      );
+
+      result.fold(
+        (failure) {
+          // If extraction fails, try using the sourceLink directly
+          Logger.warning(
+            'URL extraction failed, using sourceLink directly: ${source.sourceLink}',
+            tag: 'VideoPlayerViewModel',
+          );
+          _videoUrl = source.sourceLink;
+        },
+        (url) {
+          _videoUrl = url;
+          Logger.info(
+            'Successfully extracted video URL',
+            tag: 'VideoPlayerViewModel',
+          );
+        },
+      );
+    } catch (e, stackTrace) {
+      _error = 'An unexpected error occurred. Please try again.';
+      Logger.error(
+        'Unexpected error loading source entity',
         tag: 'VideoPlayerViewModel',
         error: e,
         stackTrace: stackTrace,
