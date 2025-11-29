@@ -1,7 +1,11 @@
+import 'dart:math' as math;
+
 import '../../domain/entities/media_entity.dart';
 import '../../domain/entities/media_details_entity.dart' hide SearchResult;
 import '../../domain/entities/episode_entity.dart';
 import '../../domain/entities/chapter_entity.dart';
+import '../../domain/entities/chapter_page_result.dart';
+import '../../domain/entities/episode_page_result.dart';
 import '../../domain/entities/search_result_entity.dart';
 import '../../error/exceptions.dart';
 import '../../utils/logger.dart';
@@ -15,6 +19,7 @@ import 'jikan_external_data_source.dart';
 import 'kitsu_external_data_source.dart';
 
 class ExternalRemoteDataSource {
+  static const _aggregatedProviderId = 'aggregated';
   final TmdbExternalDataSourceImpl _tmdbDataSource;
   final AnilistExternalDataSourceImpl _anilistDataSource;
   final SimklExternalDataSourceImpl _simklDataSource;
@@ -46,6 +51,215 @@ class ExternalRemoteDataSource {
     _cache.init().catchError((error) {
       Logger.error('Failed to initialize provider cache', error: error);
     });
+  }
+
+  Future<EpisodePageResult> _buildAggregatedEpisodePage(
+    EpisodePageRequest request,
+  ) async {
+    final limit = request.limit <= 0 ? 50 : request.limit;
+    final safeOffset = request.offset < 0 ? 0 : request.offset;
+
+    try {
+      final aggregatedEpisodes = await getEpisodes(request.media);
+      if (aggregatedEpisodes.isEmpty ||
+          safeOffset >= aggregatedEpisodes.length) {
+        return EpisodePageResult(
+          episodes: const [],
+          nextOffset: null,
+          providerId: _aggregatedProviderId,
+          providerMediaId: request.media.id,
+        );
+      }
+
+      final end = math.min(safeOffset + limit, aggregatedEpisodes.length);
+      final pageEpisodes = aggregatedEpisodes.sublist(safeOffset, end);
+      final nextOffset = end < aggregatedEpisodes.length ? end : null;
+
+      return EpisodePageResult(
+        episodes: pageEpisodes,
+        nextOffset: nextOffset,
+        providerId: _aggregatedProviderId,
+        providerMediaId: request.media.id,
+      );
+    } catch (e, stackTrace) {
+      Logger.error(
+        'Aggregated episode paging failed',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
+  }
+
+  Future<EpisodePageResult> getEpisodePage(EpisodePageRequest request) async {
+    final media = request.media;
+    var providerId = request.providerId;
+    var providerMediaId = request.providerMediaId;
+
+    if (providerId?.toLowerCase() == _aggregatedProviderId) {
+      return _buildAggregatedEpisodePage(request);
+    }
+
+    if (providerId == null || providerMediaId == null) {
+      final primarySource = media.sourceId.toLowerCase();
+      if (primarySource == 'jikan' ||
+          primarySource == 'anilist' ||
+          primarySource == 'kitsu') {
+        providerId = primarySource;
+        providerMediaId = media.id;
+      } else {
+        final matches = await _matcher.findMatches(
+          title: media.title,
+          type: media.type,
+          primarySourceId: media.sourceId,
+          searchFunction: searchMedia,
+          cache: _cache,
+        );
+
+        for (final candidate in ['jikan', 'kitsu', 'anilist']) {
+          final match = matches[candidate];
+          if (match != null) {
+            providerId = candidate;
+            providerMediaId = match.providerMediaId;
+            break;
+          }
+        }
+      }
+    }
+
+    if (providerId == null || providerMediaId == null) {
+      Logger.warning(
+        'Episode paging provider could not be resolved, falling back to aggregation',
+      );
+      return _buildAggregatedEpisodePage(request);
+    }
+
+    try {
+      switch (providerId.toLowerCase()) {
+        case 'jikan':
+          final result = await _jikanDataSource.getEpisodePage(
+            id: providerMediaId,
+            offset: request.offset,
+            limit: request.limit,
+            coverImage: media.coverImage,
+          );
+          return EpisodePageResult(
+            episodes: result.episodes,
+            nextOffset: result.nextOffset,
+            providerId: providerId,
+            providerMediaId: providerMediaId,
+          );
+        case 'anilist':
+          final result = await _anilistDataSource.getEpisodePage(
+            id: providerMediaId,
+            offset: request.offset,
+            limit: request.limit,
+          );
+          return result;
+        case 'kitsu':
+          final result = await _kitsuDataSource.getEpisodePage(
+            animeId: providerMediaId,
+            offset: request.offset,
+            limit: request.limit,
+            coverImage: media.coverImage,
+          );
+          return result;
+        default:
+          Logger.warning(
+            'Episode paging not implemented for provider $providerId, using aggregation fallback',
+          );
+          break;
+      }
+    } catch (e, stackTrace) {
+      Logger.warning(
+        'Episode paging via provider $providerId failed, falling back to aggregation',
+      );
+      Logger.error(
+        'Episode paging failure details',
+        error: e,
+        stackTrace: stackTrace,
+      );
+    }
+
+    return _buildAggregatedEpisodePage(request);
+  }
+
+  Future<ChapterPageResult> getChapterPage(ChapterPageRequest request) async {
+    final media = request.media;
+    var providerId = request.providerId;
+    var providerMediaId = request.providerMediaId;
+
+    if (providerId == null || providerMediaId == null) {
+      if (media.sourceId.toLowerCase() == 'kitsu') {
+        providerId = 'kitsu';
+        providerMediaId = media.id;
+      } else {
+        final matches = await _matcher.findMatches(
+          title: media.title,
+          type: media.type,
+          primarySourceId: media.sourceId,
+          searchFunction: searchMedia,
+          cache: _cache,
+        );
+
+        final kitsuMatch = matches['kitsu'];
+        if (kitsuMatch != null) {
+          providerId = 'kitsu';
+          providerMediaId = kitsuMatch.providerMediaId;
+        }
+      }
+    }
+
+    if (providerId == null || providerMediaId == null) {
+      throw ServerException('No provider available for chapter paging');
+    }
+
+    switch (providerId.toLowerCase()) {
+      case 'kitsu':
+        final result = await _kitsuDataSource.getChapterPage(
+          mangaId: providerMediaId,
+          offset: request.offset,
+          limit: request.limit,
+        );
+        return ChapterPageResult(
+          chapters: result.chapters,
+          nextOffset: result.nextOffset,
+          providerId: providerId,
+          providerMediaId: providerMediaId,
+        );
+      default:
+        throw ServerException('Chapter paging not supported for $providerId');
+    }
+  }
+
+  int? _getBestKnownChapterCount(
+    MediaEntity media,
+    Map<String, ProviderMatch> matches,
+  ) {
+    if (media.totalChapters != null && media.totalChapters! > 0) {
+      return media.totalChapters;
+    }
+
+    int? best;
+    String? bestProvider;
+
+    for (final entry in matches.entries) {
+      final candidate = entry.value.mediaEntity?.totalChapters;
+      if (candidate != null && candidate > 0) {
+        if (best == null || candidate > best) {
+          best = candidate;
+          bestProvider = entry.key;
+        }
+      }
+    }
+
+    if (best != null) {
+      Logger.info(
+        'Best known chapter count $best sourced from ${bestProvider ?? 'unknown provider'}',
+      );
+    }
+
+    return best;
   }
 
   /// Get data source by source ID
@@ -409,6 +623,8 @@ class ExternalRemoteDataSource {
 
       // Provider doesn't support chapters
       return [];
+    } on MalAuthRequiredException {
+      rethrow;
     } catch (e) {
       Logger.error(
         'Failed to fetch chapters from provider $providerId',
@@ -421,32 +637,89 @@ class ExternalRemoteDataSource {
   Future<List<ChapterEntity>> getChapters(MediaEntity media) async {
     Logger.info('Fetching chapters for ${media.title} from ${media.sourceId}');
 
-    // Use CrossProviderMatcher to find matches across all providers
-    final matches = await _matcher.findMatches(
-      title: media.title,
-      type: media.type,
-      primarySourceId: media.sourceId,
-      searchFunction: searchMedia,
-      cache: _cache,
-    );
+    try {
+      // Use CrossProviderMatcher to find matches across all providers
+      final matches = await _matcher.findMatches(
+        title: media.title,
+        type: media.type,
+        primarySourceId: media.sourceId,
+        searchFunction: searchMedia,
+        cache: _cache,
+      );
 
-    Logger.info(
-      'Found ${matches.length} high-confidence matches for chapter aggregation',
-    );
+      Logger.info(
+        'Found ${matches.length} high-confidence matches for chapter aggregation',
+      );
 
-    // Use DataAggregator to merge chapters from all providers
-    // This implements the Kitsu-first fallback strategy
-    final aggregatedChapters = await _aggregator.aggregateChapters(
-      primaryMedia: media,
-      matches: matches,
-      chapterFetcher: _fetchChaptersFromProvider,
-    );
+      // Use DataAggregator to merge chapters from all providers
+      // This implements the Kitsu-first fallback strategy
+      final aggregatedChapters = await _aggregator.aggregateChapters(
+        primaryMedia: media,
+        matches: matches,
+        chapterFetcher: _fetchChaptersFromProvider,
+      );
 
-    Logger.info(
-      'Aggregated ${aggregatedChapters.length} chapters for ${media.title}',
-    );
+      Logger.info(
+        'Aggregated ${aggregatedChapters.length} chapters for ${media.title}',
+      );
 
-    return aggregatedChapters;
+      if (aggregatedChapters.isNotEmpty) {
+        return aggregatedChapters;
+      }
+
+      // Direct provider fallback when aggregation produced nothing
+      List<ChapterEntity> providerFallback = [];
+      final sourceKey = media.sourceId.toLowerCase();
+      try {
+        if (sourceKey == 'jikan') {
+          providerFallback = await _jikanDataSource.getChapters(media.id);
+        } else if (sourceKey == 'kitsu') {
+          providerFallback = await _kitsuDataSource.getChapters(media.id);
+        }
+      } on MalAuthRequiredException {
+        rethrow;
+      } catch (e) {
+        Logger.warning(
+          'Direct chapter fallback failed for ${media.sourceId}: $e',
+          tag: 'ExternalRemoteDataSource',
+        );
+      }
+
+      if (providerFallback.isNotEmpty) {
+        Logger.info(
+          'Direct provider fallback returned ${providerFallback.length} chapters for ${media.title}',
+        );
+        return providerFallback;
+      }
+
+      // Final fallback: generate placeholder chapters from known totals
+      final fallbackTotal = _getBestKnownChapterCount(media, matches);
+      if (fallbackTotal != null && fallbackTotal > 0) {
+        Logger.info(
+          'Generating $fallbackTotal placeholder chapters for ${media.title} using best-known totals',
+        );
+        return List.generate(fallbackTotal, (index) {
+          final chapterNum = index + 1;
+          return ChapterEntity(
+            id: '${media.sourceId}_chapter_${media.id}_$chapterNum',
+            mediaId: media.id,
+            number: chapterNum.toDouble(),
+            title: 'Chapter $chapterNum',
+            releaseDate: null,
+            pageCount: null,
+            sourceProvider: media.sourceId,
+          );
+        });
+      }
+
+      Logger.warning(
+        'No chapter data available for ${media.title} (${media.sourceId}) after all fallbacks',
+        tag: 'ExternalRemoteDataSource',
+      );
+      return [];
+    } on MalAuthRequiredException {
+      rethrow;
+    }
   }
 
   /// Get available external sources

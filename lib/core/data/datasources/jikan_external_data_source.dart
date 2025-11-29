@@ -3,17 +3,114 @@ import '../../domain/entities/media_entity.dart';
 import '../../domain/entities/media_details_entity.dart' hide SearchResult;
 import '../../domain/entities/episode_entity.dart';
 import '../../domain/entities/chapter_entity.dart';
+import '../../domain/entities/episode_page_result.dart';
 import '../../domain/entities/search_result_entity.dart';
 import '../../domain/entities/user_entity.dart';
+import '../../domain/repositories/tracking_auth_repository.dart';
+import '../../enums/tracking_service.dart';
 import '../../error/exceptions.dart';
 import '../../utils/logger.dart';
+import 'mal_external_data_source.dart';
 
 class JikanExternalDataSourceImpl {
   late final Dio _dio;
+  final TrackingAuthRepository? _authRepository;
+  final MalExternalDataSourceImpl? _malDataSource;
 
-  JikanExternalDataSourceImpl() {
+  JikanExternalDataSourceImpl({
+    TrackingAuthRepository? authRepository,
+    MalExternalDataSourceImpl? malDataSource,
+  }) : _authRepository = authRepository,
+       _malDataSource = malDataSource ?? MalExternalDataSourceImpl() {
     _dio = Dio();
     _dio.options.baseUrl = 'https://api.jikan.moe/v4';
+  }
+
+  Future<EpisodePageResult> getEpisodePage({
+    required String id,
+    int offset = 0,
+    int limit = 50,
+    String? coverImage,
+  }) async {
+    final perPage = limit.clamp(1, 100);
+    final pageNumber = (offset ~/ perPage) + 1;
+    try {
+      final response = await _dio.get(
+        '/anime/$id/episodes',
+        queryParameters: {'page': pageNumber, 'limit': perPage},
+      );
+
+      final List episodesList = response.data['data'] ?? [];
+      final pagination = response.data['pagination'] as Map<String, dynamic>?;
+      final hasNext = pagination?['has_next_page'] == true;
+      final effectiveCover = await _ensureAnimeCoverImage(id, coverImage);
+
+      final episodes = episodesList
+          .map(
+            (ep) => _mapEpisodeEntity(
+              ep,
+              animeId: id,
+              fallbackCover: effectiveCover,
+            ),
+          )
+          .toList();
+
+      final nextOffset = hasNext ? offset + episodes.length : null;
+
+      return EpisodePageResult(
+        episodes: episodes,
+        nextOffset: nextOffset,
+        providerId: 'jikan',
+        providerMediaId: id,
+      );
+    } catch (e) {
+      Logger.error('Jikan getEpisodePage failed', error: e);
+      throw ServerException('Failed to get paged episodes: $e');
+    }
+  }
+
+  Future<String?> _ensureAnimeCoverImage(String id, String? existing) async {
+    if (existing != null && existing.isNotEmpty) {
+      Logger.info('Jikan using provided cover image for fallback: $existing');
+      return existing;
+    }
+
+    try {
+      final animeResponse = await _dio.get('/anime/$id');
+      final animeData = animeResponse.data['data'];
+      final cover =
+          animeData?['images']?['jpg']?['large_image_url'] ??
+          animeData?['images']?['jpg']?['image_url'];
+      Logger.info('Jikan anime cover for fallback: $cover');
+      await Future.delayed(const Duration(milliseconds: 400));
+      return cover;
+    } catch (e) {
+      Logger.warning('Could not fetch anime cover for fallback: $e');
+      return null;
+    }
+  }
+
+  EpisodeEntity _mapEpisodeEntity(
+    Map<String, dynamic> ep, {
+    required String animeId,
+    Map<int, String>? defaultThumbnail,
+    String? fallbackCover,
+  }) {
+    final epNumber = ep['mal_id'] is int
+        ? ep['mal_id']
+        : int.tryParse(ep['mal_id'].toString()) ?? 0;
+    final thumbnail = defaultThumbnail?[epNumber] ?? fallbackCover;
+
+    return EpisodeEntity(
+      id: ep['mal_id'].toString(),
+      mediaId: animeId,
+      number: epNumber,
+      title: ep['title'] ?? 'Episode $epNumber',
+      thumbnail: thumbnail,
+      releaseDate: ep['aired'] != null
+          ? DateTime.tryParse(ep['aired'].toString())
+          : null,
+    );
   }
 
   /// Advanced search with filtering and pagination (Jikan v4)
@@ -718,29 +815,8 @@ class JikanExternalDataSourceImpl {
     String? coverImage,
   }) async {
     try {
-      // Try to get episode images from the videos/episodes endpoint
       Map<int, String> episodeImages = {};
-      String? animeCoverImage = coverImage;
-
-      // Only fetch anime cover if not provided (to avoid rate limiting)
-      if (animeCoverImage == null) {
-        try {
-          final animeResponse = await _dio.get('/anime/$id');
-          final animeData = animeResponse.data['data'];
-          animeCoverImage =
-              animeData?['images']?['jpg']?['large_image_url'] ??
-              animeData?['images']?['jpg']?['image_url'];
-          Logger.info('Jikan anime cover for fallback: $animeCoverImage');
-          // Add delay after fetching cover to avoid rate limiting
-          await Future.delayed(const Duration(milliseconds: 400));
-        } catch (e) {
-          Logger.warning('Could not fetch anime cover for fallback: $e');
-        }
-      } else {
-        Logger.info(
-          'Jikan using provided cover image for fallback: $animeCoverImage',
-        );
-      }
+      String? animeCoverImage = await _ensureAnimeCoverImage(id, coverImage);
 
       // Get basic episode info
       List episodesList = [];
@@ -795,23 +871,16 @@ class JikanExternalDataSourceImpl {
         Logger.info('No episode images available for anime $id: $e');
       }
 
-      final episodes = episodesList.map((ep) {
-        final epNumber = ep['mal_id'] is int
-            ? ep['mal_id']
-            : int.tryParse(ep['mal_id'].toString()) ?? 0;
-        // Use episode-specific image if available, otherwise fall back to anime cover
-        final thumbnail = episodeImages[epNumber] ?? animeCoverImage;
-        return EpisodeEntity(
-          id: ep['mal_id'].toString(),
-          mediaId: id,
-          number: epNumber,
-          title: ep['title'] ?? 'Episode $epNumber',
-          thumbnail: thumbnail,
-          releaseDate: ep['aired'] != null
-              ? DateTime.tryParse(ep['aired'])
-              : null,
-        );
-      }).toList();
+      final episodes = episodesList
+          .map(
+            (ep) => _mapEpisodeEntity(
+              ep,
+              animeId: id,
+              defaultThumbnail: episodeImages,
+              fallbackCover: animeCoverImage,
+            ),
+          )
+          .toList();
 
       // Log thumbnail assignment summary
       final episodesWithThumbnails = episodes
@@ -836,20 +905,44 @@ class JikanExternalDataSourceImpl {
   /// Get chapters for a manga
   /// Note: MAL/Jikan doesn't provide chapter-level data via API.
   /// We generate placeholder chapters based on the manga's chapter count.
+  ///
+  /// If Jikan doesn't have chapter count, we fall back to MAL's official API
+  /// which requires user authentication.
   Future<List<ChapterEntity>> getChapters(String id) async {
     try {
       // Fetch manga details to get chapter count
       final response = await _dio.get('/manga/$id');
       final manga = response.data['data'];
-      final totalChapters = manga['chapters'] as int?;
+      int? totalChapters = manga['chapters'] as int?;
+
+      // If Jikan doesn't have chapter count, try MAL API fallback
+      if ((totalChapters == null || totalChapters <= 0) &&
+          _authRepository != null &&
+          _malDataSource != null) {
+        Logger.info(
+          'Jikan manga $id has no chapter count, attempting MAL fallback',
+          tag: 'JikanDataSource',
+        );
+
+        try {
+          totalChapters = await _tryMalChapterFallback(id);
+        } on MalAuthRequiredException {
+          // Bubble up so UI can prompt for authentication
+          rethrow;
+        }
+      }
 
       if (totalChapters == null || totalChapters <= 0) {
-        Logger.info('Jikan manga $id has no chapter count');
+        Logger.info(
+          'No chapter count available for manga $id after all fallbacks',
+          tag: 'JikanDataSource',
+        );
         return [];
       }
 
       Logger.info(
-        'Jikan generating $totalChapters placeholder chapters for manga $id',
+        'Generating $totalChapters placeholder chapters for manga $id',
+        tag: 'JikanDataSource',
       );
 
       // Generate placeholder chapters
@@ -865,9 +958,66 @@ class JikanExternalDataSourceImpl {
           sourceProvider: 'jikan',
         );
       });
+    } on MalAuthRequiredException {
+      rethrow;
     } catch (e) {
       Logger.error('Jikan get chapters failed', error: e);
       return [];
+    }
+  }
+
+  /// Try to get chapter count from MAL's official API.
+  ///
+  /// This requires a valid MAL access token. If no token is available
+  /// or the request fails, returns null.
+  Future<int?> _tryMalChapterFallback(String malId) async {
+    try {
+      // Get valid MAL token
+      final token = await _authRepository?.getValidToken(TrackingService.mal);
+
+      if (token == null) {
+        Logger.info(
+          'No MAL token available for chapter fallback',
+          tag: 'JikanDataSource',
+        );
+        throw const MalAuthRequiredException();
+      }
+
+      Logger.info(
+        'Using MAL API fallback for manga $malId chapter count',
+        tag: 'JikanDataSource',
+      );
+
+      final chapterCount = await _malDataSource?.getChapterCount(malId, token);
+
+      if (chapterCount != null && chapterCount > 0) {
+        Logger.info(
+          'MAL fallback returned $chapterCount chapters for manga $malId',
+          tag: 'JikanDataSource',
+        );
+      }
+
+      return chapterCount;
+    } on MalAuthRequiredException {
+      rethrow;
+    } on MalAuthExpiredException {
+      Logger.warning(
+        'MAL token expired during chapter fallback for manga $malId',
+        tag: 'JikanDataSource',
+      );
+      return null;
+    } on RateLimitException catch (e) {
+      Logger.warning(
+        'MAL rate limited during chapter fallback: ${e.message}',
+        tag: 'JikanDataSource',
+      );
+      return null;
+    } catch (e) {
+      Logger.warning(
+        'MAL fallback failed for manga $malId: $e',
+        tag: 'JikanDataSource',
+      );
+      return null;
     }
   }
 }

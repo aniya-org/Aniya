@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import '../../domain/entities/media_entity.dart';
 import '../../domain/entities/media_details_entity.dart' hide SearchResult;
 import '../../domain/entities/episode_entity.dart';
+import '../../domain/entities/episode_page_result.dart';
 import '../../domain/entities/chapter_entity.dart';
 import '../../domain/entities/search_result_entity.dart';
 import '../../domain/entities/user_entity.dart';
@@ -15,6 +16,47 @@ class AnilistExternalDataSourceImpl {
     _dio = Dio();
     _dio.options.baseUrl = 'https://graphql.anilist.co';
     // No auth needed for basic search
+  }
+
+  Future<EpisodePageResult> getEpisodePage({
+    required String id,
+    int offset = 0,
+    int limit = 50,
+  }) async {
+    final safeLimit = limit <= 0 ? 50 : limit;
+    final safeOffset = offset < 0 ? 0 : offset;
+
+    try {
+      final episodes = await getEpisodes(id);
+      if (episodes.isEmpty || safeOffset >= episodes.length) {
+        return EpisodePageResult(
+          episodes: const [],
+          nextOffset: null,
+          providerId: 'anilist',
+          providerMediaId: id,
+        );
+      }
+
+      final end = (safeOffset + safeLimit) > episodes.length
+          ? episodes.length
+          : safeOffset + safeLimit;
+      final pageEpisodes = episodes.sublist(safeOffset, end);
+      final nextOffset = end < episodes.length ? end : null;
+
+      return EpisodePageResult(
+        episodes: pageEpisodes,
+        nextOffset: nextOffset,
+        providerId: 'anilist',
+        providerMediaId: id,
+      );
+    } catch (e, stackTrace) {
+      Logger.error(
+        'AniList getEpisodePage failed',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      throw ServerException('Failed to get AniList paged episodes: $e');
+    }
   }
 
   /// Advanced search with filtering, sorting, and pagination

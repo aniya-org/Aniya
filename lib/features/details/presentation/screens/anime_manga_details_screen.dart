@@ -1,13 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import '../../../../core/domain/entities/entities.dart';
-import '../../../../core/domain/entities/source_entity.dart';
+
 import '../../../../core/data/datasources/external_remote_data_source.dart';
 import '../../../../core/di/injection_container.dart';
-import '../../../../core/widgets/provider_badge.dart';
+import '../../../../core/domain/entities/entities.dart';
+import '../../../../core/domain/entities/source_entity.dart';
+import '../../../../core/enums/tracking_service.dart';
+import '../../../../core/error/exceptions.dart';
+import '../../../../core/utils/logger.dart';
 import '../../../../core/widgets/provider_attribution_dialog.dart';
+import '../../../../core/widgets/provider_badge.dart';
+import '../../../auth/presentation/viewmodels/auth_viewmodel.dart';
 import '../../../manga_reader/presentation/screens/manga_reader_screen.dart';
 import '../../../media_details/presentation/screens/episode_source_selection_sheet.dart';
+import '../../../settings/presentation/screens/settings_screen.dart';
 import '../../../video_player/presentation/screens/video_player_screen.dart';
 
 /// Details screen for Anime and Manga from external sources
@@ -24,6 +30,7 @@ class AnimeMangaDetailsScreen extends StatefulWidget {
 class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
     with SingleTickerProviderStateMixin {
   late final ExternalRemoteDataSource _dataSource;
+  late final AuthViewModel _authViewModel;
   late TabController _tabController;
 
   MediaDetailsEntity? _fullDetails;
@@ -38,6 +45,11 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
   // Episodes state
   List<EpisodeEntity> _episodes = [];
   bool _isLoadingEpisodes = false;
+  bool _isEpisodePagingEnabled = false;
+  bool _isLoadingMoreEpisodes = false;
+  int? _nextEpisodeOffset;
+  String? _episodePagingProviderId;
+  String? _episodePagingProviderMediaId;
 
   // Chapters state
   List<ChapterEntity> _chapters = [];
@@ -47,6 +59,7 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
   void initState() {
     super.initState();
     _dataSource = sl<ExternalRemoteDataSource>();
+    _authViewModel = sl<AuthViewModel>();
     // 3 tabs for Anime/Manga (Overview, Episodes/Chapters, More Info)
     final isAnime = widget.media.type == MediaType.anime;
     _tabController = TabController(length: 3, vsync: this);
@@ -112,21 +125,138 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
       _isLoadingEpisodes = true;
     });
 
+    final shouldPaginate = _shouldPaginateEpisodes(widget.media);
+
+    if (shouldPaginate) {
+      final success = await _fetchEpisodePage(offset: 0, append: false);
+      if (!success) {
+        await _fetchEpisodesAggregated();
+      }
+    } else {
+      await _fetchEpisodesAggregated();
+    }
+  }
+
+  Future<void> _fetchEpisodesAggregated() async {
     try {
       final episodes = await _dataSource.getEpisodes(widget.media);
       if (mounted) {
         setState(() {
           _episodes = episodes;
           _isLoadingEpisodes = false;
+          _isEpisodePagingEnabled = false;
+          _nextEpisodeOffset = null;
+          _episodePagingProviderId = null;
+          _episodePagingProviderMediaId = null;
         });
       }
     } catch (e) {
       if (mounted) {
         setState(() {
           _isLoadingEpisodes = false;
+          _isEpisodePagingEnabled = false;
         });
       }
     }
+  }
+
+  Future<bool> _fetchEpisodePage({
+    required int offset,
+    required bool append,
+  }) async {
+    try {
+      final request = EpisodePageRequest(
+        media: widget.media,
+        offset: offset,
+        providerId: _episodePagingProviderId,
+        providerMediaId: _episodePagingProviderMediaId,
+      );
+
+      final pageResult = await _dataSource.getEpisodePage(request);
+      if (!mounted) return false;
+
+      setState(() {
+        _isEpisodePagingEnabled = true;
+        if (append) {
+          _episodes = [..._episodes, ...pageResult.episodes];
+          _isLoadingMoreEpisodes = false;
+        } else {
+          _episodes = pageResult.episodes;
+          _isLoadingEpisodes = false;
+        }
+        _nextEpisodeOffset = pageResult.nextOffset;
+        _episodePagingProviderId = pageResult.providerId;
+        _episodePagingProviderMediaId = pageResult.providerMediaId;
+      });
+
+      return true;
+    } catch (e, stackTrace) {
+      Logger.error(
+        'Failed to fetch episode page',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      if (!mounted) return false;
+      setState(() {
+        if (append) {
+          _isLoadingMoreEpisodes = false;
+        } else {
+          _isLoadingEpisodes = false;
+        }
+      });
+      return false;
+    }
+  }
+
+  Future<void> _fetchMoreEpisodes() async {
+    if (!_isEpisodePagingEnabled || _isLoadingMoreEpisodes) return;
+    final nextOffset = _nextEpisodeOffset;
+    if (nextOffset == null) return;
+
+    setState(() {
+      _isLoadingMoreEpisodes = true;
+    });
+
+    final success = await _fetchEpisodePage(offset: nextOffset, append: true);
+    if (!success && mounted) {
+      setState(() {
+        _isEpisodePagingEnabled = false;
+      });
+    }
+  }
+
+  bool _handleEpisodesScrollNotification(ScrollNotification notification) {
+    if (!_isEpisodePagingEnabled || _isLoadingMoreEpisodes) {
+      return false;
+    }
+
+    final metrics = notification.metrics;
+    if (!metrics.outOfRange &&
+        metrics.pixels >= metrics.maxScrollExtent - 200) {
+      _fetchMoreEpisodes();
+    }
+
+    return false;
+  }
+
+  bool _shouldPaginateEpisodes(MediaEntity media) {
+    final title = media.title.toLowerCase();
+    final seasonPattern = RegExp(
+      r'(season|part|cour|chapter)\s*(\d+|[ivx]+)',
+      caseSensitive: false,
+    );
+    final ordinalPattern = RegExp(
+      r'\b(2nd|3rd|4th|second|third|fourth)\b',
+      caseSensitive: false,
+    );
+    final isExplicitSeason =
+        seasonPattern.hasMatch(title) || ordinalPattern.hasMatch(title);
+
+    final totalEpisodes = _fullDetails?.episodes ?? media.totalEpisodes;
+    final isLongRunning =
+        (totalEpisodes ?? 0) == 0 || (totalEpisodes ?? 0) > 100;
+
+    return isLongRunning && !isExplicitSeason;
   }
 
   Future<void> _fetchChapters() async {
@@ -138,18 +268,93 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
 
     try {
       final chapters = await _dataSource.getChapters(widget.media);
-      if (mounted) {
-        setState(() {
-          _chapters = chapters;
-          _isLoadingChapters = false;
-        });
+      if (!mounted) return;
+      setState(() {
+        _chapters = chapters;
+        _isLoadingChapters = false;
+      });
+    } on MalAuthRequiredException {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingChapters = false;
+      });
+      await _promptForTrackingAuth(TrackingService.mal);
+    } catch (e, stackTrace) {
+      Logger.error(
+        'Failed to fetch chapters',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      if (!mounted) return;
+      setState(() {
+        _isLoadingChapters = false;
+      });
+      if (!(_chapters.isNotEmpty)) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to load chapters: $e')));
       }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isLoadingChapters = false;
-        });
-      }
+    }
+  }
+
+  Future<void> _promptForTrackingAuth(TrackingService service) async {
+    final serviceName = _trackingServiceLabel(service);
+
+    final confirmed =
+        await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: Text('Connect $serviceName?'),
+            content: Text(
+              '$serviceName access lets us fetch chapter counts when other providers fall short. '
+              'Would you like to connect now?',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Not now'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: Text('Connect $serviceName'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (!confirmed) {
+      return;
+    }
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => SettingsScreen(highlightedService: service),
+      ),
+    );
+
+    if (!mounted) return;
+
+    final token = await _authViewModel.ensureToken(service);
+    if (token != null) {
+      await _fetchChapters();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Connect MyAnimeList to load chapters.')),
+      );
+    }
+  }
+
+  String _trackingServiceLabel(TrackingService service) {
+    switch (service) {
+      case TrackingService.anilist:
+        return 'AniList';
+      case TrackingService.mal:
+        return 'MyAnimeList';
+      case TrackingService.simkl:
+        return 'Simkl';
+      case TrackingService.jikan:
+        return 'Jikan';
     }
   }
 
@@ -516,7 +721,7 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
           slivers: [
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
+                padding: const EdgeInsets.only(left: 16, right: 16, bottom: 64),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -586,7 +791,7 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
                       ),
                       const SizedBox(height: 12),
                       SizedBox(
-                        height: 200,
+                        height: 225,
                         child: ListView.builder(
                           scrollDirection: Axis.horizontal,
                           itemCount: recommendations.length,
@@ -617,13 +822,16 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
                                     ),
                                   ),
                                   const SizedBox(height: 4),
-                                  Text(
-                                    item.title,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.bodySmall,
+                                  SizedBox(
+                                    height: 50,
+                                    child: Text(
+                                      item.title,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.bodySmall,
+                                    ),
                                   ),
                                 ],
                               ),
@@ -684,122 +892,138 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
       );
     }
 
-    return CustomScrollView(
-      key: const PageStorageKey<String>('episodes'),
-      slivers: [
-        SliverPadding(
-          padding: const EdgeInsets.all(16),
-          sliver: SliverList(
-            delegate: SliverChildBuilderDelegate((context, index) {
-              final episode = _episodes[index];
-              return Card(
-                margin: const EdgeInsets.only(bottom: 12),
-                clipBehavior: Clip.antiAlias,
-                elevation: 2,
-                child: InkWell(
-                  onTap: () {
-                    _showEpisodeSourceSelection(context, episode);
-                  },
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Thumbnail
-                      SizedBox(
-                        width: 140,
-                        height: 80,
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            episode.thumbnail != null
-                                ? Image.network(
-                                    episode.thumbnail!,
-                                    fit: BoxFit.cover,
-                                    errorBuilder:
-                                        (context, error, stackTrace) =>
-                                            Container(
-                                              color: Colors.grey[800],
-                                              child: const Icon(
-                                                Icons.image_not_supported,
-                                              ),
-                                            ),
-                                  )
-                                : Container(
-                                    color: Colors.grey[800],
-                                    child: const Icon(Icons.tv),
-                                  ),
-                            // Play icon overlay
-                            Center(
-                              child: Container(
-                                padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(
-                                  color: Colors.black.withValues(alpha: 0.5),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: const Icon(
-                                  Icons.play_arrow,
-                                  color: Colors.white,
-                                  size: 20,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      // Info
-                      Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.all(12),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+    return NotificationListener<ScrollNotification>(
+      onNotification: _handleEpisodesScrollNotification,
+      child: CustomScrollView(
+        key: const PageStorageKey<String>('episodes'),
+        slivers: [
+          SliverPadding(
+            padding: const EdgeInsets.all(16),
+            sliver: SliverList(
+              delegate: SliverChildBuilderDelegate((context, index) {
+                final episode = _episodes[index];
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  clipBehavior: Clip.antiAlias,
+                  elevation: 2,
+                  child: InkWell(
+                    onTap: () {
+                      _showEpisodeSourceSelection(context, episode);
+                    },
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Thumbnail
+                        SizedBox(
+                          width: 140,
+                          height: 100,
+                          child: Stack(
+                            fit: StackFit.expand,
                             children: [
-                              Text(
-                                'Episode ${episode.number}',
-                                style: Theme.of(context).textTheme.labelSmall
-                                    ?.copyWith(
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.primary,
-                                      fontWeight: FontWeight.bold,
+                              episode.thumbnail != null
+                                  ? Image.network(
+                                      episode.thumbnail!,
+                                      fit: BoxFit.cover,
+                                      errorBuilder:
+                                          (context, error, stackTrace) =>
+                                              Container(
+                                                color: Colors.grey[800],
+                                                child: const Icon(
+                                                  Icons.image_not_supported,
+                                                ),
+                                              ),
+                                    )
+                                  : Container(
+                                      color: Colors.grey[800],
+                                      child: const Icon(Icons.tv),
                                     ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                episode.title.isNotEmpty
-                                    ? episode.title
-                                    : 'Episode ${episode.number}',
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 14,
+                              // Play icon overlay
+                              Center(
+                                child: Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black.withValues(alpha: 0.5),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(
+                                    Icons.play_arrow,
+                                    color: Colors.white,
+                                    size: 20,
+                                  ),
                                 ),
                               ),
-                              if (episode.releaseDate != null) ...[
-                                const SizedBox(height: 4),
-                                Text(
-                                  DateFormat(
-                                    'MMM d, y',
-                                  ).format(episode.releaseDate!),
-                                  style: Theme.of(context).textTheme.bodySmall
-                                      ?.copyWith(
-                                        color: Theme.of(
-                                          context,
-                                        ).colorScheme.onSurfaceVariant,
-                                      ),
-                                ),
-                              ],
                             ],
                           ),
                         ),
-                      ),
-                    ],
+                        // Info
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Episode ${episode.number}',
+                                  style: Theme.of(context).textTheme.labelSmall
+                                      ?.copyWith(
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.primary,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  episode.title.isNotEmpty
+                                      ? episode.title
+                                      : 'Episode ${episode.number}',
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                                if (episode.releaseDate != null) ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    DateFormat(
+                                      'MMM d, y',
+                                    ).format(episode.releaseDate!),
+                                    style: Theme.of(context).textTheme.bodySmall
+                                        ?.copyWith(
+                                          color: Theme.of(
+                                            context,
+                                          ).colorScheme.onSurfaceVariant,
+                                        ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              );
-            }, childCount: _episodes.length),
+                );
+              }, childCount: _episodes.length),
+            ),
           ),
-        ),
-      ],
+          if (_isEpisodePagingEnabled)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                child: Center(
+                  child: _isLoadingMoreEpisodes
+                      ? const CircularProgressIndicator()
+                      : _nextEpisodeOffset != null
+                      ? const SizedBox.shrink()
+                      : const Text('All episodes loaded'),
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 

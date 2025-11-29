@@ -7,7 +7,9 @@ import 'package:aniya/core/enums/tracking_service.dart';
 import '../viewmodels/settings_viewmodel.dart';
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+  final TrackingService? highlightedService;
+
+  const SettingsScreen({super.key, this.highlightedService});
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -46,13 +48,48 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     return ChangeNotifierProvider.value(
       value: _viewModel,
-      child: const _SettingsContent(),
+      child: _SettingsContent(highlightedService: widget.highlightedService),
     );
   }
 }
 
-class _SettingsContent extends StatelessWidget {
-  const _SettingsContent();
+class _SettingsContent extends StatefulWidget {
+  final TrackingService? highlightedService;
+
+  const _SettingsContent({this.highlightedService});
+
+  @override
+  State<_SettingsContent> createState() => _SettingsContentState();
+}
+
+class _SettingsContentState extends State<_SettingsContent> {
+  final ScrollController _scrollController = ScrollController();
+  final GlobalKey _trackingSectionKey = GlobalKey();
+  bool _hasScrolledToHighlight = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _maybeScrollToTracking();
+  }
+
+  void _maybeScrollToTracking() {
+    if (_hasScrolledToHighlight || widget.highlightedService == null) {
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final context = _trackingSectionKey.currentContext;
+      if (context != null) {
+        _hasScrolledToHighlight = true;
+        await Scrollable.ensureVisible(
+          context,
+          duration: const Duration(milliseconds: 500),
+          curve: Curves.easeInOut,
+        );
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -63,32 +100,34 @@ class _SettingsContent extends StatelessWidget {
     );
 
     return Scaffold(
-      body: CustomScrollView(
-        slivers: [
-          const SliverAppBar.large(
-            title: Text('Settings'),
-            floating: true,
-            pinned: true,
+      appBar: AppBar(title: const Text('Settings'), centerTitle: false),
+      body: ListView(
+        controller: _scrollController,
+        children: [
+          _buildSectionHeader(context, 'Appearance', padding),
+          _buildThemeSelector(context, viewModel, themeProvider),
+          const Divider(),
+          _buildSectionHeader(context, 'Playback', padding),
+          _buildPlaybackSettings(context, viewModel),
+          const Divider(),
+          _buildSectionHeader(context, 'Extensions', padding),
+          _buildExtensionSettings(context, viewModel),
+          const Divider(),
+          _buildSectionHeader(
+            context,
+            'Tracking & Accounts',
+            padding,
+            key: _trackingSectionKey,
           ),
-          SliverList(
-            delegate: SliverChildListDelegate([
-              _buildSectionHeader(context, 'Appearance', padding),
-              _buildThemeSelector(context, viewModel, themeProvider),
-              const Divider(),
-              _buildSectionHeader(context, 'Playback', padding),
-              _buildPlaybackSettings(context, viewModel),
-              const Divider(),
-              _buildSectionHeader(context, 'Extensions', padding),
-              _buildExtensionSettings(context, viewModel),
-              const Divider(),
-              _buildSectionHeader(context, 'Tracking & Accounts', padding),
-              _buildTrackingSettings(context, viewModel),
-              const Divider(),
-              _buildSectionHeader(context, 'Cache Management', padding),
-              _buildCacheManagement(context, viewModel),
-              const SizedBox(height: 50),
-            ]),
+          _buildTrackingSettings(
+            context,
+            viewModel,
+            highlightService: widget.highlightedService,
           ),
+          const Divider(),
+          _buildSectionHeader(context, 'Cache Management', padding),
+          _buildCacheManagement(context, viewModel),
+          const SizedBox(height: 50),
         ],
       ),
     );
@@ -97,9 +136,11 @@ class _SettingsContent extends StatelessWidget {
   Widget _buildSectionHeader(
     BuildContext context,
     String title,
-    EdgeInsets padding,
-  ) {
+    EdgeInsets padding, {
+    Key? key,
+  }) {
     return Padding(
+      key: key,
       padding: EdgeInsets.fromLTRB(
         padding.left + 16,
         16,
@@ -219,8 +260,9 @@ class _SettingsContent extends StatelessWidget {
 
   Widget _buildTrackingSettings(
     BuildContext context,
-    SettingsViewModel viewModel,
-  ) {
+    SettingsViewModel viewModel, {
+    TrackingService? highlightService,
+  }) {
     return Column(
       children: [
         _buildTrackingTile(
@@ -229,6 +271,7 @@ class _SettingsContent extends StatelessWidget {
           TrackingService.anilist,
           'AniList',
           Icons.analytics_outlined,
+          isHighlighted: highlightService == TrackingService.anilist,
         ),
         _buildTrackingTile(
           context,
@@ -236,6 +279,7 @@ class _SettingsContent extends StatelessWidget {
           TrackingService.mal,
           'MyAnimeList',
           Icons.list_alt,
+          isHighlighted: highlightService == TrackingService.mal,
         ),
         _buildTrackingTile(
           context,
@@ -243,6 +287,7 @@ class _SettingsContent extends StatelessWidget {
           TrackingService.simkl,
           'Simkl',
           Icons.tv,
+          isHighlighted: highlightService == TrackingService.simkl,
         ),
       ],
     );
@@ -253,33 +298,49 @@ class _SettingsContent extends StatelessWidget {
     SettingsViewModel viewModel,
     TrackingService service,
     String name,
-    IconData icon,
-  ) {
+    IconData icon, {
+    bool isHighlighted = false,
+  }) {
     final isConnected = viewModel.isTrackingServiceConnected(service);
 
-    return ListTile(
-      leading: CircleAvatar(
-        backgroundColor: isConnected
-            ? Theme.of(context).colorScheme.primaryContainer
-            : Theme.of(context).colorScheme.surfaceContainerHighest,
-        child: Icon(
-          icon,
-          color: isConnected
-              ? Theme.of(context).colorScheme.primary
-              : Theme.of(context).colorScheme.onSurfaceVariant,
-        ),
+    final highlightColor = Theme.of(context).colorScheme.tertiaryContainer;
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      decoration: BoxDecoration(
+        color: isHighlighted ? highlightColor : Colors.transparent,
+        borderRadius: BorderRadius.circular(12),
       ),
-      title: Text(name),
-      subtitle: Text(isConnected ? 'Connected as User' : 'Not connected'),
-      trailing: FilledButton.tonal(
-        onPressed: () {
-          if (isConnected) {
-            _showDisconnectDialog(context, service, viewModel, name);
-          } else {
-            viewModel.connectTrackingService(service);
-          }
-        },
-        child: Text(isConnected ? 'Disconnect' : 'Connect'),
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: isConnected
+              ? Theme.of(context).colorScheme.primaryContainer
+              : Theme.of(context).colorScheme.surfaceContainerHighest,
+          child: Icon(
+            icon,
+            color: isConnected
+                ? Theme.of(context).colorScheme.primary
+                : Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+        title: Text(name),
+        subtitle: Text(isConnected ? 'Connected as User' : 'Not connected'),
+        trailing: Tooltip(
+          message: isHighlighted
+              ? 'Connect $name to continue'
+              : (isConnected ? 'Disconnect' : 'Connect'),
+          child: FilledButton.tonal(
+            onPressed: () {
+              if (isConnected) {
+                _showDisconnectDialog(context, service, viewModel, name);
+              } else {
+                viewModel.connectTrackingService(service);
+              }
+            },
+            child: Text(isConnected ? 'Disconnect' : 'Connect'),
+          ),
+        ),
       ),
     );
   }

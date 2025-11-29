@@ -62,3 +62,22 @@ class CacheFailure extends Failure {
 class UnknownFailure extends Failure {
   const UnknownFailure(super.message) : super(code: 'UNKNOWN_ERROR');
 }
+
+/// Token refresh failures
+class TokenRefreshFailure extends Failure {
+  const TokenRefreshFailure(super.message) : super(code: 'TOKEN_REFRESH_ERROR');
+}
+
+/// Rate limit failures
+class RateLimitFailure extends Failure {
+  final Duration? retryAfter;
+
+  const RateLimitFailure(super.message, {this.retryAfter})
+    : super(code: 'RATE_LIMIT');
+}
+
+/// MAL authentication required failure
+class MalAuthRequiredFailure extends AuthenticationFailure {
+  const MalAuthRequiredFailure([String message = 'MAL authentication required'])
+    : super(message);
+}

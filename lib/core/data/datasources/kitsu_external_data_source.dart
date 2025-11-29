@@ -2,10 +2,19 @@ import 'package:dio/dio.dart';
 import '../../domain/entities/media_entity.dart';
 import '../../domain/entities/media_details_entity.dart' hide SearchResult;
 import '../../domain/entities/episode_entity.dart';
+import '../../domain/entities/episode_page_result.dart';
 import '../../domain/entities/chapter_entity.dart';
+import '../../domain/entities/chapter_page_result.dart';
 import '../../domain/entities/search_result_entity.dart';
 import '../../error/exceptions.dart';
 import '../../utils/logger.dart';
+
+class _KitsuChapterPage {
+  final List<dynamic> data;
+  final String? nextLink;
+
+  const _KitsuChapterPage({required this.data, this.nextLink});
+}
 
 class KitsuExternalDataSourceImpl {
   late final Dio _dio;
@@ -344,21 +353,7 @@ class KitsuExternalDataSourceImpl {
       // Use provided cover image or fetch from API
       String? animePosterImage = coverImage;
       if (animePosterImage == null) {
-        try {
-          final animeResponse = await _dio.get('/anime/$animeId');
-          final animeData = animeResponse.data['data'];
-          final posterObj =
-              animeData?['attributes']?['posterImage'] as Map<String, dynamic>?;
-          animePosterImage =
-              posterObj?['large'] ??
-              posterObj?['medium'] ??
-              posterObj?['small'];
-          Logger.debug('Kitsu anime poster for fallback: $animePosterImage');
-        } catch (e) {
-          Logger.warning(
-            'Could not fetch Kitsu anime details for fallback: $e',
-          );
-        }
+        animePosterImage = await _fetchAnimePosterImage(animeId);
       } else {
         Logger.debug('Kitsu using provided cover image for fallback');
       }
@@ -387,178 +382,424 @@ class KitsuExternalDataSourceImpl {
       Logger.info(
         'Kitsu returned ${episodesList.length} episodes for anime $animeId',
       );
-      return episodesList.map((ep) {
-        final epMap = ep as Map<String, dynamic>;
-        final attrs = epMap['attributes'] as Map<String, dynamic>? ?? {};
-        final titlesObj = attrs['titles'] as Map<String, dynamic>?;
-        final thumbnailObj = attrs['thumbnail'] as Map<String, dynamic>?;
-
-        // Safe type conversion
-        int safeToInt(dynamic value, int defaultValue) {
-          if (value == null) return defaultValue;
-          if (value is int) return value;
-          if (value is double) return value.toInt();
-          if (value is String) return int.tryParse(value) ?? defaultValue;
-          return defaultValue;
-        }
-
-        // Extract thumbnail URL - Kitsu stores it as a nested object or direct string
-        String? thumbnailUrl;
-        if (thumbnailObj != null) {
-          thumbnailUrl =
-              thumbnailObj['original']?.toString() ??
-              thumbnailObj['large']?.toString() ??
-              thumbnailObj['small']?.toString();
-        } else if (attrs['thumbnail'] is String) {
-          // Sometimes thumbnail is a direct string URL
-          thumbnailUrl = attrs['thumbnail'] as String;
-        }
-
-        // Use episode thumbnail if available, otherwise fall back to anime poster
-        final finalThumbnail = thumbnailUrl ?? animePosterImage;
-
-        // Log for debugging
-        if (thumbnailUrl != null) {
-          Logger.debug(
-            'Kitsu episode ${attrs['number']} has thumbnail: $thumbnailUrl',
-          );
-        } else if (animePosterImage != null) {
-          Logger.debug(
-            'Kitsu episode ${attrs['number']} using anime poster as fallback',
-          );
-        }
-
-        return EpisodeEntity(
-          id: epMap['id']?.toString() ?? '',
-          mediaId: animeId,
-          number: safeToInt(attrs['number'], 0),
-          title:
-              attrs['canonicalTitle']?.toString() ??
-              titlesObj?['en_jp']?.toString() ??
-              titlesObj?['en']?.toString() ??
-              'Episode ${attrs['number'] ?? 0}',
-          thumbnail: finalThumbnail,
-          duration: safeToInt(attrs['length'], 0) > 0
-              ? safeToInt(attrs['length'], 0)
-              : null,
-          releaseDate: attrs['airdate'] != null
-              ? DateTime.tryParse(attrs['airdate'].toString())
-              : null,
-        );
-      }).toList();
+      return episodesList
+          .map((ep) => _mapEpisodeEntity(ep, animeId, animePosterImage))
+          .toList();
     } catch (e) {
       Logger.error('Kitsu get episodes failed', error: e);
       throw ServerException('Failed to get Kitsu episodes: $e');
     }
   }
 
-  /// Get chapters for a manga
-  /// Note: Kitsu's chapters endpoint often returns 400 errors as it's not fully supported
-  /// for all manga. We generate placeholder chapters based on the manga's chapter count.
+  Future<EpisodePageResult> getEpisodePage({
+    required String animeId,
+    int offset = 0,
+    int limit = 50,
+    String? coverImage,
+  }) async {
+    final safeLimit = limit <= 0 ? 50 : limit.clamp(1, 100);
+    final safeOffset = offset < 0 ? 0 : offset;
+
+    try {
+      String? animePosterImage =
+          coverImage ?? await _fetchAnimePosterImage(animeId);
+      final response = await _dio.get(
+        '/anime/$animeId/episodes',
+        queryParameters: {
+          'page[limit]': safeLimit,
+          'page[offset]': safeOffset,
+          'sort': 'number',
+        },
+      );
+
+      final List episodesList = response.data['data'] ?? [];
+      final links = response.data['links'] as Map<String, dynamic>?;
+      final hasNext = links?['next'] != null && episodesList.isNotEmpty;
+
+      final episodes = episodesList
+          .map((ep) => _mapEpisodeEntity(ep, animeId, animePosterImage))
+          .toList();
+
+      final nextOffset = hasNext ? safeOffset + episodes.length : null;
+
+      return EpisodePageResult(
+        episodes: episodes,
+        nextOffset: nextOffset,
+        providerId: 'kitsu',
+        providerMediaId: animeId,
+      );
+    } catch (e, stackTrace) {
+      Logger.error(
+        'Kitsu getEpisodePage failed for anime $animeId',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      throw ServerException('Failed to get Kitsu paged episodes: $e');
+    }
+  }
+
+  Future<String?> _fetchAnimePosterImage(String animeId) async {
+    try {
+      final animeResponse = await _dio.get('/anime/$animeId');
+      final animeData = animeResponse.data['data'];
+      final posterObj =
+          animeData?['attributes']?['posterImage'] as Map<String, dynamic>?;
+      final poster =
+          posterObj?['large'] ?? posterObj?['medium'] ?? posterObj?['small'];
+      Logger.debug('Kitsu anime poster for fallback: $poster');
+      return poster;
+    } catch (e) {
+      Logger.warning('Could not fetch Kitsu anime details for fallback: $e');
+      return null;
+    }
+  }
+
+  EpisodeEntity _mapEpisodeEntity(
+    dynamic episode,
+    String animeId,
+    String? animePosterImage,
+  ) {
+    final epMap = episode as Map<String, dynamic>;
+    final attrs = epMap['attributes'] as Map<String, dynamic>? ?? {};
+    final titlesObj = attrs['titles'] as Map<String, dynamic>?;
+    final thumbnailObj = attrs['thumbnail'] as Map<String, dynamic>?;
+
+    int safeToInt(dynamic value, int defaultValue) {
+      if (value == null) return defaultValue;
+      if (value is int) return value;
+      if (value is double) return value.toInt();
+      if (value is String) return int.tryParse(value) ?? defaultValue;
+      return defaultValue;
+    }
+
+    String? thumbnailUrl;
+    if (thumbnailObj != null) {
+      thumbnailUrl =
+          thumbnailObj['original']?.toString() ??
+          thumbnailObj['large']?.toString() ??
+          thumbnailObj['small']?.toString();
+    } else if (attrs['thumbnail'] is String) {
+      thumbnailUrl = attrs['thumbnail'] as String;
+    }
+
+    final finalThumbnail = thumbnailUrl ?? animePosterImage;
+
+    if (thumbnailUrl != null) {
+      Logger.debug(
+        'Kitsu episode ${attrs['number']} has thumbnail: $thumbnailUrl',
+      );
+    } else if (animePosterImage != null) {
+      Logger.debug(
+        'Kitsu episode ${attrs['number']} using anime poster as fallback',
+      );
+    }
+
+    return EpisodeEntity(
+      id: epMap['id']?.toString() ?? '',
+      mediaId: animeId,
+      number: safeToInt(attrs['number'], 0),
+      title:
+          attrs['canonicalTitle']?.toString() ??
+          titlesObj?['en_jp']?.toString() ??
+          titlesObj?['en']?.toString() ??
+          'Episode ${attrs['number'] ?? 0}',
+      thumbnail: finalThumbnail,
+      duration: safeToInt(attrs['length'], 0) > 0
+          ? safeToInt(attrs['length'], 0)
+          : null,
+      releaseDate: attrs['airdate'] != null
+          ? DateTime.tryParse(attrs['airdate'].toString())
+          : null,
+    );
+  }
+
+  /// Get chapters for a manga with pagination.
+  /// Falls back to placeholder generation when the chapters endpoint fails.
   Future<List<ChapterEntity>> getChapters(String mangaId) async {
     try {
-      // First, try to get the manga details to know the chapter count
-      int? totalChapters;
-      try {
-        final mangaResponse = await _dio.get('/manga/$mangaId');
-        final mangaData = mangaResponse.data['data'];
-        final attrs = mangaData?['attributes'] as Map<String, dynamic>? ?? {};
-        totalChapters = attrs['chapterCount'] as int?;
-        Logger.debug('Kitsu manga $mangaId has $totalChapters chapters');
-      } catch (e) {
-        Logger.warning('Could not fetch manga details for chapter count: $e');
+      final totalChapters = await _getChapterCount(mangaId);
+      final fetchedChapters = await _fetchChaptersPaged(mangaId);
+
+      if (fetchedChapters.isNotEmpty) {
+        return fetchedChapters;
       }
 
-      // Try the chapters endpoint (often returns 400)
-      List chaptersList = [];
-      try {
-        Logger.debug('Kitsu fetching chapters for manga ID: $mangaId');
-        final response = await _dio.get(
-          '/manga/$mangaId/chapters',
-          queryParameters: {'page[limit]': 100, 'sort': 'number'},
-        );
-        chaptersList = response.data['data'] ?? [];
+      if (totalChapters != null && totalChapters > 0) {
         Logger.info(
-          'Kitsu chapters endpoint returned ${chaptersList.length} chapters',
+          'Kitsu fallback: generating $totalChapters placeholder chapters for manga $mangaId',
         );
-      } catch (e) {
-        // Chapters endpoint often fails with 400 - this is expected
-        Logger.warning('Kitsu chapters endpoint failed for manga $mangaId: $e');
+        return _generatePlaceholderChapters(mangaId, totalChapters);
+      }
 
-        // Generate placeholder chapters if we know the total count
-        if (totalChapters != null && totalChapters > 0) {
-          Logger.info(
-            'Generating $totalChapters placeholder chapters for manga $mangaId',
-          );
-          return List.generate(totalChapters, (index) {
-            final chapterNum = index + 1;
-            return ChapterEntity(
-              id: 'kitsu_chapter_${mangaId}_$chapterNum',
-              mediaId: mangaId,
-              number: chapterNum.toDouble(),
-              title: 'Chapter $chapterNum',
-              releaseDate: null,
-              pageCount: null,
-              sourceProvider: 'kitsu',
-            );
-          });
+      Logger.warning(
+        'Kitsu chapters unavailable for $mangaId and no total count to fallback on',
+      );
+      return [];
+    } catch (e, stackTrace) {
+      Logger.error(
+        'Kitsu getChapters failed for manga $mangaId',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      return [];
+    }
+  }
+
+  Future<int?> _getChapterCount(String mangaId) async {
+    try {
+      final mangaResponse = await _dio.get('/manga/$mangaId');
+      final mangaData = mangaResponse.data['data'];
+      final attrs = mangaData?['attributes'] as Map<String, dynamic>? ?? {};
+      final count = attrs['chapterCount'] as int?;
+      Logger.debug('Kitsu manga $mangaId chapterCount=$count');
+      return count;
+    } catch (e) {
+      Logger.warning('Kitsu chapter count lookup failed for $mangaId: $e');
+      return null;
+    }
+  }
+
+  /// Public getter used by aggregators needing chapter totals
+  Future<int?> getChapterCount(String mangaId) => _getChapterCount(mangaId);
+
+  Future<ChapterPageResult> getChapterPage({
+    required String mangaId,
+    int offset = 0,
+    int limit = 20,
+  }) async {
+    final uri = Uri.parse('${_dio.options.baseUrl}/manga/$mangaId/chapters')
+        .replace(
+          queryParameters: {
+            'page[limit]': '$limit',
+            'page[offset]': '$offset',
+            'sort': 'number',
+          },
+        );
+
+    try {
+      final page = await _fetchChapterPage(uri);
+      final nextOffset = _extractOffsetFromLink(page.nextLink);
+      return ChapterPageResult(
+        chapters: page.data
+            .map((e) => _mapChapter(e as Map<String, dynamic>, mangaId))
+            .toList(),
+        nextOffset: nextOffset,
+        providerId: 'kitsu',
+        providerMediaId: mangaId,
+      );
+    } on DioException catch (e) {
+      final fallback = await _fetchChapterPageWithFallback(
+        mangaId,
+        originalUri: uri,
+        exception: e,
+      );
+
+      if (fallback == null) {
+        rethrow;
+      }
+
+      final nextOffset = _extractOffsetFromLink(fallback.nextLink);
+      return ChapterPageResult(
+        chapters: fallback.data
+            .map((e) => _mapChapter(e as Map<String, dynamic>, mangaId))
+            .toList(),
+        nextOffset: nextOffset,
+        providerId: 'kitsu',
+        providerMediaId: mangaId,
+      );
+    }
+  }
+
+  int? _extractOffsetFromLink(String? link) {
+    if (link == null) return null;
+    final uri = Uri.tryParse(link);
+    if (uri == null) return null;
+    final offsetParam = uri.queryParameters['page[offset]'];
+    if (offsetParam == null) return null;
+    return int.tryParse(offsetParam);
+  }
+
+  Future<List<ChapterEntity>> _fetchChaptersPaged(
+    String mangaId, {
+    int? maxTotal,
+  }) async {
+    const pageLimit = 20;
+    final maxChapters = maxTotal ?? 400;
+    final chapters = <ChapterEntity>[];
+
+    Uri? nextUri = Uri.parse('${_dio.options.baseUrl}/manga/$mangaId/chapters')
+        .replace(
+          queryParameters: {
+            'page[limit]': '$pageLimit',
+            'page[offset]': '0',
+            'sort': 'number',
+          },
+        );
+
+    while (nextUri != null) {
+      final currentUri = nextUri;
+      try {
+        final page = await _fetchChapterPage(currentUri);
+
+        if (page.data.isEmpty) {
+          break;
         }
+
+        chapters.addAll(page.data.map((ch) => _mapChapter(ch, mangaId)));
+
+        if (page.nextLink == null || page.nextLink!.isEmpty) {
+          nextUri = null;
+        } else {
+          try {
+            nextUri = Uri.parse(page.nextLink!);
+          } catch (e) {
+            Logger.warning('Invalid Kitsu next link: ${page.nextLink}');
+            nextUri = null;
+          }
+        }
+        if (chapters.length >= maxChapters) {
+          nextUri = null;
+        }
+      } on DioException catch (relationshipError) {
+        // Attempt fallback to legacy /chapters endpoint
+        Logger.warning(
+          'Kitsu chapters request failed for $mangaId at $nextUri: ${relationshipError.message}',
+        );
+        final fallback = await _fetchChapterPageWithFallback(
+          mangaId,
+          originalUri: currentUri,
+          exception: relationshipError,
+        );
+
+        if (fallback == null || fallback.data.isEmpty) {
+          return [];
+        }
+
+        chapters.addAll(fallback.data.map((ch) => _mapChapter(ch, mangaId)));
+        if (fallback.nextLink == null || fallback.nextLink!.isEmpty) {
+          nextUri = null;
+        } else {
+          try {
+            nextUri = Uri.parse(fallback.nextLink!);
+          } catch (e) {
+            Logger.warning(
+              'Invalid Kitsu next link from fallback: ${fallback.nextLink}',
+            );
+            nextUri = null;
+          }
+        }
+        if (chapters.length >= maxChapters) {
+          nextUri = null;
+        }
+      } catch (e) {
+        Logger.warning(
+          'Kitsu chapters page fetch failed for $mangaId at $nextUri: $e',
+        );
         return [];
       }
-
-      if (chaptersList.isEmpty && totalChapters != null && totalChapters > 0) {
-        // API returned empty but we know there are chapters
-        Logger.info(
-          'Generating $totalChapters placeholder chapters for manga $mangaId',
-        );
-        return List.generate(totalChapters, (index) {
-          final chapterNum = index + 1;
-          return ChapterEntity(
-            id: 'kitsu_chapter_${mangaId}_$chapterNum',
-            mediaId: mangaId,
-            number: chapterNum.toDouble(),
-            title: 'Chapter $chapterNum',
-            releaseDate: null,
-            pageCount: null,
-            sourceProvider: 'kitsu',
-          );
-        });
-      }
-
-      return chaptersList.map((ch) {
-        final chMap = ch as Map<String, dynamic>;
-        final attrs = chMap['attributes'] as Map<String, dynamic>? ?? {};
-        final titlesObj = attrs['titles'] as Map<String, dynamic>?;
-
-        // Safe number parsing
-        double safeToDouble(dynamic value) {
-          if (value == null) return 0.0;
-          if (value is double) return value;
-          if (value is int) return value.toDouble();
-          if (value is String) return double.tryParse(value) ?? 0.0;
-          return 0.0;
-        }
-
-        return ChapterEntity(
-          id: chMap['id']?.toString() ?? '',
-          mediaId: mangaId,
-          number: safeToDouble(attrs['number']),
-          title:
-              attrs['canonicalTitle']?.toString() ??
-              titlesObj?['en_jp']?.toString() ??
-              titlesObj?['en']?.toString() ??
-              'Chapter ${attrs['number'] ?? 0}',
-          releaseDate: attrs['published'] != null
-              ? DateTime.tryParse(attrs['published'].toString())
-              : null,
-          pageCount: null,
-          sourceProvider: 'kitsu',
-        );
-      }).toList();
-    } catch (e) {
-      Logger.error('Kitsu get chapters failed', error: e);
-      return []; // Return empty list instead of throwing
     }
+
+    Logger.info('Kitsu fetched ${chapters.length} chapters for $mangaId');
+    return chapters;
+  }
+
+  Future<_KitsuChapterPage> _fetchChapterPage(Uri uri) async {
+    Logger.debug('Kitsu chapters request: $uri');
+    final response = await _dio.getUri(uri);
+    return _parseKitsuChapterResponse(response);
+  }
+
+  Future<_KitsuChapterPage?> _fetchChapterPageWithFallback(
+    String mangaId, {
+    required Uri originalUri,
+    required DioException exception,
+  }) async {
+    Logger.debug(
+      'Kitsu manga/$mangaId/chapters request failed: ${exception.message}. Response: ${exception.response?.data}. Trying fallback filters.',
+    );
+
+    final fallbackFilters = ['filter[mangaId]', 'filter[manga_id]'];
+
+    for (final filterKey in fallbackFilters) {
+      try {
+        final fallbackParams = Map<String, String>.from(
+          originalUri.queryParameters,
+        );
+        fallbackParams[filterKey] = mangaId;
+        final fallbackUri = Uri.parse(
+          '${_dio.options.baseUrl}/chapters',
+        ).replace(queryParameters: fallbackParams);
+        Logger.debug(
+          'Kitsu chapters fallback request ($filterKey): $fallbackUri',
+        );
+        final response = await _dio.getUri(fallbackUri);
+        Logger.debug(
+          'Kitsu chapters fallback succeeded for $mangaId using $filterKey',
+        );
+        return _parseKitsuChapterResponse(response);
+      } on DioException catch (e) {
+        Logger.debug(
+          'Kitsu chapters fallback attempt failed for $mangaId using $filterKey: ${e.message}. Response: ${e.response?.data}',
+        );
+      }
+    }
+
+    return null;
+  }
+
+  _KitsuChapterPage _parseKitsuChapterResponse(Response response) {
+    final data = response.data['data'] as List? ?? [];
+    final links = response.data['links'] as Map<String, dynamic>?;
+    final nextLink = links?['next'] as String?;
+    return _KitsuChapterPage(data: data, nextLink: nextLink);
+  }
+
+  double safeToDouble(dynamic value) {
+    if (value == null) return 0.0;
+    if (value is double) return value;
+    if (value is int) return value.toDouble();
+    if (value is String) return double.tryParse(value) ?? 0.0;
+    return 0.0;
+  }
+
+  ChapterEntity _mapChapter(Map<String, dynamic> json, String mangaId) {
+    final chMap = json;
+    final attrs = chMap['attributes'] as Map<String, dynamic>? ?? {};
+    final titlesObj = attrs['titles'] as Map<String, dynamic>?;
+
+    return ChapterEntity(
+      id: chMap['id']?.toString() ?? '',
+      mediaId: mangaId,
+      number: safeToDouble(attrs['number']),
+      title:
+          attrs['canonicalTitle']?.toString() ??
+          titlesObj?['en_jp']?.toString() ??
+          titlesObj?['en']?.toString() ??
+          'Chapter ${attrs['number'] ?? 0}',
+      releaseDate: attrs['published'] != null
+          ? DateTime.tryParse(attrs['published'].toString())
+          : null,
+      pageCount: null,
+      sourceProvider: 'kitsu',
+    );
+  }
+
+  List<ChapterEntity> _generatePlaceholderChapters(
+    String mangaId,
+    int totalChapters,
+  ) {
+    return List.generate(totalChapters, (index) {
+      final chapterNum = index + 1;
+      return ChapterEntity(
+        id: 'kitsu_chapter_${mangaId}_$chapterNum',
+        mediaId: mangaId,
+        number: chapterNum.toDouble(),
+        title: 'Chapter $chapterNum',
+        releaseDate: null,
+        pageCount: null,
+        sourceProvider: 'kitsu',
+      );
+    });
   }
 
   // Mapping functions

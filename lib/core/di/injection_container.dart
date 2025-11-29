@@ -21,6 +21,7 @@ import '../domain/repositories/library_repository.dart';
 import '../domain/repositories/extension_repository.dart';
 import '../domain/repositories/video_repository.dart';
 import '../domain/repositories/tracking_repository.dart';
+import '../domain/repositories/tracking_auth_repository.dart';
 import '../domain/repositories/repository_repository.dart';
 import '../data/repositories/download_repository_impl.dart';
 import '../data/repositories/media_repository_impl.dart';
@@ -28,6 +29,7 @@ import '../data/repositories/library_repository_impl.dart';
 import '../data/repositories/extension_repository_impl.dart';
 import '../data/repositories/video_repository_impl.dart';
 import '../data/repositories/tracking_repository_impl.dart';
+import '../data/repositories/tracking_auth_repository_impl.dart';
 import '../data/repositories/repository_repository_impl.dart';
 import '../data/datasources/download_local_data_source.dart';
 import '../data/datasources/media_remote_data_source.dart';
@@ -35,7 +37,13 @@ import '../data/datasources/media_local_data_source.dart';
 import '../data/datasources/library_local_data_source.dart';
 import '../data/datasources/extension_data_source.dart';
 import '../data/datasources/external_remote_data_source.dart';
+import '../data/datasources/tmdb_external_data_source.dart';
+import '../data/datasources/anilist_external_data_source.dart';
+import '../data/datasources/simkl_external_data_source.dart';
+import '../data/datasources/kitsu_external_data_source.dart';
 import '../data/datasources/tracking_data_source.dart';
+import '../data/datasources/jikan_external_data_source.dart';
+import '../data/datasources/mal_external_data_source.dart';
 import '../data/datasources/repository_local_data_source.dart';
 import '../domain/usecases/get_trending_media_usecase.dart';
 import '../domain/usecases/get_popular_media_usecase.dart';
@@ -59,6 +67,7 @@ import '../domain/usecases/get_chapter_pages_usecase.dart';
 import '../domain/usecases/save_reading_position_usecase.dart';
 import '../domain/usecases/get_reading_position_usecase.dart';
 import '../domain/usecases/add_to_library_usecase.dart';
+import '../domain/usecases/authenticate_tracking_service_usecase.dart';
 import '../../features/home/presentation/viewmodels/home_viewmodel.dart';
 import '../../features/home/presentation/viewmodels/browse_viewmodel.dart';
 import '../../features/search/presentation/viewmodels/search_viewmodel.dart';
@@ -68,6 +77,7 @@ import '../../features/settings/presentation/viewmodels/settings_viewmodel.dart'
 import '../../features/media_details/presentation/viewmodels/media_details_viewmodel.dart';
 import '../../features/media_details/presentation/viewmodels/episode_source_selection_viewmodel.dart';
 import '../../features/manga_reader/presentation/viewmodels/manga_reader_viewmodel.dart';
+import '../../features/auth/presentation/viewmodels/auth_viewmodel.dart';
 import '../domain/repositories/extension_search_repository.dart';
 import '../domain/repositories/recent_extensions_repository.dart';
 import '../data/repositories/extension_search_repository_impl.dart';
@@ -168,12 +178,37 @@ Future<void> initializeDependencies() async {
     () => DownloadLocalDataSource(),
   );
 
+  sl.registerLazySingleton<TmdbExternalDataSourceImpl>(
+    () => TmdbExternalDataSourceImpl(),
+  );
+
+  sl.registerLazySingleton<AnilistExternalDataSourceImpl>(
+    () => AnilistExternalDataSourceImpl(),
+  );
+
+  sl.registerLazySingleton<SimklExternalDataSourceImpl>(
+    () => SimklExternalDataSourceImpl(),
+  );
+
+  sl.registerLazySingleton<KitsuExternalDataSourceImpl>(
+    () => KitsuExternalDataSourceImpl(),
+  );
+
   sl.registerLazySingleton<MediaRemoteDataSource>(
     () => MediaRemoteDataSourceImpl(extensionManager: _getExtensionManager()),
   );
 
   sl.registerLazySingleton<ExternalRemoteDataSource>(
-    () => ExternalRemoteDataSource(),
+    () => ExternalRemoteDataSource(
+      tmdbDataSource: sl<TmdbExternalDataSourceImpl>(),
+      anilistDataSource: sl<AnilistExternalDataSourceImpl>(),
+      simklDataSource: sl<SimklExternalDataSourceImpl>(),
+      jikanDataSource: sl<JikanExternalDataSourceImpl>(),
+      kitsuDataSource: sl<KitsuExternalDataSourceImpl>(),
+      matcher: sl<CrossProviderMatcher>(),
+      aggregator: sl<DataAggregator>(),
+      cache: sl<ProviderCache>(),
+    ),
   );
 
   // MediaLocalDataSource requires async initialization
@@ -205,8 +240,30 @@ Future<void> initializeDependencies() async {
     ),
   );
 
+  // Register TrackingAuthRepository for unified token management
+  sl.registerLazySingleton<TrackingAuthRepository>(
+    () =>
+        TrackingAuthRepositoryImpl(secureStorage: const FlutterSecureStorage()),
+  );
+
   sl.registerLazySingleton<TrackingAuthService>(
-    () => TrackingAuthService(const FlutterSecureStorage()),
+    () => TrackingAuthService(
+      const FlutterSecureStorage(),
+      sl<TrackingAuthRepository>(),
+    ),
+  );
+
+  // Register MalExternalDataSource for MAL API fallback
+  sl.registerLazySingleton<MalExternalDataSourceImpl>(
+    () => MalExternalDataSourceImpl(),
+  );
+
+  // Register JikanExternalDataSource with MAL fallback support
+  sl.registerLazySingleton<JikanExternalDataSourceImpl>(
+    () => JikanExternalDataSourceImpl(
+      authRepository: sl<TrackingAuthRepository>(),
+      malDataSource: sl<MalExternalDataSourceImpl>(),
+    ),
   );
 
   // Register Repositories
@@ -409,6 +466,19 @@ Future<void> initializeDependencies() async {
       getChapterPages: sl<GetChapterPagesUseCase>(),
       saveReadingPosition: sl<SaveReadingPositionUseCase>(),
       getReadingPosition: sl<GetReadingPositionUseCase>(),
+    ),
+  );
+
+  // Register AuthenticateTrackingServiceUseCase
+  sl.registerLazySingleton<AuthenticateTrackingServiceUseCase>(
+    () => AuthenticateTrackingServiceUseCase(sl<TrackingRepository>()),
+  );
+
+  // Register AuthViewModel for managing authentication state
+  sl.registerLazySingleton<AuthViewModel>(
+    () => AuthViewModel(
+      authenticateTrackingService: sl<AuthenticateTrackingServiceUseCase>(),
+      authRepository: sl<TrackingAuthRepository>(),
     ),
   );
 }

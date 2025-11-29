@@ -49,3 +49,36 @@ class CacheException extends AppException {
 class NotFoundException extends AppException {
   const NotFoundException(String message) : super(message, 'NOT_FOUND');
 }
+
+/// MAL authentication required exception
+/// Thrown when a MAL API request requires authentication but no token is available
+class MalAuthRequiredException extends AppException {
+  const MalAuthRequiredException([
+    String message = 'MAL authentication required',
+  ]) : super(message, 'MAL_AUTH_REQUIRED');
+}
+
+/// MAL token expired exception
+/// Thrown when a MAL API request fails due to an expired token
+class MalAuthExpiredException extends AppException {
+  const MalAuthExpiredException([String message = 'MAL token expired'])
+    : super(message, 'MAL_AUTH_EXPIRED');
+}
+
+/// Rate limit exception
+/// Thrown when an API request is rate limited
+class RateLimitException extends AppException {
+  final Duration? retryAfter;
+
+  const RateLimitException([
+    String message = 'Rate limit exceeded',
+    this.retryAfter,
+  ]) : super(message, 'RATE_LIMIT');
+}
+
+/// Token refresh exception
+/// Thrown when token refresh fails
+class TokenRefreshException extends AppException {
+  const TokenRefreshException([String message = 'Token refresh failed'])
+    : super(message, 'TOKEN_REFRESH_ERROR');
+}

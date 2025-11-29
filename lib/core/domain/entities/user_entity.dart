@@ -1,6 +1,9 @@
 import 'package:equatable/equatable.dart';
 
-enum TrackingService { anilist, mal, simkl }
+import '../../enums/tracking_service.dart';
+
+// Re-export TrackingService for backward compatibility
+export '../../enums/tracking_service.dart' show TrackingService;
 
 class UserEntity extends Equatable {
   final String id;

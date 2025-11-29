@@ -4,13 +4,22 @@ import 'package:http/http.dart' as http;
 import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import '../domain/entities/auth_token.dart';
+import '../domain/repositories/tracking_auth_repository.dart';
+import '../data/repositories/tracking_auth_repository_impl.dart';
 import '../enums/tracking_service.dart';
 import '../utils/logger.dart';
 
 class TrackingAuthService {
   final FlutterSecureStorage _secureStorage;
+  final TrackingAuthRepository _authRepository;
 
-  TrackingAuthService(this._secureStorage);
+  TrackingAuthService(
+    this._secureStorage, [
+    TrackingAuthRepository? authRepository,
+  ]) : _authRepository =
+           authRepository ??
+           TrackingAuthRepositoryImpl(secureStorage: _secureStorage);
 
   // Credentials loaded from .env
   static String get _anilistClientId => dotenv.env['ANILIST_CLIENT_ID'] ?? '';
@@ -98,9 +107,28 @@ class TrackingAuthService {
       );
 
       if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        final token = data['access_token'];
-        await _secureStorage.write(key: 'anilist_token', value: token);
+        final data = json.decode(response.body) as Map<String, dynamic>;
+
+        // Create AuthToken with proper expiration (AniList tokens last 1 year)
+        final authToken =
+            TrackingAuthRepositoryImpl.createTokenFromOAuthResponse(
+              TrackingService.anilist,
+              data,
+            );
+
+        // Save using the repository
+        await _authRepository.saveToken(TrackingService.anilist, authToken);
+
+        // Also save to legacy key for backward compatibility
+        await _secureStorage.write(
+          key: 'anilist_token',
+          value: data['access_token'],
+        );
+
+        Logger.info(
+          'AniList authentication successful (expires: ${authToken.expiresAt})',
+          tag: 'TrackingAuthService',
+        );
         return true;
       } else {
         Logger.error('Failed to exchange code for token: ${response.body}');
@@ -177,20 +205,32 @@ class TrackingAuthService {
       );
 
       if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        final token = data['access_token'];
-        final refreshToken = data['refresh_token'];
+        final data = json.decode(response.body) as Map<String, dynamic>;
 
-        await _secureStorage.write(key: 'mal_token', value: token);
-        if (refreshToken != null) {
+        // Create AuthToken with proper expiration
+        final authToken =
+            TrackingAuthRepositoryImpl.createTokenFromOAuthResponse(
+              TrackingService.mal,
+              data,
+            );
+
+        // Save using the repository
+        await _authRepository.saveToken(TrackingService.mal, authToken);
+
+        // Also save to legacy keys for backward compatibility
+        await _secureStorage.write(
+          key: 'mal_token',
+          value: data['access_token'],
+        );
+        if (data['refresh_token'] != null) {
           await _secureStorage.write(
             key: 'mal_refresh_token',
-            value: refreshToken,
+            value: data['refresh_token'],
           );
         }
 
         Logger.info(
-          'MAL authentication successful',
+          'MAL authentication successful (expires: ${authToken.expiresAt})',
           tag: 'TrackingAuthService',
         );
         return true;
@@ -267,11 +307,26 @@ class TrackingAuthService {
       );
 
       if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        final token = data['access_token'];
-        await _secureStorage.write(key: 'simkl_token', value: token);
+        final data = json.decode(response.body) as Map<String, dynamic>;
+
+        // Create AuthToken (Simkl tokens never expire)
+        final authToken =
+            TrackingAuthRepositoryImpl.createTokenFromOAuthResponse(
+              TrackingService.simkl,
+              data,
+            );
+
+        // Save using the repository
+        await _authRepository.saveToken(TrackingService.simkl, authToken);
+
+        // Also save to legacy key for backward compatibility
+        await _secureStorage.write(
+          key: 'simkl_token',
+          value: data['access_token'],
+        );
+
         Logger.info(
-          'Simkl authentication successful',
+          'Simkl authentication successful (never expires)',
           tag: 'TrackingAuthService',
         );
         return true;
@@ -293,6 +348,10 @@ class TrackingAuthService {
   }
 
   Future<void> logout(TrackingService service) async {
+    // Clear from repository
+    await _authRepository.clearToken(service);
+
+    // Also clear legacy keys for backward compatibility
     switch (service) {
       case TrackingService.anilist:
         await _secureStorage.delete(key: 'anilist_token');
@@ -311,15 +370,30 @@ class TrackingAuthService {
   }
 
   Future<bool> isAuthenticated(TrackingService service) async {
-    switch (service) {
-      case TrackingService.anilist:
-        return await _secureStorage.containsKey(key: 'anilist_token');
-      case TrackingService.mal:
-        return await _secureStorage.containsKey(key: 'mal_token');
-      case TrackingService.simkl:
-        return await _secureStorage.containsKey(key: 'simkl_token');
-      case TrackingService.jikan:
-        return true; // Jikan is a public API, no auth required
+    if (service == TrackingService.jikan) {
+      return true; // Jikan is a public API, no auth required
     }
+    return await _authRepository.isAuthenticated(service);
   }
+
+  /// Get a valid access token for the specified service.
+  ///
+  /// This will automatically refresh expired tokens when possible (MAL only).
+  /// Returns null if no valid token is available.
+  Future<String?> getValidToken(TrackingService service) async {
+    return await _authRepository.getValidToken(service);
+  }
+
+  /// Get the full AuthToken for the specified service.
+  Future<AuthToken?> getAuthToken(TrackingService service) async {
+    return await _authRepository.getAuthToken(service);
+  }
+
+  /// Check if a valid (non-expired) token exists for the service.
+  Future<bool> hasValidToken(TrackingService service) async {
+    return await _authRepository.hasValidToken(service);
+  }
+
+  /// Get the underlying auth repository for advanced operations.
+  TrackingAuthRepository get authRepository => _authRepository;
 }
