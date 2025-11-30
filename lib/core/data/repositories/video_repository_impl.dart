@@ -4,6 +4,8 @@ import 'package:dartotsu_extension_bridge/Extensions/ExtractorService.dart'
     show ExtractorResult, ExtractorService;
 import 'package:dartotsu_extension_bridge/Models/DEpisode.dart';
 import 'package:dartotsu_extension_bridge/Models/Video.dart';
+import 'package:dartotsu_extension_bridge/Models/DMedia.dart'
+    show CloudStreamUrlCodec;
 
 import '../../domain/entities/video_source_entity.dart';
 import '../../domain/repositories/video_repository.dart';
@@ -213,7 +215,7 @@ class VideoRepositoryImpl implements VideoRepository {
         );
         // If we can't find the extension, return the embed URL
         // The video player might be able to handle it
-        return Right(source.url);
+        return Right(_sanitizeForPlayer(source.url));
       }
 
       try {
@@ -231,7 +233,7 @@ class VideoRepositoryImpl implements VideoRepository {
 
         if (extractedVideos.isEmpty) {
           Logger.warning('No videos extracted, returning original URL');
-          return Right(source.url);
+          return Right(_sanitizeForPlayer(source.url));
         }
 
         // Return the first extracted video URL
@@ -245,9 +247,9 @@ class VideoRepositoryImpl implements VideoRepository {
         Logger.warning(
           'Failed to extract video using extension: $e, returning original URL',
         );
-        // If extraction fails, return the original URL
+        // If extraction fails, return the original URL (encoded if needed)
         // The video player might still be able to handle it
-        return Right(source.url);
+        return Right(_sanitizeForPlayer(source.url));
       }
     } on ValidationException catch (e) {
       Logger.error('Validation exception: ${e.message}');
@@ -326,5 +328,15 @@ class VideoRepositoryImpl implements VideoRepository {
 
     final lowerUrl = url.toLowerCase();
     return videoExtensions.any((ext) => lowerUrl.contains(ext));
+  }
+
+  String _sanitizeForPlayer(String url) {
+    final trimmed = url.trim();
+    if (trimmed.isEmpty) return trimmed;
+    final firstChar = trimmed[0];
+    if (firstChar == '{' || firstChar == '[') {
+      return CloudStreamUrlCodec.sanitize(trimmed) ?? trimmed;
+    }
+    return trimmed;
   }
 }

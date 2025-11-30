@@ -7,7 +7,9 @@ import '../../../../core/domain/usecases/save_playback_position_usecase.dart';
 import '../../../../core/domain/usecases/get_playback_position_usecase.dart';
 import '../../../../core/domain/usecases/update_progress_usecase.dart';
 import '../../../../core/utils/error_message_mapper.dart';
-import '../../../../core/utils/logger.dart';
+import 'package:aniya/core/utils/logger.dart';
+import 'package:dartotsu_extension_bridge/Models/DMedia.dart'
+    show CloudStreamUrlCodec;
 
 class VideoPlayerViewModel extends ChangeNotifier {
   final GetVideoSourcesUseCase getVideoSources;
@@ -182,7 +184,7 @@ class VideoPlayerViewModel extends ChangeNotifier {
             'URL extraction failed, using sourceLink directly: ${source.sourceLink}',
             tag: 'VideoPlayerViewModel',
           );
-          _videoUrl = source.sourceLink;
+          _videoUrl = _sanitizeForPlayer(source.sourceLink);
         },
         (url) {
           _videoUrl = url;
@@ -307,5 +309,15 @@ class VideoPlayerViewModel extends ChangeNotifier {
       );
       return null;
     }
+  }
+
+  String _sanitizeForPlayer(String url) {
+    final trimmed = url.trim();
+    if (trimmed.isEmpty) return trimmed;
+    final firstChar = trimmed[0];
+    if (firstChar == '{' || firstChar == '[') {
+      return CloudStreamUrlCodec.sanitize(trimmed) ?? trimmed;
+    }
+    return trimmed;
   }
 }
