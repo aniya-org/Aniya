@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:dartotsu_extension_bridge/ExtensionManager.dart' as bridge;
 import 'package:dartotsu_extension_bridge/CloudStream/CloudStreamExtensions.dart'
-    show CloudStreamExtensionGroup, CloudStreamGroupInstallResult;
+    show CloudStreamExtensionGroup;
 import '../../../../core/domain/entities/entities.dart' as domain;
 import '../../../../core/services/responsive_layout_manager.dart';
 import '../../controllers/extensions_controller.dart';
@@ -32,6 +32,7 @@ class _ExtensionScreenState extends State<ExtensionScreen>
   bool _isAndroid = false;
   String _selectedLanguage = 'All';
   String _searchQuery = '';
+  domain.ItemType? _selectedCloudStreamCategory;
   bridge.ExtensionType _currentExtensionType = bridge.ExtensionType.mangayomi;
 
   @override
@@ -423,24 +424,43 @@ class _ExtensionScreenState extends State<ExtensionScreen>
   /// CloudStream extensions support multiple content types:
   /// anime, movie, tv_show, cartoon, documentary, livestream
   Widget _buildCloudStreamExtensionList({required bool installed}) {
+    final categoryCounts = _cloudStreamCategoryCounts(installed: installed);
+    final selectedType = _selectedCloudStreamCategory;
+    final cloudStreamPool =
+        (installed
+                ? _extensionsController.installedEntities
+                : _extensionsController.availableEntities)
+            .where((e) => e.type == domain.ExtensionType.cloudstream)
+            .toList();
     final cloudStreamExtensions = _getFilteredExtensions(
       installed: installed,
       cloudStreamOnly: true,
+      itemType: selectedType,
+      base: cloudStreamPool,
+    );
+    final dedupedExtensions = _dedupeCloudStreamExtensions(
+      cloudStreamExtensions,
     );
 
+    List<domain.ExtensionEntity> updatePendingList =
+        const <domain.ExtensionEntity>[];
+    if (installed) {
+      final filteredPending = _getFilteredExtensions(
+        installed: true,
+        cloudStreamOnly: true,
+        itemType: selectedType,
+        base: _extensionsController.updatePendingExtensions
+            .where((e) => e.type == domain.ExtensionType.cloudstream)
+            .toList(),
+      );
+      updatePendingList = _dedupeCloudStreamExtensions(filteredPending);
+    }
+
     final listWidget = ExtensionList(
-      extensions: cloudStreamExtensions,
+      extensions: dedupedExtensions,
       installed: installed,
-      itemType: domain.ItemType.anime, // CloudStream handles multiple types
-      query: _searchQuery,
-      selectedLanguage: _selectedLanguage,
-      showRecommended: !installed,
       isLoading: _extensionsController.isInitializing,
-      updatePendingExtensions: installed
-          ? _extensionsController.updatePendingExtensions
-                .where((e) => e.type == domain.ExtensionType.cloudstream)
-                .toList()
-          : <domain.ExtensionEntity>[],
+      updatePendingExtensions: updatePendingList,
       onInstall: (extension) =>
           _extensionsController.installExtensionById(extension.id),
       onUninstall: (extension) => _confirmUninstall(context, extension),
@@ -455,18 +475,90 @@ class _ExtensionScreenState extends State<ExtensionScreen>
       physics: installed ? null : const NeverScrollableScrollPhysics(),
     );
 
+    final chips = _buildCloudStreamCategoryFilter(categoryCounts);
+
     if (installed) {
-      return listWidget;
+      return Column(
+        children: [
+          chips,
+          Expanded(child: listWidget),
+        ],
+      );
     }
 
     final groups = _extensionsController.allCloudStreamGroups;
     return ListView(
       padding: EdgeInsets.zero,
       children: [
+        chips,
         if (groups.isNotEmpty) _buildCloudStreamGroupSection(context, groups),
         listWidget,
       ],
     );
+  }
+
+  Widget _buildCloudStreamCategoryFilter(Map<domain.ItemType, int> counts) {
+    final total = counts.values.fold<int>(0, (sum, value) => sum + value);
+    final chips = <Widget>[
+      ChoiceChip(
+        label: Text('All ($total)'),
+        selected: _selectedCloudStreamCategory == null,
+        onSelected: (_) {
+          setState(() => _selectedCloudStreamCategory = null);
+        },
+      ),
+    ];
+
+    for (final type in _extensionsController.cloudStreamItemTypes) {
+      chips.add(
+        ChoiceChip(
+          label: Text('${_formatItemTypeLabel(type)} (${counts[type] ?? 0})'),
+          selected: _selectedCloudStreamCategory == type,
+          onSelected: (_) {
+            setState(() => _selectedCloudStreamCategory = type);
+          },
+        ),
+      );
+    }
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Wrap(spacing: 8, children: chips),
+    );
+  }
+
+  String _formatItemTypeLabel(domain.ItemType type) {
+    final raw = type.toString();
+    final lastSegment = raw.contains('.') ? raw.split('.').last : raw;
+    if (lastSegment.isEmpty) return 'Unknown';
+    final spaced = lastSegment
+        .replaceAllMapped(RegExp('([A-Z])'), (match) => ' ${match.group(0)}')
+        .replaceAll('_', ' ')
+        .trim();
+    if (spaced.isEmpty) return 'Unknown';
+    return spaced[0].toUpperCase() + spaced.substring(1);
+  }
+
+  List<domain.ExtensionEntity> _dedupeCloudStreamExtensions(
+    List<domain.ExtensionEntity> extensions,
+  ) {
+    final seen = <String>{};
+    final deduped = <domain.ExtensionEntity>[];
+    for (final extension in extensions) {
+      final identifier = _cloudStreamIdentifier(extension);
+      if (seen.add(identifier)) {
+        deduped.add(extension);
+      }
+    }
+    return deduped;
+  }
+
+  String _cloudStreamIdentifier(domain.ExtensionEntity extension) {
+    final apk = extension.apkUrl;
+    if (apk != null && apk.isNotEmpty) return apk;
+    if (extension.id.isNotEmpty) return extension.id;
+    return '${extension.name}-${extension.version}';
   }
 
   Widget _buildCloudStreamGroupSection(
@@ -804,15 +896,29 @@ class _ExtensionScreenState extends State<ExtensionScreen>
     return languages.toList()..sort();
   }
 
+  Map<domain.ItemType, List<domain.ExtensionEntity>> _groupByItemType(
+    List<domain.ExtensionEntity> extensions,
+  ) {
+    final map = <domain.ItemType, List<domain.ExtensionEntity>>{};
+    for (final ext in extensions) {
+      map.putIfAbsent(ext.itemType, () => []).add(ext);
+    }
+    return map;
+  }
+
   Map<String, int> _computeExtensionCounts() {
     final installed = _groupByItemType(_extensionsController.installedEntities);
     final available = _groupByItemType(_extensionsController.availableEntities);
-    final installedCloud = _extensionsController.installedEntities
-        .where((e) => e.type == domain.ExtensionType.cloudstream)
-        .length;
-    final availableCloud = _extensionsController.availableEntities
-        .where((e) => e.type == domain.ExtensionType.cloudstream)
-        .length;
+    final installedCloud = _dedupeCloudStreamExtensions(
+      _extensionsController.installedEntities
+          .where((e) => e.type == domain.ExtensionType.cloudstream)
+          .toList(),
+    ).length;
+    final availableCloud = _dedupeCloudStreamExtensions(
+      _extensionsController.availableEntities
+          .where((e) => e.type == domain.ExtensionType.cloudstream)
+          .toList(),
+    ).length;
 
     return {
       'installedAnime': installed[domain.ItemType.anime]?.length ?? 0,
@@ -826,14 +932,26 @@ class _ExtensionScreenState extends State<ExtensionScreen>
     };
   }
 
-  Map<domain.ItemType, List<domain.ExtensionEntity>> _groupByItemType(
-    List<domain.ExtensionEntity> extensions,
-  ) {
-    final map = <domain.ItemType, List<domain.ExtensionEntity>>{};
-    for (final ext in extensions) {
-      map.putIfAbsent(ext.itemType, () => []).add(ext);
+  Map<domain.ItemType, int> _cloudStreamCategoryCounts({
+    required bool installed,
+  }) {
+    final identifierBuckets = {
+      for (final type in _extensionsController.cloudStreamItemTypes)
+        type: <String>{},
+    };
+    final source = installed
+        ? _extensionsController.installedEntities
+        : _extensionsController.availableEntities;
+    for (final extension in source) {
+      if (extension.type != domain.ExtensionType.cloudstream) continue;
+      identifierBuckets
+          .putIfAbsent(extension.itemType, () => <String>{})
+          .add(_cloudStreamIdentifier(extension));
     }
-    return map;
+    return {
+      for (final entry in identifierBuckets.entries)
+        entry.key: entry.value.length,
+    };
   }
 
   List<domain.ExtensionEntity> _getFilteredExtensions({
@@ -844,19 +962,22 @@ class _ExtensionScreenState extends State<ExtensionScreen>
   }) {
     final installedList = _extensionsController.installedEntities;
     final availableList = _extensionsController.availableEntities;
-    final installedIds = installedList.map((e) => e.id).toSet();
+    final installedPairs = installedList
+        .map((e) => '${e.id}-${e.itemType.name}')
+        .toSet();
     final data = base ?? (installed ? installedList : availableList);
 
     return data.where((extension) {
-      if (!installed && installedIds.contains(extension.id)) {
+      final pairKey = '${extension.id}-${extension.itemType.name}';
+      if (!installed && installedPairs.contains(pairKey)) {
         return false;
       }
-      if (cloudStreamOnly) {
-        if (extension.type != domain.ExtensionType.cloudstream) return false;
-      } else {
-        if (itemType != null && extension.itemType != itemType) {
-          return false;
-        }
+      if (cloudStreamOnly &&
+          extension.type != domain.ExtensionType.cloudstream) {
+        return false;
+      }
+      if (itemType != null && extension.itemType != itemType) {
+        return false;
       }
       if (_selectedLanguage != 'All' &&
           extension.language.toLowerCase() != _selectedLanguage.toLowerCase()) {
@@ -898,17 +1019,6 @@ class _ExtensionScreenState extends State<ExtensionScreen>
 
   void _showCloudStreamUrlDialog(BuildContext context) {
     final urlController = TextEditingController();
-    domain.ItemType selectedType = domain.ItemType.anime;
-    final domainItems = [
-      domain.ItemType.anime,
-      domain.ItemType.movie,
-      domain.ItemType.tvShow,
-      domain.ItemType.cartoon,
-      domain.ItemType.documentary,
-      domain.ItemType.livestream,
-      domain.ItemType.nsfw,
-    ];
-
     showDialog(
       context: context,
       builder: (dialogContext) {
@@ -929,26 +1039,6 @@ class _ExtensionScreenState extends State<ExtensionScreen>
                     keyboardType: TextInputType.url,
                     autofocus: true,
                   ),
-                  const SizedBox(height: 16),
-                  DropdownButtonFormField<domain.ItemType>(
-                    value: selectedType,
-                    decoration: const InputDecoration(
-                      labelText: 'Content type',
-                    ),
-                    items: domainItems
-                        .map(
-                          (item) => DropdownMenuItem(
-                            value: item,
-                            child: Text(item.toString()),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (value) {
-                      if (value != null) {
-                        setState(() => selectedType = value);
-                      }
-                    },
-                  ),
                 ],
               ),
               actions: [
@@ -968,10 +1058,7 @@ class _ExtensionScreenState extends State<ExtensionScreen>
                     Navigator.of(dialogContext).pop();
                     try {
                       await _extensionsController
-                          .installCloudStreamExtensionFromUrl(
-                            url,
-                            selectedType,
-                          );
+                          .installCloudStreamExtensionFromUrl(url);
                     } catch (e) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(content: Text('Install failed: $e')),

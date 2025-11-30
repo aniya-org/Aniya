@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:dartotsu_extension_bridge/CloudStream/CloudStreamExtensions.dart';
 import 'package:dartotsu_extension_bridge/ExtensionManager.dart';
 import 'package:dartotsu_extension_bridge/Models/Source.dart';
+import 'package:dartotsu_extension_bridge/Extensions/Extensions.dart' as bridge;
+import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:hive/hive.dart';
 
@@ -22,10 +24,22 @@ class ExtensionsController extends GetxController {
   final RxList<Source> _availableAnimeExtensions = <Source>[].obs;
   final RxList<Source> _availableMangaExtensions = <Source>[].obs;
   final RxList<Source> _availableNovelExtensions = <Source>[].obs;
+  final RxList<Source> _availableMovieExtensions = <Source>[].obs;
+  final RxList<Source> _availableTvExtensions = <Source>[].obs;
+  final RxList<Source> _availableCartoonExtensions = <Source>[].obs;
+  final RxList<Source> _availableDocumentaryExtensions = <Source>[].obs;
+  final RxList<Source> _availableLivestreamExtensions = <Source>[].obs;
+  final RxList<Source> _availableNsfwExtensions = <Source>[].obs;
 
   final RxList<Source> _installedAnimeExtensions = <Source>[].obs;
   final RxList<Source> _installedMangaExtensions = <Source>[].obs;
   final RxList<Source> _installedNovelExtensions = <Source>[].obs;
+  final RxList<Source> _installedMovieExtensions = <Source>[].obs;
+  final RxList<Source> _installedTvExtensions = <Source>[].obs;
+  final RxList<Source> _installedCartoonExtensions = <Source>[].obs;
+  final RxList<Source> _installedDocumentaryExtensions = <Source>[].obs;
+  final RxList<Source> _installedLivestreamExtensions = <Source>[].obs;
+  final RxList<Source> _installedNsfwExtensions = <Source>[].obs;
 
   final Rxn<Source> activeAnimeSource = Rxn<Source>();
   final Rxn<Source> activeMangaSource = Rxn<Source>();
@@ -75,6 +89,25 @@ class ExtensionsController extends GetxController {
   Map<String, CloudStreamGroupInstallResult?> get groupInstallStatuses =>
       _groupInstallStatuses;
 
+  Future<void> _reloadCloudStreamPlugins() async {
+    if (!GetPlatform.isAndroid) return;
+    const channel = MethodChannel('cloudstreamExtensionBridge');
+    try {
+      await channel.invokeMethod('initializePlugins');
+      await channel.invokeMethod('cloudstream:reloadPlugins');
+      final manager = ExtensionType.cloudstream.getManager();
+      if (manager is CloudStreamExtensions) {
+        for (final type in _cloudStreamItemTypes) {
+          await _fetchCloudStreamForType(manager, type);
+        }
+        await manager.refreshInstalledLists();
+        await _sortAllExtensions();
+      }
+    } catch (e) {
+      Logger.warning('Failed to reload CloudStream plugins: $e');
+    }
+  }
+
   final RxBool _isInitializing = false.obs;
   bool get isInitializing => _isInitializing.value;
 
@@ -84,6 +117,12 @@ class ExtensionsController extends GetxController {
     _restoreRepoSettings();
     _initializeExtensions();
     _ensureDefaultRepos();
+  }
+
+  Future<void> applyCloudStreamRepoUrlForAllTypes(String repoUrl) async {
+    for (final type in _cloudStreamItemTypes) {
+      await applyCloudStreamRepoUrl(type, repoUrl);
+    }
   }
 
   void _ensureDefaultRepos() {
@@ -113,17 +152,26 @@ class ExtensionsController extends GetxController {
     }
   }
 
-  Future<void> installCloudStreamExtensionFromUrl(
-    String url,
-    domain.ItemType itemType,
-  ) async {
+  Future<void> installCloudStreamExtensionFromUrl(String url) async {
     final trimmedUrl = url.trim();
     final uri = Uri.tryParse(trimmedUrl);
     if (uri == null || !(uri.isScheme('http') || uri.isScheme('https'))) {
       throw FormatException('Please enter a valid http(s) URL');
     }
 
-    final bridgeItemType = _mapDomainItemTypeToBridge(itemType);
+    final lowerPath = uri.path.toLowerCase();
+    final looksLikeManifest = lowerPath.endsWith('.json');
+
+    if (looksLikeManifest) {
+      await applyCloudStreamRepoUrlForAllTypes(trimmedUrl);
+      _setOperationMessage(
+        'Repository applied to all CloudStream categories',
+        autoClear: true,
+      );
+      return;
+    }
+
+    final bridgeItemType = ItemType.anime;
     final sourceId = _deriveIdFromUrl(uri);
     final sourceName = _deriveNameFromUrl(uri);
 
@@ -131,7 +179,7 @@ class ExtensionsController extends GetxController {
       id: sourceId,
       name: sourceName,
       extensionType: ExtensionType.cloudstream,
-      itemType: bridgeItemType ?? ItemType.anime,
+      itemType: bridgeItemType,
       apkUrl: trimmedUrl,
       lang: 'all',
     );
@@ -141,6 +189,7 @@ class ExtensionsController extends GetxController {
     try {
       await installSource(source);
       _setOperationMessage('Installed $sourceName', autoClear: true);
+      await _reloadCloudStreamPlugins();
     } catch (_) {
       _setOperationMessage('Failed to install $sourceName', autoClear: true);
       rethrow;
@@ -149,10 +198,41 @@ class ExtensionsController extends GetxController {
     }
   }
 
-  List<domain.ExtensionEntity> get installedEntities =>
-      _mapSourcesToEntities(_allInstalledSources, installed: true);
-  List<domain.ExtensionEntity> get availableEntities =>
-      _mapSourcesToEntities(_allAvailableSources, installed: false);
+  Future<void> applyCloudStreamRepoUrl(
+    domain.ItemType itemType,
+    String repoUrl,
+  ) async {
+    final trimmedUrl = repoUrl.trim();
+    final uri = Uri.tryParse(trimmedUrl);
+    if (uri == null || !(uri.isScheme('http') || uri.isScheme('https'))) {
+      throw FormatException('Please enter a valid http(s) URL');
+    }
+
+    _setCloudStreamRepo(itemType, trimmedUrl);
+
+    try {
+      final manager = ExtensionType.cloudstream.getManager();
+      if (manager is CloudStreamExtensions) {
+        await _fetchCloudStreamForType(manager, itemType);
+      }
+      await _sortAllExtensions();
+    } catch (error, stackTrace) {
+      Logger.error(
+        'Failed to apply CloudStream repo for $itemType',
+        tag: 'ExtensionsController',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
+  }
+
+  List<domain.ExtensionEntity> get installedEntities => _dedupeExtensions(
+    _mapSourcesToEntities(_allInstalledSources, installed: true),
+  );
+  List<domain.ExtensionEntity> get availableEntities => _dedupeExtensions(
+    _mapSourcesToEntities(_allAvailableSources, installed: false),
+  );
   List<domain.ExtensionEntity> get updatePendingExtensions =>
       installedEntities.where((ext) => ext.hasUpdate).toList();
   List<String> get availableLanguages {
@@ -198,6 +278,7 @@ class ExtensionsController extends GetxController {
       }
 
       await _sortAllExtensions();
+      await _reloadCloudStreamPlugins();
     } catch (error, stack) {
       Logger.error(
         'Failed to fetch extension repos',
@@ -218,6 +299,9 @@ class ExtensionsController extends GetxController {
       }
       await manager.installSource(source);
       await _sortAllExtensions();
+      if (source.extensionType == ExtensionType.cloudstream) {
+        await _reloadCloudStreamPlugins();
+      }
     } catch (error, stack) {
       Logger.error(
         'Failed to install ${source.name}',
@@ -457,12 +541,24 @@ class ExtensionsController extends GetxController {
     ..._installedAnimeExtensions,
     ..._installedMangaExtensions,
     ..._installedNovelExtensions,
+    ..._installedMovieExtensions,
+    ..._installedTvExtensions,
+    ..._installedCartoonExtensions,
+    ..._installedDocumentaryExtensions,
+    ..._installedLivestreamExtensions,
+    ..._installedNsfwExtensions,
   ];
 
   List<Source> get _allAvailableSources => [
     ..._availableAnimeExtensions,
     ..._availableMangaExtensions,
     ..._availableNovelExtensions,
+    ..._availableMovieExtensions,
+    ..._availableTvExtensions,
+    ..._availableCartoonExtensions,
+    ..._availableDocumentaryExtensions,
+    ..._availableLivestreamExtensions,
+    ..._availableNsfwExtensions,
   ];
 
   Iterable<ExtensionType> get _supportedExtensionTypes sync* {
@@ -491,29 +587,57 @@ class ExtensionsController extends GetxController {
   }
 
   Future<void> _sortAllExtensions() async {
-    final installedAnime = <Source>[];
-    final installedManga = <Source>[];
-    final installedNovel = <Source>[];
-    final availableAnime = <Source>[];
-    final availableManga = <Source>[];
-    final availableNovel = <Source>[];
+    final installedByType = {
+      for (final domainType in domain.ItemType.values) domainType: <Source>[],
+    };
+    final availableByType = {
+      for (final domainType in domain.ItemType.values) domainType: <Source>[],
+    };
 
-    for (final type in _supportedExtensionTypes) {
-      final manager = type.getManager();
-      installedAnime.addAll(await manager.getInstalledAnimeExtensions());
-      installedManga.addAll(await manager.getInstalledMangaExtensions());
-      installedNovel.addAll(await manager.getInstalledNovelExtensions());
-      availableAnime.addAll(manager.availableAnimeExtensions.value);
-      availableManga.addAll(manager.availableMangaExtensions.value);
-      availableNovel.addAll(manager.availableNovelExtensions.value);
+    for (final extensionType in _supportedExtensionTypes) {
+      final manager = extensionType.getManager();
+      for (final domainType in domain.ItemType.values) {
+        final bridgeType = _mapDomainItemTypeToBridge(domainType);
+        if (bridgeType == null) continue;
+
+        final installed = await _getInstalledForManager(manager, bridgeType);
+        if (installed.isNotEmpty) {
+          installedByType[domainType]!.addAll(installed);
+        }
+
+        final available = _getAvailableForManager(manager, bridgeType);
+        if (available.isNotEmpty) {
+          availableByType[domainType]!.addAll(available);
+        }
+      }
     }
 
-    _installedAnimeExtensions.value = installedAnime;
-    _installedMangaExtensions.value = installedManga;
-    _installedNovelExtensions.value = installedNovel;
-    _availableAnimeExtensions.value = availableAnime;
-    _availableMangaExtensions.value = availableManga;
-    _availableNovelExtensions.value = availableNovel;
+    _installedAnimeExtensions.value = installedByType[domain.ItemType.anime]!;
+    _installedMangaExtensions.value = installedByType[domain.ItemType.manga]!;
+    _installedNovelExtensions.value = installedByType[domain.ItemType.novel]!;
+    _installedMovieExtensions.value = installedByType[domain.ItemType.movie]!;
+    _installedTvExtensions.value = installedByType[domain.ItemType.tvShow]!;
+    _installedCartoonExtensions.value =
+        installedByType[domain.ItemType.cartoon]!;
+    _installedDocumentaryExtensions.value =
+        installedByType[domain.ItemType.documentary]!;
+    _installedLivestreamExtensions.value =
+        installedByType[domain.ItemType.livestream]!;
+    _installedNsfwExtensions.value = installedByType[domain.ItemType.nsfw]!;
+
+    _availableAnimeExtensions.value = availableByType[domain.ItemType.anime]!;
+    _availableMangaExtensions.value = availableByType[domain.ItemType.manga]!;
+    _availableNovelExtensions.value = availableByType[domain.ItemType.novel]!;
+    _availableMovieExtensions.value = availableByType[domain.ItemType.movie]!;
+    _availableTvExtensions.value = availableByType[domain.ItemType.tvShow]!;
+    _availableCartoonExtensions.value =
+        availableByType[domain.ItemType.cartoon]!;
+    _availableDocumentaryExtensions.value =
+        availableByType[domain.ItemType.documentary]!;
+    _availableLivestreamExtensions.value =
+        availableByType[domain.ItemType.livestream]!;
+    _availableNsfwExtensions.value = availableByType[domain.ItemType.nsfw]!;
+
     _updateShouldShowExtensions();
   }
 
@@ -536,6 +660,9 @@ class ExtensionsController extends GetxController {
     domain.ItemType.livestream,
     domain.ItemType.nsfw,
   ];
+
+  List<domain.ItemType> get cloudStreamItemTypes =>
+      List<domain.ItemType>.unmodifiable(_cloudStreamItemTypes);
 
   Future<void> _fetchCloudStreamForType(
     CloudStreamExtensions manager,
@@ -598,6 +725,7 @@ class ExtensionsController extends GetxController {
       );
       _groupInstallStatuses[group.id] = result;
       await _sortAllExtensions();
+      await _reloadCloudStreamPlugins();
       return result;
     } catch (error, stack) {
       Logger.error(
@@ -697,22 +825,26 @@ class ExtensionsController extends GetxController {
   }
 
   void _updateShouldShowExtensions() {
-    shouldShowExtensions.value =
-        [
-          _activeAnimeRepo.value,
-          _activeAniyomiAnimeRepo.value,
-          _activeMangaRepo.value,
-          _activeAniyomiMangaRepo.value,
-          _activeNovelRepo.value,
-          _installedAnimeExtensions,
-          _installedMangaExtensions,
-          _installedNovelExtensions,
-        ].any((value) {
-          if (value is String) return value.isNotEmpty;
-          if (value is List && value.isNotEmpty) return true;
-          if (value is RxList && value.isNotEmpty) return true;
-          return false;
-        });
+    final repos = [
+      _activeAnimeRepo.value,
+      _activeMangaRepo.value,
+      _activeNovelRepo.value,
+      _activeAniyomiAnimeRepo.value,
+      _activeAniyomiMangaRepo.value,
+      _activeCloudStreamAnimeRepo.value,
+      _activeCloudStreamMangaRepo.value,
+      _activeCloudStreamNovelRepo.value,
+      _activeCloudStreamMovieRepo.value,
+      _activeCloudStreamTvRepo.value,
+      _activeCloudStreamCartoonRepo.value,
+      _activeCloudStreamDocumentaryRepo.value,
+      _activeCloudStreamLivestreamRepo.value,
+      _activeCloudStreamNsfwRepo.value,
+    ];
+
+    final hasRepoConfigured = repos.any((repo) => repo.isNotEmpty);
+    final hasInstalled = _allInstalledSources.isNotEmpty;
+    shouldShowExtensions.value = hasRepoConfigured || hasInstalled;
   }
 
   void _setAnimeRepo(String value, ExtensionType type) {
@@ -843,6 +975,27 @@ class ExtensionsController extends GetxController {
         .toList();
   }
 
+  List<domain.ExtensionEntity> _dedupeExtensions(
+    List<domain.ExtensionEntity> extensions,
+  ) {
+    final seen = <String>{};
+    final deduped = <domain.ExtensionEntity>[];
+    for (final extension in extensions) {
+      final identifier = () {
+        final apk = extension.apkUrl;
+        if (apk != null && apk.isNotEmpty) return apk;
+        if (extension.id.isNotEmpty) return extension.id;
+        return '${extension.name}-${extension.version}';
+      }();
+      final key =
+          '${extension.type.name}:${extension.itemType.name}:$identifier';
+      if (seen.add(key)) {
+        deduped.add(extension);
+      }
+    }
+    return deduped;
+  }
+
   T? _firstWhereOrNull<T>(Iterable<T> items, bool Function(T element) test) {
     for (final item in items) {
       if (test(item)) return item;
@@ -923,6 +1076,58 @@ class ExtensionsController extends GetxController {
         return ItemType.livestream;
       case domain.ItemType.nsfw:
         return ItemType.nsfw;
+    }
+  }
+
+  Future<List<Source>> _getInstalledForManager(
+    bridge.Extension manager,
+    ItemType itemType,
+  ) {
+    switch (itemType) {
+      case ItemType.anime:
+        return manager.getInstalledAnimeExtensions();
+      case ItemType.manga:
+        return manager.getInstalledMangaExtensions();
+      case ItemType.novel:
+        return manager.getInstalledNovelExtensions();
+      case ItemType.movie:
+        return manager.getInstalledMovieExtensions();
+      case ItemType.tvShow:
+        return manager.getInstalledTvShowExtensions();
+      case ItemType.cartoon:
+        return manager.getInstalledCartoonExtensions();
+      case ItemType.documentary:
+        return manager.getInstalledDocumentaryExtensions();
+      case ItemType.livestream:
+        return manager.getInstalledLivestreamExtensions();
+      case ItemType.nsfw:
+        return manager.getInstalledNsfwExtensions();
+    }
+  }
+
+  List<Source> _getAvailableForManager(
+    bridge.Extension manager,
+    ItemType itemType,
+  ) {
+    switch (itemType) {
+      case ItemType.anime:
+        return manager.availableAnimeExtensions.value;
+      case ItemType.manga:
+        return manager.availableMangaExtensions.value;
+      case ItemType.novel:
+        return manager.availableNovelExtensions.value;
+      case ItemType.movie:
+        return manager.availableMovieExtensions.value;
+      case ItemType.tvShow:
+        return manager.availableTvShowExtensions.value;
+      case ItemType.cartoon:
+        return manager.availableCartoonExtensions.value;
+      case ItemType.documentary:
+        return manager.availableDocumentaryExtensions.value;
+      case ItemType.livestream:
+        return manager.availableLivestreamExtensions.value;
+      case ItemType.nsfw:
+        return manager.availableNsfwExtensions.value;
     }
   }
 

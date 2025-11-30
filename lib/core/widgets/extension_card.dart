@@ -124,7 +124,10 @@ class ExtensionCard extends StatelessWidget {
                       ],
                     ),
                     const SizedBox(height: 4),
-                    Row(
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         Container(
                           padding: const EdgeInsets.symmetric(
@@ -143,7 +146,6 @@ class ExtensionCard extends StatelessWidget {
                             ),
                           ),
                         ),
-                        const SizedBox(width: 8),
                         Text(
                           'v${extension.version}',
                           style: theme.textTheme.bodySmall?.copyWith(
@@ -151,23 +153,25 @@ class ExtensionCard extends StatelessWidget {
                           ),
                         ),
                         if (extension.hasUpdate &&
-                            extension.versionLast != null) ...[
-                          const SizedBox(width: 4),
-                          Icon(
-                            Icons.arrow_forward,
-                            size: 12,
-                            color: colorScheme.tertiary,
+                            extension.versionLast != null)
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.arrow_forward,
+                                size: 12,
+                                color: colorScheme.tertiary,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                'v${extension.versionLast}',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: colorScheme.tertiary,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: 4),
-                          Text(
-                            'v${extension.versionLast}',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: colorScheme.tertiary,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                        const SizedBox(width: 8),
                         Text(
                           extension.language.toUpperCase(),
                           style: theme.textTheme.bodySmall?.copyWith(

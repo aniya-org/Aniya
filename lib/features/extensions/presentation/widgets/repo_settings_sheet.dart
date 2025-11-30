@@ -193,6 +193,33 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
     return null;
   }
 
+  /// Validates CloudStream repository URLs
+  ///
+  /// CloudStream repos should point to manifest JSON files containing
+  /// a `pluginLists` array, not direct plugin list URLs.
+  /// This provides a hint to users about the expected format.
+  String? _validateCloudStreamUrl(String? value) {
+    final basicError = _validateUrl(value);
+    if (basicError != null) return basicError;
+
+    // Additional hint for CloudStream URLs
+    if (value != null && value.isNotEmpty) {
+      final uri = Uri.tryParse(value);
+      if (uri != null) {
+        final path = uri.path.toLowerCase();
+        // Warn if URL looks like a direct plugin list rather than a manifest
+        if (path.endsWith('-plugins.json') ||
+            path.contains('/plugins/') ||
+            path.contains('plugin-list')) {
+          // This is just a warning hint, not a hard error
+          // The actual validation happens when fetching
+          return null;
+        }
+      }
+    }
+    return null;
+  }
+
   void _handleSave() {
     if (_formKey.currentState?.validate() ?? false) {
       final config = RepositoryConfig(
@@ -332,7 +359,10 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: Text(
-                                    'Enter repository URLs to fetch extensions. Leave empty to use default repositories.',
+                                    _isCloudStream
+                                        ? 'Enter CloudStream manifest URLs (containing pluginLists). '
+                                              'These are repository index files, not direct plugin lists.'
+                                        : 'Enter repository URLs to fetch extensions. Leave empty to use default repositories.',
                                     style: theme.textTheme.bodySmall?.copyWith(
                                       color: colorScheme.onSurface,
                                     ),
@@ -350,6 +380,7 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
                             label: 'Anime Repository URL',
                             hint: 'https://example.com/anime-repo.json',
                             icon: Icons.play_circle_outline,
+                            useCloudStreamValidator: _isCloudStream,
                           ),
 
                           const SizedBox(height: 16),
@@ -360,6 +391,7 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
                             label: 'Manga Repository URL',
                             hint: 'https://example.com/manga-repo.json',
                             icon: Icons.menu_book_outlined,
+                            useCloudStreamValidator: _isCloudStream,
                           ),
 
                           const SizedBox(height: 16),
@@ -370,9 +402,11 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
                             label: 'Novel Repository URL',
                             hint: 'https://example.com/novel-repo.json',
                             icon: Icons.auto_stories_outlined,
+                            useCloudStreamValidator: _isCloudStream,
                           ),
 
                           // CloudStream-specific repository URLs (Requirements 12.1, 12.4)
+                          // All CloudStream URLs use manifest validator
                           if (_isCloudStream) ...[
                             const SizedBox(height: 16),
 
@@ -382,6 +416,7 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
                               label: 'Movie Repository URL',
                               hint: 'https://example.com/movie-repo.json',
                               icon: Icons.movie_outlined,
+                              useCloudStreamValidator: true,
                             ),
 
                             const SizedBox(height: 16),
@@ -392,6 +427,7 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
                               label: 'TV Show Repository URL',
                               hint: 'https://example.com/tvshow-repo.json',
                               icon: Icons.tv_outlined,
+                              useCloudStreamValidator: true,
                             ),
 
                             const SizedBox(height: 16),
@@ -402,6 +438,7 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
                               label: 'Cartoon Repository URL',
                               hint: 'https://example.com/cartoon-repo.json',
                               icon: Icons.animation_outlined,
+                              useCloudStreamValidator: true,
                             ),
 
                             const SizedBox(height: 16),
@@ -412,6 +449,7 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
                               label: 'Documentary Repository URL',
                               hint: 'https://example.com/documentary-repo.json',
                               icon: Icons.video_library_outlined,
+                              useCloudStreamValidator: true,
                             ),
 
                             const SizedBox(height: 16),
@@ -422,6 +460,7 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
                               label: 'Livestream Repository URL',
                               hint: 'https://example.com/livestream-repo.json',
                               icon: Icons.live_tv_outlined,
+                              useCloudStreamValidator: true,
                             ),
 
                             const SizedBox(height: 16),
@@ -432,6 +471,7 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
                               label: 'NSFW Repository URL',
                               hint: 'https://example.com/nsfw-repo.json',
                               icon: Icons.no_adult_content_outlined,
+                              useCloudStreamValidator: true,
                             ),
                           ],
 
@@ -483,6 +523,7 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
     required String label,
     required String hint,
     required IconData icon,
+    bool useCloudStreamValidator = false,
   }) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
@@ -505,11 +546,17 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
         const SizedBox(height: 8),
         TextFormField(
           controller: controller,
-          validator: _validateUrl,
+          validator: useCloudStreamValidator
+              ? _validateCloudStreamUrl
+              : _validateUrl,
           keyboardType: TextInputType.url,
           autocorrect: false,
           decoration: InputDecoration(
             hintText: hint,
+            helperText: useCloudStreamValidator
+                ? 'Use manifest URL with pluginLists'
+                : null,
+            helperMaxLines: 2,
             suffixIcon: controller.text.isNotEmpty
                 ? IconButton(
                     icon: const Icon(Icons.clear, size: 20),

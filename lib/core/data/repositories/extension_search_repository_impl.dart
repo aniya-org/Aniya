@@ -107,21 +107,37 @@ class ExtensionSearchRepositoryImpl implements ExtensionSearchRepository {
     domain_ext.ExtensionEntity extension,
     int page,
   ) async {
-    try {
-      // CloudStream search would be implemented via CloudStreamService
-      // For now, return empty list as CloudStream integration is handled separately
-      Logger.warning(
-        'CloudStream search not yet implemented',
-        tag: 'ExtensionSearchRepository',
-      );
-      return const Right([]);
-    } catch (e) {
-      return Left(UnknownFailure('CloudStream search failed: $e'));
-    }
+    return _searchMediaViaBridge(query, extension, page);
   }
 
   /// Search for media in Aniyomi/Mangayomi/LnReader extension via bridge
   Future<Either<Failure, List<MediaEntity>>> _searchMediaExtensionBridge(
+    String query,
+    domain_ext.ExtensionEntity extension,
+    int page,
+  ) async {
+    return _searchMediaViaBridge(query, extension, page);
+  }
+
+  /// Get sources from CloudStream extension
+  Future<Either<Failure, List<SourceEntity>>> _getSourcesCloudStream(
+    MediaEntity media,
+    domain_ext.ExtensionEntity extension,
+    EpisodeEntity episode,
+  ) async {
+    return _getSourcesViaBridge(media, extension, episode);
+  }
+
+  /// Get sources from Aniyomi/Mangayomi/LnReader extension via bridge
+  Future<Either<Failure, List<SourceEntity>>> _getSourcesExtensionBridge(
+    MediaEntity media,
+    domain_ext.ExtensionEntity extension,
+    EpisodeEntity episode,
+  ) async {
+    return _getSourcesViaBridge(media, extension, episode);
+  }
+
+  Future<Either<Failure, List<MediaEntity>>> _searchMediaViaBridge(
     String query,
     domain_ext.ExtensionEntity extension,
     int page,
@@ -132,7 +148,6 @@ class ExtensionSearchRepositoryImpl implements ExtensionSearchRepository {
         extension.itemType,
       );
 
-      // Use extension data source to search
       final results = await extensionDataSource.searchMedia(
         query: query,
         extensionId: extension.id,
@@ -141,7 +156,6 @@ class ExtensionSearchRepositoryImpl implements ExtensionSearchRepository {
         page: page,
       );
 
-      // Convert to MediaEntity list
       final mediaList = results.map((model) => model.toEntity()).toList();
 
       Logger.info(
@@ -160,27 +174,7 @@ class ExtensionSearchRepositoryImpl implements ExtensionSearchRepository {
     }
   }
 
-  /// Get sources from CloudStream extension
-  Future<Either<Failure, List<SourceEntity>>> _getSourcesCloudStream(
-    MediaEntity media,
-    domain_ext.ExtensionEntity extension,
-    EpisodeEntity episode,
-  ) async {
-    try {
-      // CloudStream source retrieval would be implemented via CloudStreamService
-      // For now, return empty list as CloudStream integration is handled separately
-      Logger.warning(
-        'CloudStream source retrieval not yet implemented',
-        tag: 'ExtensionSearchRepository',
-      );
-      return const Right([]);
-    } catch (e) {
-      return Left(UnknownFailure('CloudStream source retrieval failed: $e'));
-    }
-  }
-
-  /// Get sources from Aniyomi/Mangayomi/LnReader extension via bridge
-  Future<Either<Failure, List<SourceEntity>>> _getSourcesExtensionBridge(
+  Future<Either<Failure, List<SourceEntity>>> _getSourcesViaBridge(
     MediaEntity media,
     domain_ext.ExtensionEntity extension,
     EpisodeEntity episode,
@@ -191,7 +185,6 @@ class ExtensionSearchRepositoryImpl implements ExtensionSearchRepository {
         extension.itemType,
       );
 
-      // Use extension data source to get sources
       final sources = await extensionDataSource.getSources(
         mediaId: media.id,
         extensionId: extension.id,
@@ -200,7 +193,6 @@ class ExtensionSearchRepositoryImpl implements ExtensionSearchRepository {
         episodeNumber: episode.number,
       );
 
-      // Convert to SourceEntity list
       final sourceList = sources.map((model) => model.toEntity()).toList();
 
       Logger.info(

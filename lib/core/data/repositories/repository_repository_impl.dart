@@ -10,7 +10,8 @@ import '../../utils/logger.dart';
 import '../datasources/repository_local_data_source.dart';
 import '../models/repository_config_model.dart';
 import '../models/extension_model.dart';
-import '../models/cloudstream_repository_model.dart';
+// CloudStreamRepositoryModel import removed - CloudStream parsing now handled
+// exclusively by CloudStreamExtensions bridge
 
 /// Implementation of RepositoryRepository
 /// Handles repository configuration persistence and extension fetching
@@ -86,6 +87,17 @@ class RepositoryRepositoryImpl implements RepositoryRepository {
     ExtensionType extensionType,
   ) async {
     try {
+      // CloudStream extensions must be handled via CloudStreamExtensions bridge
+      // This repository only handles Mangayomi/Aniyomi formats
+      if (extensionType == ExtensionType.cloudstream) {
+        return Left(
+          ValidationFailure(
+            'CloudStream extensions must be fetched via CloudStreamExtensions. '
+            'Use ExtensionsController._fetchCloudStreamForType instead.',
+          ),
+        );
+      }
+
       // Validate URL
       final uri = Uri.tryParse(repoUrl);
       if (uri == null || !uri.hasScheme) {
@@ -161,49 +173,37 @@ class RepositoryRepositoryImpl implements RepositoryRepository {
   }
 
   /// Parse extensions from JSON response
+  ///
+  /// This method handles Mangayomi/Aniyomi JSON formats only.
+  /// CloudStream extensions are handled by CloudStreamExtensions bridge.
   List<ExtensionEntity> _parseExtensionsJson(
     String jsonString,
     ItemType itemType,
     ExtensionType extensionType,
   ) {
+    // CloudStream should never reach here due to early return in fetchExtensionsFromRepo
+    assert(
+      extensionType != ExtensionType.cloudstream,
+      'CloudStream extensions should be handled by CloudStreamExtensions bridge',
+    );
+
     final dynamic decoded = jsonDecode(jsonString);
     final extensions = <ExtensionEntity>[];
 
-    // Handle different JSON formats
+    // Handle different JSON formats (Mangayomi/Aniyomi)
     if (decoded is List) {
-      // Direct array of extensions (CloudStream plugin list format)
+      // Direct array of extensions
       for (final item in decoded) {
         if (item is Map<String, dynamic>) {
-          // Check if this is a CloudStream plugin format
-          if (extensionType == ExtensionType.cloudstream &&
-              item.containsKey('internalName')) {
-            final plugin = CloudStreamPluginModel.fromJson(item);
-            if (plugin.isActive) {
-              extensions.add(plugin.toExtensionEntity());
-            }
-          } else {
-            final extension = _parseExtensionItem(
-              item,
-              itemType,
-              extensionType,
-            );
-            if (extension != null) {
-              extensions.add(extension);
-            }
+          final extension = _parseExtensionItem(item, itemType, extensionType);
+          if (extension != null) {
+            extensions.add(extension);
           }
         }
       }
     } else if (decoded is Map<String, dynamic>) {
-      // CloudStream repository manifest format with pluginLists
-      if (decoded.containsKey('pluginLists')) {
-        // This is a CloudStream repository manifest
-        // The pluginLists need to be fetched separately
-        // Return empty here - use fetchCloudStreamRepository instead
-        Logger.info(
-          'CloudStream repository manifest detected, use fetchCloudStreamRepository',
-          tag: 'RepositoryRepository',
-        );
-      } else if (decoded.containsKey('extensions')) {
+      // Repository manifest format with extensions array
+      if (decoded.containsKey('extensions')) {
         final extensionsList = decoded['extensions'] as List?;
         if (extensionsList != null) {
           for (final item in extensionsList) {
@@ -227,169 +227,35 @@ class RepositoryRepositoryImpl implements RepositoryRepository {
 
   /// Fetches extensions from a CloudStream repository
   ///
+  /// **DEPRECATED**: CloudStream repositories should be handled via
+  /// CloudStreamExtensions bridge, not this repository layer.
+  /// This method is kept for backward compatibility but will return
+  /// a validation failure directing callers to use the correct handler.
+  ///
   /// CloudStream repositories have a manifest format with pluginLists
   /// that point to separate JSON files containing the actual plugins.
   ///
   /// Requirements: 12.1
+  @override
   Future<Either<Failure, List<ExtensionEntity>>> fetchCloudStreamRepository(
     String repoUrl,
   ) async {
-    try {
-      // Validate URL
-      final uri = Uri.tryParse(repoUrl);
-      if (uri == null || !uri.hasScheme) {
-        return Left(ValidationFailure('Invalid repository URL: $repoUrl'));
-      }
+    // CloudStream extensions must be handled via CloudStreamExtensions bridge
+    // This prevents duplicate manifest parsing and ensures proper plugin
+    // registration with the native plugin store.
+    Logger.warning(
+      'fetchCloudStreamRepository called but CloudStream should use '
+      'CloudStreamExtensions. Returning validation failure.',
+      tag: 'RepositoryRepository',
+    );
 
-      Logger.info(
-        'Fetching CloudStream repository from $repoUrl',
-        tag: 'RepositoryRepository',
-      );
-
-      // Fetch the repository manifest
-      final response = await httpClient.get(uri).timeout(_requestTimeout);
-
-      if (response.statusCode != 200) {
-        final errorMessage = _getHttpErrorMessage(response.statusCode);
-        return Left(
-          ServerFailure('$errorMessage (HTTP ${response.statusCode})'),
-        );
-      }
-
-      final dynamic decoded = jsonDecode(response.body);
-
-      // Check if this is a CloudStream repository manifest
-      if (decoded is Map<String, dynamic> &&
-          decoded.containsKey('pluginLists')) {
-        final manifest = CloudStreamRepositoryModel.fromJson(decoded);
-
-        if (!manifest.isValid) {
-          return Left(
-            ValidationFailure('Invalid CloudStream repository manifest'),
-          );
-        }
-
-        // Fetch all plugin lists
-        final allExtensions = <ExtensionEntity>[];
-
-        for (final pluginListUrl in manifest.pluginLists) {
-          try {
-            final pluginsResult = await _fetchCloudStreamPluginList(
-              pluginListUrl,
-            );
-            pluginsResult.fold((failure) {
-              Logger.warning(
-                'Failed to fetch plugin list from $pluginListUrl: $failure',
-                tag: 'RepositoryRepository',
-              );
-            }, (extensions) => allExtensions.addAll(extensions));
-          } catch (e) {
-            Logger.warning(
-              'Error fetching plugin list from $pluginListUrl: $e',
-              tag: 'RepositoryRepository',
-            );
-          }
-        }
-
-        Logger.info(
-          'Fetched ${allExtensions.length} CloudStream extensions from $repoUrl',
-          tag: 'RepositoryRepository',
-        );
-
-        return Right(allExtensions);
-      } else if (decoded is List) {
-        // Direct plugin list format
-        final extensions = _parseExtensionsJson(
-          response.body,
-          ItemType.anime, // Default, will be determined by tvTypes
-          ExtensionType.cloudstream,
-        );
-        return Right(extensions);
-      }
-
-      return Left(
-        ValidationFailure('Unrecognized CloudStream repository format'),
-      );
-    } on FormatException catch (e) {
-      Logger.error(
-        'JSON parsing error for CloudStream repository',
-        tag: 'RepositoryRepository',
-        error: e,
-      );
-      return Left(ValidationFailure('Invalid JSON response: ${e.message}'));
-    } on http.ClientException catch (e) {
-      Logger.error(
-        'HTTP client error for CloudStream repository',
-        tag: 'RepositoryRepository',
-        error: e,
-      );
-      return Left(NetworkFailure('Network error: ${e.message}'));
-    } catch (e) {
-      Logger.error(
-        'Unexpected error fetching CloudStream repository',
-        tag: 'RepositoryRepository',
-        error: e,
-      );
-      return Left(UnknownFailure('Failed to fetch CloudStream repository: $e'));
-    }
-  }
-
-  /// Fetches a CloudStream plugin list from a URL
-  ///
-  /// Plugin lists are JSON arrays of CloudStreamPluginModel objects.
-  Future<Either<Failure, List<ExtensionEntity>>> _fetchCloudStreamPluginList(
-    String pluginListUrl,
-  ) async {
-    try {
-      final uri = Uri.tryParse(pluginListUrl);
-      if (uri == null || !uri.hasScheme) {
-        return Left(
-          ValidationFailure('Invalid plugin list URL: $pluginListUrl'),
-        );
-      }
-
-      final response = await httpClient.get(uri).timeout(_requestTimeout);
-
-      if (response.statusCode != 200) {
-        final errorMessage = _getHttpErrorMessage(response.statusCode);
-        return Left(
-          ServerFailure('$errorMessage (HTTP ${response.statusCode})'),
-        );
-      }
-
-      final dynamic decoded = jsonDecode(response.body);
-
-      if (decoded is! List) {
-        return Left(ValidationFailure('Plugin list must be a JSON array'));
-      }
-
-      final extensions = <ExtensionEntity>[];
-
-      for (final item in decoded) {
-        if (item is Map<String, dynamic>) {
-          try {
-            final plugin = CloudStreamPluginModel.fromJson(item);
-            if (plugin.isActive && plugin.url.isNotEmpty) {
-              extensions.add(plugin.toExtensionEntity());
-            }
-          } catch (e) {
-            Logger.warning(
-              'Failed to parse CloudStream plugin: $e',
-              tag: 'RepositoryRepository',
-            );
-          }
-        }
-      }
-
-      return Right(extensions);
-    } catch (e) {
-      Logger.error(
-        'Error fetching CloudStream plugin list',
-        tag: 'RepositoryRepository',
-        error: e,
-      );
-      return Left(UnknownFailure('Failed to fetch plugin list: $e'));
-    }
+    return Left(
+      ValidationFailure(
+        'CloudStream repositories must be fetched via CloudStreamExtensions. '
+        'Use ExtensionsController.fetchRepos() which routes CloudStream types '
+        'through the proper bridge handler.',
+      ),
+    );
   }
 
   /// Parse a single extension item from JSON

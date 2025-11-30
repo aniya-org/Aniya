@@ -174,6 +174,97 @@ class EpisodeSourceSelectionViewModel extends ChangeNotifier {
     }
   }
 
+  List<ExtensionEntity> _dedupeExtensions(
+    List<ExtensionEntity> extensions,
+    MediaType mediaType,
+  ) {
+    final seen = <String>{};
+    final preferred = <String, ExtensionEntity>{};
+    final priorities = _itemTypePriorities(mediaType);
+    for (final extension in extensions) {
+      final identifier = _extensionIdentifier(extension);
+      if (!seen.add(identifier)) {
+        final existing = preferred[identifier]!;
+        final existingPriority = priorities[existing.itemType] ?? 999;
+        final candidatePriority = priorities[extension.itemType] ?? 999;
+        if (candidatePriority < existingPriority) {
+          preferred[identifier] = extension;
+        }
+        continue;
+      }
+      preferred[identifier] = extension;
+    }
+    return preferred.values.toList();
+  }
+
+  String _extensionIdentifier(ExtensionEntity extension) {
+    final apk = extension.apkUrl;
+    if (apk != null && apk.isNotEmpty) {
+      return '${extension.type.name}:$apk';
+    }
+    if (extension.id.isNotEmpty) {
+      return '${extension.type.name}:${extension.id}';
+    }
+    return '${extension.type.name}:${extension.name}-${extension.version}';
+  }
+
+  Map<ItemType, int> _itemTypePriorities(MediaType mediaType) {
+    List<ItemType> ordered;
+    switch (mediaType) {
+      case MediaType.tvShow:
+        ordered = const [
+          ItemType.tvShow,
+          ItemType.anime,
+          ItemType.movie,
+          ItemType.cartoon,
+          ItemType.documentary,
+          ItemType.livestream,
+          ItemType.manga,
+          ItemType.novel,
+        ];
+        break;
+      case MediaType.movie:
+        ordered = const [
+          ItemType.movie,
+          ItemType.tvShow,
+          ItemType.anime,
+          ItemType.cartoon,
+          ItemType.documentary,
+          ItemType.livestream,
+          ItemType.manga,
+          ItemType.novel,
+        ];
+        break;
+      case MediaType.anime:
+        ordered = const [
+          ItemType.anime,
+          ItemType.tvShow,
+          ItemType.cartoon,
+          ItemType.movie,
+          ItemType.documentary,
+          ItemType.livestream,
+          ItemType.manga,
+          ItemType.novel,
+        ];
+        break;
+      case MediaType.manga:
+      case MediaType.novel:
+        ordered = const [
+          ItemType.manga,
+          ItemType.novel,
+          ItemType.anime,
+          ItemType.tvShow,
+          ItemType.movie,
+          ItemType.cartoon,
+          ItemType.documentary,
+          ItemType.livestream,
+        ];
+        break;
+    }
+
+    return {for (var i = 0; i < ordered.length; i++) ordered[i]: i};
+  }
+
   /// Select an extension and trigger automatic search
   /// Requirements: 2.1, 8.1
   Future<void> selectExtension(ExtensionEntity extension) async {
@@ -295,11 +386,33 @@ class EpisodeSourceSelectionViewModel extends ChangeNotifier {
   }
 
   Set<ItemType> _resolveDesiredItemTypes(MediaType mediaType) {
-    if (mediaType == MediaType.anime && !_isChapter) {
-      return {ItemType.anime};
+    const videoTypes = {
+      ItemType.anime,
+      ItemType.tvShow,
+      ItemType.movie,
+      ItemType.cartoon,
+      ItemType.documentary,
+      ItemType.livestream,
+    };
+
+    const readingTypes = {ItemType.manga, ItemType.novel};
+
+    // Chapters or explicitly text-based media should only show reader extensions.
+    if (_isChapter ||
+        mediaType == MediaType.manga ||
+        mediaType == MediaType.novel) {
+      return readingTypes;
     }
-    // For manga/chapters prefer manga + novel sources (AnymeX parity)
-    return {ItemType.manga, ItemType.novel};
+
+    // All video media (anime, TV, movies, etc.) can use any CloudStream video type.
+    if (mediaType == MediaType.anime ||
+        mediaType == MediaType.tvShow ||
+        mediaType == MediaType.movie) {
+      return videoTypes;
+    }
+
+    // Fallback to both sets so niche categories (e.g., unknown) still show something.
+    return {...videoTypes, ...readingTypes};
   }
 
   /// Select a media item and trigger source scraping
@@ -380,9 +493,10 @@ class EpisodeSourceSelectionViewModel extends ChangeNotifier {
     try {
       final installed = extensionsController.installedEntities;
       final desiredItemTypes = _resolveDesiredItemTypes(mediaType);
-      _compatibleExtensions = installed
+      final filtered = installed
           .where((extension) => desiredItemTypes.contains(extension.itemType))
           .toList();
+      _compatibleExtensions = _dedupeExtensions(filtered, mediaType);
 
       Logger.info(
         'Loaded ${_compatibleExtensions.length} compatible extensions',

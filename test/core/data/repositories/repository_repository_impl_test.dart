@@ -304,4 +304,141 @@ void main() {
       expect(result[0].version, '1.0.0');
     });
   });
+
+  group('CloudStream validation - Regression tests', () {
+    /// **Regression test: CloudStream extensions should not be fetched via RepositoryRepositoryImpl**
+    ///
+    /// CloudStream extensions must be handled via CloudStreamExtensions bridge,
+    /// not the generic repository layer. This prevents duplicate manifest parsing
+    /// and ensures proper plugin registration with the native plugin store.
+    test(
+      'fetchExtensionsFromRepo returns ValidationFailure for CloudStream type',
+      () async {
+        mockHttpClient = MockClient((request) async {
+          // This should never be called for CloudStream
+          fail('HTTP client should not be called for CloudStream extensions');
+          return http.Response('', 200);
+        });
+        repository = RepositoryRepositoryImpl(
+          localDataSource: mockLocalDataSource,
+          httpClient: mockHttpClient,
+        );
+
+        final result = await repository.fetchExtensionsFromRepo(
+          'https://example.com/cloudstream-repo.json',
+          ItemType.anime,
+          ExtensionType.cloudstream,
+        );
+
+        expect(result.isLeft(), true);
+        result.fold(
+          (failure) {
+            expect(failure.message, contains('CloudStreamExtensions'));
+            expect(failure.message, contains('ExtensionsController'));
+          },
+          (extensions) =>
+              fail('Should return ValidationFailure for CloudStream'),
+        );
+      },
+    );
+
+    /// **Regression test: fetchCloudStreamRepository returns ValidationFailure**
+    ///
+    /// The deprecated fetchCloudStreamRepository method should return a clear
+    /// validation failure directing callers to use CloudStreamExtensions.
+    test('fetchCloudStreamRepository returns ValidationFailure', () async {
+      mockHttpClient = MockClient((request) async {
+        // This should never be called
+        fail(
+          'HTTP client should not be called for deprecated CloudStream method',
+        );
+        return http.Response('', 200);
+      });
+      repository = RepositoryRepositoryImpl(
+        localDataSource: mockLocalDataSource,
+        httpClient: mockHttpClient,
+      );
+
+      final result = await repository.fetchCloudStreamRepository(
+        'https://example.com/cloudstream-manifest.json',
+      );
+
+      expect(result.isLeft(), true);
+      result.fold((failure) {
+        expect(failure.message, contains('CloudStreamExtensions'));
+        expect(failure.message, contains('fetchRepos'));
+      }, (extensions) => fail('Should return ValidationFailure'));
+    });
+
+    /// **Regression test: Non-CloudStream types still work normally**
+    ///
+    /// Mangayomi and Aniyomi extension types should continue to work
+    /// through the repository layer.
+    test('fetchExtensionsFromRepo works for Mangayomi type', () async {
+      final testExtensions = [
+        {
+          'id': 'mangayomi-ext',
+          'name': 'Mangayomi Extension',
+          'version': '1.0.0',
+          'language': 'en',
+        },
+      ];
+
+      mockHttpClient = MockClient((request) async {
+        return http.Response(jsonEncode(testExtensions), 200);
+      });
+      repository = RepositoryRepositoryImpl(
+        localDataSource: mockLocalDataSource,
+        httpClient: mockHttpClient,
+      );
+
+      final result = await repository.fetchExtensionsFromRepo(
+        'https://example.com/mangayomi-repo.json',
+        ItemType.manga,
+        ExtensionType.mangayomi,
+      );
+
+      expect(result.isRight(), true);
+      result.fold(
+        (failure) => fail('Should not return failure for Mangayomi'),
+        (extensions) {
+          expect(extensions.length, 1);
+          expect(extensions[0].id, 'mangayomi-ext');
+        },
+      );
+    });
+
+    test('fetchExtensionsFromRepo works for Aniyomi type', () async {
+      final testExtensions = [
+        {
+          'id': 'aniyomi-ext',
+          'name': 'Aniyomi Extension',
+          'version': '1.0.0',
+          'language': 'en',
+        },
+      ];
+
+      mockHttpClient = MockClient((request) async {
+        return http.Response(jsonEncode(testExtensions), 200);
+      });
+      repository = RepositoryRepositoryImpl(
+        localDataSource: mockLocalDataSource,
+        httpClient: mockHttpClient,
+      );
+
+      final result = await repository.fetchExtensionsFromRepo(
+        'https://example.com/aniyomi-repo.json',
+        ItemType.anime,
+        ExtensionType.aniyomi,
+      );
+
+      expect(result.isRight(), true);
+      result.fold((failure) => fail('Should not return failure for Aniyomi'), (
+        extensions,
+      ) {
+        expect(extensions.length, 1);
+        expect(extensions[0].id, 'aniyomi-ext');
+      });
+    });
+  });
 }
