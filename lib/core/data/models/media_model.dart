@@ -14,6 +14,7 @@ class MediaModel extends MediaEntity {
     required super.status,
     super.totalEpisodes,
     super.totalChapters,
+    super.startDate,
     required super.sourceId,
     required super.sourceName,
   });
@@ -43,6 +44,9 @@ class MediaModel extends MediaEntity {
       ),
       totalEpisodes: json['totalEpisodes'] as int?,
       totalChapters: json['totalChapters'] as int?,
+      startDate: json['startDate'] != null
+          ? DateTime.tryParse(json['startDate'] as String)
+          : null,
       sourceId: json['sourceId'] as String,
       sourceName: json['sourceName'] as String,
     );
@@ -61,6 +65,7 @@ class MediaModel extends MediaEntity {
       'status': status.name,
       'totalEpisodes': totalEpisodes,
       'totalChapters': totalChapters,
+      'startDate': startDate?.toIso8601String(),
       'sourceId': sourceId,
       'sourceName': sourceName,
     };
@@ -108,6 +113,7 @@ class MediaModel extends MediaEntity {
       status: status,
       totalEpisodes: totalEpisodes,
       totalChapters: totalChapters,
+      startDate: startDate,
       sourceId: sourceId,
       sourceName: sourceName,
     );

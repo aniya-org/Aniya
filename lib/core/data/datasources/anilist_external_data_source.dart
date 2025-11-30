@@ -12,10 +12,32 @@ import '../../utils/logger.dart';
 class AnilistExternalDataSourceImpl {
   late final Dio _dio;
 
+  // Rate limiting: ~1.5 requests per second (90 requests per minute)
+  DateTime? _lastRequestTime;
+  static const Duration _minRequestInterval = Duration(
+    milliseconds: 667,
+  ); // ~1.5 req/sec
+
   AnilistExternalDataSourceImpl() {
     _dio = Dio();
     _dio.options.baseUrl = 'https://graphql.anilist.co';
     // No auth needed for basic search
+  }
+
+  /// Ensure rate limit of ~1.5 requests per second
+  Future<void> _enforceRateLimit() async {
+    final now = DateTime.now();
+    if (_lastRequestTime != null) {
+      final timeSinceLastRequest = now.difference(_lastRequestTime!);
+      if (timeSinceLastRequest < _minRequestInterval) {
+        final waitTime = _minRequestInterval - timeSinceLastRequest;
+        Logger.debug(
+          'AniList rate limiting: waiting ${waitTime.inMilliseconds}ms',
+        );
+        await Future.delayed(waitTime);
+      }
+    }
+    _lastRequestTime = DateTime.now();
   }
 
   Future<EpisodePageResult> getEpisodePage({
@@ -244,6 +266,7 @@ class AnilistExternalDataSourceImpl {
         variables['format'] = 'NOVEL';
       }
 
+      await _enforceRateLimit();
       final response = await _dio.post(
         '',
         data: {'query': queryBody, 'variables': variables},
@@ -581,6 +604,7 @@ class AnilistExternalDataSourceImpl {
         variables['format'] = 'NOVEL';
       }
 
+      await _enforceRateLimit();
       final response = await _dio.post(
         '',
         data: {'query': queryBody, 'variables': variables},
@@ -693,6 +717,7 @@ class AnilistExternalDataSourceImpl {
         variables['format'] = 'NOVEL';
       }
 
+      await _enforceRateLimit();
       final response = await _dio.post(
         '',
         data: {'query': queryBody, 'variables': variables},
@@ -744,6 +769,14 @@ class AnilistExternalDataSourceImpl {
         coverImageObj?['large'] ??
         coverImageObj?['medium'];
 
+    int? safeToInt(dynamic value) {
+      if (value == null) return null;
+      if (value is int) return value;
+      if (value is double) return value.toInt();
+      if (value is String) return int.tryParse(value);
+      return null;
+    }
+
     // Safe rating conversion
     double safeRating(dynamic score) {
       if (score == null) return 0.0;
@@ -751,6 +784,21 @@ class AnilistExternalDataSourceImpl {
       if (score is double) return score / 10.0;
       return 0.0;
     }
+
+    DateTime? parseDate(Map<String, dynamic>? dateObj) {
+      if (dateObj == null) return null;
+      final year = safeToInt(dateObj['year']);
+      if (year == null || year <= 0) return null;
+      final month = safeToInt(dateObj['month']) ?? 1;
+      final day = safeToInt(dateObj['day']) ?? 1;
+      try {
+        return DateTime(year, month, day);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    final startDate = parseDate(json['startDate'] as Map<String, dynamic>?);
 
     return MediaEntity(
       id: json['id'].toString(),
@@ -764,6 +812,7 @@ class AnilistExternalDataSourceImpl {
       status: _mapAnilistStatus(json['status']),
       totalEpisodes: json['episodes'],
       totalChapters: json['chapters'],
+      startDate: startDate,
       sourceId: sourceId,
       sourceName: sourceName,
     );

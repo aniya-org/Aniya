@@ -6,6 +6,7 @@ import '../../../../core/utils/data_aggregator.dart';
 import '../../../../core/utils/provider_cache.dart';
 import '../../../../core/utils/logger.dart';
 import '../../../../core/domain/entities/media_entity.dart';
+import '../../../../core/domain/entities/media_details_entity.dart';
 import '../../../../core/domain/entities/episode_entity.dart';
 import '../../../../core/domain/entities/source_entity.dart';
 import '../../../../core/data/datasources/external_remote_data_source.dart';
@@ -94,9 +95,9 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
         });
       }
 
-      // Start cross-provider matching for additional metadata
+      // Start cross-provider matching and aggregation for all metadata
       if (mounted) {
-        _performCrossProviderMatching();
+        await _performCrossProviderMatching();
       }
 
       // If TV show, fetch season 1 details by default
@@ -122,6 +123,7 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
   }
 
   /// Perform cross-provider matching to find this media in anime/manga databases
+  /// and aggregate all metadata from all providers
   Future<void> _performCrossProviderMatching() async {
     if (_fullDetails == null) return;
 
@@ -139,10 +141,10 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
           : _extractYear(_fullDetails!['first_air_date'] as String?);
 
       Logger.info(
-        'Searching for TMDB media "$title" across anime/manga providers',
+        'Searching for TMDB media "$title" across all providers for full aggregation',
       );
 
-      // Search anime/manga providers for matching content
+      // Search all providers (anime/manga and other sources) for matching content
       final matches = await _matcher.findMatches(
         title: title,
         type: widget.isMovie ? MediaType.movie : MediaType.tvShow,
@@ -157,17 +159,32 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
           'Found ${matches.length} matches for TMDB media: ${matches.keys.join(", ")}',
         );
 
+        // Convert TMDB data to MediaDetailsEntity for aggregation
+        final tmdbDetails = _convertTmdbToMediaDetails(_fullDetails!);
+
+        // Aggregate full media details from all matched providers
+        final aggregatedDetails = await _aggregator.aggregateMediaDetails(
+          primaryDetails: tmdbDetails,
+          matches: matches,
+          detailsFetcher: _fetchDetailsFromProvider,
+        );
+
+        // Update full details with aggregated data
+        if (mounted) {
+          setState(() {
+            // Merge aggregated data back into _fullDetails map for display
+            _mergeAggregatedDetailsIntoMap(aggregatedDetails);
+            _providerMatches = matches;
+            _contributingProviders =
+                aggregatedDetails.contributingProviders ??
+                ['tmdb', ...matches.keys];
+            _isAggregating = false;
+          });
+        }
+
         // If TV show, try to aggregate episode data
         if (!widget.isMovie) {
           await _aggregateEpisodeData(matches);
-        }
-
-        if (mounted) {
-          setState(() {
-            _providerMatches = matches;
-            _contributingProviders = ['tmdb', ...matches.keys];
-            _isAggregating = false;
-          });
         }
       } else {
         Logger.info('No high-confidence matches found for TMDB media');
@@ -189,6 +206,326 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
     }
   }
 
+  /// Convert TMDB data map to MediaDetailsEntity
+  MediaDetailsEntity _convertTmdbToMediaDetails(Map tmdbData) {
+    final title = widget.isMovie
+        ? (tmdbData['title'] as String? ?? '')
+        : (tmdbData['name'] as String? ?? '');
+    final overview = tmdbData['overview'] as String?;
+    final posterPath = tmdbData['poster_path'] as String?;
+    final backdropPath = tmdbData['backdrop_path'] as String?;
+    final voteAverage = (tmdbData['vote_average'] as num?)?.toDouble();
+    final popularity = (tmdbData['popularity'] as num?)?.toInt();
+    final releaseDate = widget.isMovie
+        ? (tmdbData['release_date'] as String?)
+        : (tmdbData['first_air_date'] as String?);
+    final genres =
+        (tmdbData['genres'] as List?)
+            ?.map((g) => g['name'] as String)
+            .toList() ??
+        [];
+    final runtime = widget.isMovie
+        ? (tmdbData['runtime'] as int?)
+        : (tmdbData['episode_run_time'] as List?)?.firstOrNull as int?;
+    final status = tmdbData['status'] as String?;
+    final numberOfEpisodes = tmdbData['number_of_episodes'] as int?;
+
+    // Parse dates
+    DateTime? startDate;
+    DateTime? endDate;
+    if (releaseDate != null && releaseDate.isNotEmpty) {
+      startDate = DateTime.tryParse(releaseDate);
+    }
+    final endDateStr = widget.isMovie
+        ? (tmdbData['release_date'] as String?)
+        : (tmdbData['last_air_date'] as String?);
+    if (endDateStr != null && endDateStr.isNotEmpty) {
+      endDate = DateTime.tryParse(endDateStr);
+    }
+
+    // Convert cast to characters
+    final cast = (tmdbData['credits']?['cast'] as List?)?.take(20).map((c) {
+      return CharacterEntity(
+        id: c['id'].toString(),
+        name: c['name'] ?? 'Unknown',
+        nativeName: null,
+        image: c['profile_path'] != null
+            ? TmdbService.getProfileUrl(c['profile_path'])
+            : null,
+        role: c['character'] ?? 'Actor',
+      );
+    }).toList();
+
+    // Convert crew to staff
+    final crew = (tmdbData['credits']?['crew'] as List?)?.take(20).map((c) {
+      return StaffEntity(
+        id: c['id'].toString(),
+        name: c['name'] ?? 'Unknown',
+        nativeName: null,
+        image: c['profile_path'] != null
+            ? TmdbService.getProfileUrl(c['profile_path'])
+            : null,
+        role: c['job'] ?? 'Crew',
+      );
+    }).toList();
+
+    // Convert recommendations
+    final recommendations = (tmdbData['recommendations']?['results'] as List?)
+        ?.take(10)
+        .map((r) {
+          return RecommendationEntity(
+            id: r['id'].toString(),
+            title: r['title'] ?? r['name'] ?? 'Unknown',
+            englishTitle: null,
+            romajiTitle: null,
+            coverImage: r['poster_path'] != null
+                ? TmdbService.getPosterUrl(r['poster_path'])
+                : '',
+            rating: 0,
+          );
+        })
+        .toList();
+
+    // Convert trailer
+    TrailerEntity? trailer;
+    final videos = (tmdbData['videos']?['results'] as List?);
+    if (videos != null) {
+      final trailerVideo = videos.firstWhere(
+        (v) => v['type'] == 'Trailer' && v['site'] == 'YouTube',
+        orElse: () => null,
+      );
+      if (trailerVideo != null) {
+        trailer = TrailerEntity(id: trailerVideo['key'] ?? '', site: 'youtube');
+      }
+    }
+
+    return MediaDetailsEntity(
+      id: tmdbData['id'].toString(),
+      title: title,
+      englishTitle: null,
+      romajiTitle: null,
+      nativeTitle: null,
+      coverImage: posterPath != null
+          ? TmdbService.getPosterUrl(posterPath)
+          : '',
+      bannerImage: backdropPath != null
+          ? TmdbService.getBackdropUrl(backdropPath)
+          : null,
+      description: overview,
+      type: widget.isMovie ? MediaType.movie : MediaType.tvShow,
+      status: _mapTmdbStatus(status),
+      rating: voteAverage != null
+          ? voteAverage * 10
+          : null, // Convert 0-10 to 0-100
+      averageScore: voteAverage != null ? (voteAverage * 10).toInt() : null,
+      meanScore: null,
+      popularity: popularity,
+      favorites: null,
+      genres: genres,
+      tags: [],
+      startDate: startDate,
+      endDate: endDate,
+      episodes: numberOfEpisodes,
+      chapters: null,
+      volumes: null,
+      duration: runtime,
+      season: null,
+      seasonYear: startDate?.year,
+      isAdult: false,
+      siteUrl: null,
+      sourceId: 'tmdb',
+      sourceName: 'TMDB',
+      characters: cast,
+      staff: crew,
+      reviews: null,
+      recommendations: recommendations,
+      relations: null,
+      studios: null,
+      rankings: null,
+      trailer: trailer,
+    );
+  }
+
+  /// Map TMDB status to MediaStatus
+  MediaStatus _mapTmdbStatus(String? status) {
+    if (status == null) return MediaStatus.upcoming;
+    switch (status.toLowerCase()) {
+      case 'released':
+      case 'ended':
+        return MediaStatus.completed;
+      case 'returning series':
+        return MediaStatus.ongoing;
+      default:
+        return MediaStatus.upcoming;
+    }
+  }
+
+  /// Merge aggregated MediaDetailsEntity back into TMDB map for display
+  void _mergeAggregatedDetailsIntoMap(MediaDetailsEntity aggregated) {
+    if (_fullDetails == null) return;
+
+    // Update fields with aggregated data (highest quality, highest values)
+    _fullDetails = Map.from(_fullDetails!);
+
+    // Update description if aggregated one is longer/more complete
+    if (aggregated.description != null &&
+        aggregated.description!.isNotEmpty &&
+        (_fullDetails!['overview'] == null ||
+            aggregated.description!.length >
+                (_fullDetails!['overview'] as String).length)) {
+      _fullDetails!['overview'] = aggregated.description;
+    }
+
+    // Update rating if aggregated is higher
+    final currentRating = (_fullDetails!['vote_average'] as num?)?.toDouble();
+    if (aggregated.rating != null &&
+        (currentRating == null || (aggregated.rating! / 10) > currentRating)) {
+      _fullDetails!['vote_average'] = aggregated.rating! / 10;
+    }
+
+    // Update popularity if aggregated is higher
+    if (aggregated.popularity != null &&
+        (_fullDetails!['popularity'] == null ||
+            aggregated.popularity! >
+                (_fullDetails!['popularity'] as num).toInt())) {
+      _fullDetails!['popularity'] = aggregated.popularity;
+    }
+
+    // Merge genres (deduplicate)
+    final existingGenres = ((_fullDetails!['genres'] as List?) ?? [])
+        .map((g) => g['name'] as String)
+        .toSet();
+    existingGenres.addAll(aggregated.genres);
+    _fullDetails!['genres'] = existingGenres
+        .map((g) => {'name': g, 'id': 0})
+        .toList();
+
+    // Update episode count if aggregated is higher (for TV shows)
+    if (!widget.isMovie && aggregated.episodes != null) {
+      final currentEpisodes = _fullDetails!['number_of_episodes'] as int?;
+      if (currentEpisodes == null || aggregated.episodes! > currentEpisodes) {
+        _fullDetails!['number_of_episodes'] = aggregated.episodes;
+      }
+    }
+
+    // Merge characters (cast)
+    if (aggregated.characters != null && aggregated.characters!.isNotEmpty) {
+      final existingCast = (_fullDetails!['credits']?['cast'] as List?) ?? [];
+      final castMap = <String, dynamic>{};
+      for (final cast in existingCast) {
+        castMap[cast['id'].toString()] = cast;
+      }
+      // Add new characters from aggregated data
+      for (final character in aggregated.characters!) {
+        if (!castMap.containsKey(character.id)) {
+          existingCast.add({
+            'id': int.tryParse(character.id) ?? 0,
+            'name': character.name,
+            'character': character.role,
+            'profile_path': character.image?.replaceFirst(
+              'https://image.tmdb.org/t/p/w500',
+              '',
+            ),
+          });
+        }
+      }
+      if (_fullDetails!['credits'] == null) {
+        _fullDetails!['credits'] = {};
+      }
+      _fullDetails!['credits']['cast'] = existingCast;
+    }
+
+    // Merge staff (crew)
+    if (aggregated.staff != null && aggregated.staff!.isNotEmpty) {
+      final existingCrew = (_fullDetails!['credits']?['crew'] as List?) ?? [];
+      final crewMap = <String, dynamic>{};
+      for (final crew in existingCrew) {
+        crewMap['${crew['id']}_${crew['job']}'] = crew;
+      }
+      // Add new staff from aggregated data
+      for (final staff in aggregated.staff!) {
+        final key = '${staff.id}_${staff.role}';
+        if (!crewMap.containsKey(key)) {
+          existingCrew.add({
+            'id': int.tryParse(staff.id) ?? 0,
+            'name': staff.name,
+            'job': staff.role,
+            'profile_path': staff.image?.replaceFirst(
+              'https://image.tmdb.org/t/p/w500',
+              '',
+            ),
+          });
+        }
+      }
+      if (_fullDetails!['credits'] == null) {
+        _fullDetails!['credits'] = {};
+      }
+      _fullDetails!['credits']['crew'] = existingCrew;
+    }
+
+    // Merge recommendations
+    if (aggregated.recommendations != null &&
+        aggregated.recommendations!.isNotEmpty) {
+      final existingRecs =
+          (_fullDetails!['recommendations']?['results'] as List?) ?? [];
+      final recsMap = <String, dynamic>{};
+      for (final rec in existingRecs) {
+        recsMap[rec['id'].toString()] = rec;
+      }
+      // Add new recommendations from aggregated data
+      for (final rec in aggregated.recommendations!) {
+        if (!recsMap.containsKey(rec.id)) {
+          existingRecs.add({
+            'id': int.tryParse(rec.id) ?? 0,
+            'title': rec.title,
+            'name': rec.title,
+            'poster_path': rec.coverImage.replaceFirst(
+              'https://image.tmdb.org/t/p/w500',
+              '',
+            ),
+          });
+        }
+      }
+      if (_fullDetails!['recommendations'] == null) {
+        _fullDetails!['recommendations'] = {};
+      }
+      _fullDetails!['recommendations']['results'] = existingRecs;
+    }
+  }
+
+  /// Fetch media details from a specific provider
+  Future<MediaDetailsEntity> _fetchDetailsFromProvider(
+    String mediaId,
+    String providerId,
+  ) async {
+    try {
+      return await _externalDataSource.getMediaDetails(
+        mediaId,
+        providerId,
+        widget.isMovie ? MediaType.movie : MediaType.tvShow,
+        includeCharacters: true,
+        includeStaff: true,
+        includeReviews: false,
+      );
+    } catch (e) {
+      Logger.error(
+        'Error fetching details from provider $providerId',
+        error: e,
+      );
+      // Return minimal details entity on error
+      return MediaDetailsEntity(
+        id: mediaId,
+        title: '',
+        coverImage: '',
+        type: widget.isMovie ? MediaType.movie : MediaType.tvShow,
+        genres: [],
+        tags: [],
+        sourceId: providerId,
+        sourceName: providerId,
+      );
+    }
+  }
+
   /// Search a specific provider for matching media
   Future<List<MediaEntity>> _searchProvider(
     String query,
@@ -201,10 +538,23 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
         return [];
       }
 
+      // Map media types for cross-provider searching
+      // TMDB TV shows should search anime providers as anime type
+      // TMDB movies should also search anime providers as anime type (some anime are movies)
+      MediaType searchType = type;
+      if ((type == MediaType.tvShow || type == MediaType.movie) &&
+          (providerId.toLowerCase() == 'anilist' ||
+              providerId.toLowerCase() == 'jikan' ||
+              providerId.toLowerCase() == 'kitsu' ||
+              providerId.toLowerCase() == 'mal' ||
+              providerId.toLowerCase() == 'myanimelist')) {
+        searchType = MediaType.anime;
+      }
+
       final results = await _externalDataSource.searchMedia(
         query,
         providerId,
-        type,
+        searchType,
       );
 
       return results;
@@ -361,6 +711,16 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
               pinned: true,
               stretch: true,
               backgroundColor: Theme.of(context).colorScheme.surface,
+              titleSpacing: 0,
+              title: AnimatedOpacity(
+                duration: const Duration(milliseconds: 200),
+                opacity: innerBoxIsScrolled ? 1 : 0,
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
               flexibleSpace: FlexibleSpaceBar(
                 stretchModes: const [
                   StretchMode.zoomBackground,

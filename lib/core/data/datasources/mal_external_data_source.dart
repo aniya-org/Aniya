@@ -12,11 +12,31 @@ import '../../utils/logger.dart';
 class MalExternalDataSourceImpl {
   late final Dio _dio;
 
+  // Rate limiting: 2 requests per second (conservative limit for official API)
+  DateTime? _lastRequestTime;
+  static const Duration _minRequestInterval = Duration(
+    milliseconds: 500,
+  ); // 2 req/sec
+
   MalExternalDataSourceImpl() {
     _dio = Dio();
     _dio.options.baseUrl = 'https://api.myanimelist.net/v2';
     _dio.options.connectTimeout = const Duration(seconds: 10);
     _dio.options.receiveTimeout = const Duration(seconds: 10);
+  }
+
+  /// Ensure rate limit of 2 requests per second
+  Future<void> _enforceRateLimit() async {
+    final now = DateTime.now();
+    if (_lastRequestTime != null) {
+      final timeSinceLastRequest = now.difference(_lastRequestTime!);
+      if (timeSinceLastRequest < _minRequestInterval) {
+        final waitTime = _minRequestInterval - timeSinceLastRequest;
+        Logger.debug('MAL rate limiting: waiting ${waitTime.inMilliseconds}ms');
+        await Future.delayed(waitTime);
+      }
+    }
+    _lastRequestTime = DateTime.now();
   }
 
   /// Get the chapter count for a manga from MAL's official API.
@@ -37,6 +57,7 @@ class MalExternalDataSourceImpl {
         tag: 'MalExternalDataSource',
       );
 
+      await _enforceRateLimit();
       final response = await _dio.get(
         '/manga/$malId',
         queryParameters: {'fields': 'num_chapters,num_volumes,status'},

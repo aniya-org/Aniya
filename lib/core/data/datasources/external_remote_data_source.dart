@@ -91,6 +91,111 @@ class ExternalRemoteDataSource {
     }
   }
 
+  MediaEntity? _selectBestProviderMatch({
+    required MediaEntity primary,
+    required List<MediaEntity> candidates,
+    required String providerId,
+  }) {
+    if (candidates.isEmpty) return null;
+
+    MediaEntity? best;
+    double bestScore = -1;
+    final primaryYear = primary.startDate?.year;
+    final primaryEpisodes = primary.totalEpisodes;
+
+    for (final candidate in candidates) {
+      var score = _matcher.calculateMatchConfidence(
+        sourceTitle: primary.title,
+        targetTitle: candidate.title,
+        sourceEnglishTitle: null,
+        targetEnglishTitle: null,
+        sourceRomajiTitle: null,
+        targetRomajiTitle: null,
+        sourceYear: primaryYear,
+        targetYear: candidate.startDate?.year,
+        sourceType: primary.type,
+        targetType: candidate.type,
+      );
+
+      if (primaryYear != null && candidate.startDate?.year != null) {
+        final diff = (primaryYear - candidate.startDate!.year).abs();
+        if (diff >= 15) {
+          // Live-action remakes usually fall here; skip entirely
+          Logger.debug(
+            'Skipping ${candidate.title} due to large year gap ($diff years)',
+          );
+          continue;
+        } else if (diff >= 10) {
+          score -= 0.2;
+        } else if (diff >= 5) {
+          score -= 0.1;
+        } else if (diff >= 3) {
+          score -= 0.05;
+        }
+      }
+
+      if (primaryEpisodes != null && primaryEpisodes > 0) {
+        final candidateEpisodes = candidate.totalEpisodes ?? 0;
+        if (candidateEpisodes == 0) {
+          score -= 0.15;
+        } else {
+          final diff = (primaryEpisodes - candidateEpisodes).abs();
+          final ratio = diff / primaryEpisodes;
+          if (primaryEpisodes >= 100 && ratio >= 0.5) {
+            Logger.debug(
+              'Skipping ${candidate.title} due to large episode mismatch (${candidateEpisodes} vs $primaryEpisodes)',
+            );
+            continue;
+          }
+
+          if (ratio <= 0.05) {
+            score += 0.15;
+          } else if (ratio <= 0.15) {
+            score += 0.08;
+          } else if (ratio <= 0.3) {
+            score += 0.02;
+          } else {
+            score -= 0.08;
+          }
+        }
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        best = candidate;
+      }
+    }
+
+    if (best != null) {
+      final bestTitle = best.title;
+      Logger.info(
+        'Selected $bestTitle (score: ${bestScore.toStringAsFixed(2)}) from $providerId fallback candidates',
+      );
+    }
+
+    return best ?? candidates.first;
+  }
+
+  Future<void> _invalidateEpisodeMatchCache(MediaEntity media) async {
+    for (final year in <int?>{null, media.startDate?.year}) {
+      try {
+        await _matcher.invalidateCachedMatches(
+          title: media.title,
+          englishTitle: null,
+          romajiTitle: null,
+          year: year,
+          type: media.type,
+          primarySourceId: media.sourceId,
+          cache: _cache,
+        );
+      } catch (e) {
+        Logger.warning(
+          'Failed to invalidate cached matches for ${media.title} (year=$year): $e',
+        );
+      }
+    }
+  }
+
   Future<EpisodePageResult> getEpisodePage(EpisodePageRequest request) async {
     final media = request.media;
     var providerId = request.providerId;
@@ -103,9 +208,14 @@ class ExternalRemoteDataSource {
     if (providerId == null || providerMediaId == null) {
       final primarySource = media.sourceId.toLowerCase();
       if (primarySource == 'jikan' ||
+          primarySource == 'mal' ||
+          primarySource == 'myanimelist' ||
           primarySource == 'anilist' ||
           primarySource == 'kitsu') {
-        providerId = primarySource;
+        // Route MAL/MyAnimeList to Jikan (unofficial MAL API)
+        providerId = (primarySource == 'mal' || primarySource == 'myanimelist')
+            ? 'jikan'
+            : primarySource;
         providerMediaId = media.id;
       } else {
         final matches = await _matcher.findMatches(
@@ -272,6 +382,9 @@ class ExternalRemoteDataSource {
       case 'simkl':
         return _simklDataSource;
       case 'jikan':
+      case 'mal':
+      case 'myanimelist':
+        // Jikan is the unofficial MyAnimeList API
         return _jikanDataSource;
       case 'kitsu':
         return _kitsuDataSource;
@@ -285,10 +398,16 @@ class ExternalRemoteDataSource {
     String sourceId,
     MediaType type, {
     int page = 1,
+    int? year,
   }) async {
     try {
       final dataSource = _getDataSource(sourceId);
-      final result = await dataSource.searchMedia(query, type, page: page);
+      final result = await dataSource.searchMedia(
+        query,
+        type,
+        page: page,
+        year: year,
+      );
       // Handle both SearchResult and plain List return types
       if (result is SearchResult<List<MediaEntity>>) {
         return result.items;
@@ -455,7 +574,11 @@ class ExternalRemoteDataSource {
     String targetSourceId,
   ) async {
     try {
-      final results = await searchMedia(title, targetSourceId, type);
+      // Map anime to TV shows for TMDB compatibility
+      final searchType = (targetSourceId == 'tmdb' && type == MediaType.anime)
+          ? MediaType.tvShow
+          : type;
+      final results = await searchMedia(title, targetSourceId, searchType);
       if (results.isNotEmpty) {
         // Simple matching: return first result
         // TODO: Implement better matching (e.g. Levenshtein distance)
@@ -518,6 +641,87 @@ class ExternalRemoteDataSource {
       }
     }
 
+    // Ensure TMDB is included for anime items
+    if (media.type == MediaType.anime && media.sourceId != 'tmdb') {
+      final existingTmdbMatch = matches['tmdb'];
+      if (existingTmdbMatch != null) {
+        final entity = existingTmdbMatch.mediaEntity;
+        final candidateEpisodes = entity?.totalEpisodes ?? 0;
+        final primaryEpisodes = media.totalEpisodes ?? 0;
+        final yearDiff =
+            (media.startDate?.year != null && entity?.startDate?.year != null)
+            ? (media.startDate!.year - entity!.startDate!.year).abs()
+            : null;
+
+        bool forceRefresh = false;
+
+        if (entity == null) {
+          Logger.warning(
+            'Cached TMDB mapping has no metadata (likely stale cache). Dropping and re-searching.',
+          );
+          forceRefresh = true;
+        } else {
+          final episodesMismatch =
+              candidateEpisodes > 0 &&
+              primaryEpisodes > 0 &&
+              primaryEpisodes >= 100 &&
+              (primaryEpisodes - candidateEpisodes).abs() >=
+                  (primaryEpisodes * 0.5);
+          final yearMismatch = yearDiff != null && yearDiff >= 10;
+          if (episodesMismatch || yearMismatch) {
+            Logger.warning(
+              'Cached TMDB mapping looks like a live-action mismatch (episodes: $candidateEpisodes, year diff: ${yearDiff ?? 'unknown'}). Dropping and re-searching.',
+            );
+            forceRefresh = true;
+          }
+        }
+
+        if (forceRefresh) {
+          matches = Map.from(matches)..remove('tmdb');
+          await _invalidateEpisodeMatchCache(media);
+        } else {
+          Logger.info('Reusing cached TMDB mapping for episodes aggregation');
+        }
+      }
+
+      if (!matches.containsKey('tmdb')) {
+        Logger.info(
+          'Attempting to add TMDB as fallback provider for "${media.title}"',
+        );
+        try {
+          final tmdbResults = await searchMedia(
+            media.title,
+            'tmdb',
+            MediaType.tvShow, // Search TMDB as TV shows for anime
+            year: media.startDate?.year,
+          );
+          Logger.info('TMDB search returned ${tmdbResults.length} results');
+          final tmdbMatch = _selectBestProviderMatch(
+            primary: media,
+            candidates: tmdbResults,
+            providerId: 'tmdb',
+          );
+          if (tmdbMatch != null) {
+            matches = Map.from(matches);
+            matches['tmdb'] = ProviderMatch(
+              providerId: 'tmdb',
+              providerMediaId: tmdbMatch.id,
+              confidence: 0.85,
+              matchedTitle: tmdbMatch.title,
+              mediaEntity: tmdbMatch,
+            );
+            Logger.info(
+              'Added TMDB as fallback provider for episodes (ID: ${tmdbMatch.id})',
+            );
+          } else {
+            Logger.warning('No TMDB results found for "${media.title}"');
+          }
+        } catch (e) {
+          Logger.warning('Could not add TMDB as fallback: $e');
+        }
+      }
+    }
+
     Logger.info(
       'Found ${matches.length} high-confidence matches for episode aggregation: ${matches.keys.toList()}',
     );
@@ -575,6 +779,11 @@ class ExternalRemoteDataSource {
         return episodes;
       } else if (dataSource is JikanExternalDataSourceImpl) {
         return await dataSource.getEpisodes(mediaId, coverImage: coverImage);
+      } else if (dataSource is TmdbExternalDataSourceImpl) {
+        Logger.info('Fetching episodes from TMDB for media ID: $mediaId');
+        final episodes = await dataSource.getEpisodes(mediaId);
+        Logger.info('TMDB returned ${episodes.length} episodes');
+        return episodes;
       }
 
       // Provider doesn't support episodes

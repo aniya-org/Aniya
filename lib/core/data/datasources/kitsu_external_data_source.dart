@@ -19,6 +19,10 @@ class _KitsuChapterPage {
 class KitsuExternalDataSourceImpl {
   late final Dio _dio;
 
+  // Rate limiting: 1 request per second (conservative limit)
+  DateTime? _lastRequestTime;
+  static const Duration _minRequestInterval = Duration(seconds: 1);
+
   KitsuExternalDataSourceImpl() {
     _dio = Dio();
     _dio.options.baseUrl = 'https://kitsu.io/api/edge';
@@ -26,6 +30,22 @@ class KitsuExternalDataSourceImpl {
       'Accept': 'application/vnd.api+json',
       'Content-Type': 'application/vnd.api+json',
     };
+  }
+
+  /// Ensure rate limit of 1 request per second
+  Future<void> _enforceRateLimit() async {
+    final now = DateTime.now();
+    if (_lastRequestTime != null) {
+      final timeSinceLastRequest = now.difference(_lastRequestTime!);
+      if (timeSinceLastRequest < _minRequestInterval) {
+        final waitTime = _minRequestInterval - timeSinceLastRequest;
+        Logger.debug(
+          'Kitsu rate limiting: waiting ${waitTime.inMilliseconds}ms',
+        );
+        await Future.delayed(waitTime);
+      }
+    }
+    _lastRequestTime = DateTime.now();
   }
 
   /// Advanced search with filtering and pagination (Kitsu JSON:API)
@@ -81,6 +101,7 @@ class KitsuExternalDataSourceImpl {
         queryParams['sort'] = sort;
       }
 
+      await _enforceRateLimit();
       final response = await _dio.get(
         '/$endpoint',
         queryParameters: queryParams,
@@ -149,6 +170,7 @@ class KitsuExternalDataSourceImpl {
 
       Logger.debug('Kitsu fetching $endpoint/$id with includes: $includeParam');
 
+      await _enforceRateLimit();
       final response = await _dio.get(
         '/$endpoint/$id',
         queryParameters: {'include': includeParam},
@@ -308,6 +330,7 @@ class KitsuExternalDataSourceImpl {
   /// Get trending anime/manga
   Future<List<MediaEntity>> getTrending(MediaType type, {int page = 1}) async {
     try {
+      await _enforceRateLimit();
       final response = await _dio.get(
         '/${type == MediaType.anime ? 'anime' : 'manga'}/trending',
         queryParameters: {'page[limit]': 20, 'page[offset]': (page - 1) * 20},
@@ -328,6 +351,7 @@ class KitsuExternalDataSourceImpl {
     try {
       final endpoint = type == MediaType.anime ? 'anime' : 'manga';
 
+      await _enforceRateLimit();
       final response = await _dio.get(
         '/$endpoint',
         queryParameters: {
@@ -363,16 +387,40 @@ class KitsuExternalDataSourceImpl {
 
       // Kitsu API: Use the episodes endpoint
       // The relationship endpoint /anime/{id}/episodes is the correct approach
+      // Paginate through all episodes
       List episodesList = [];
       try {
         Logger.debug('Kitsu fetching episodes for anime ID: $animeId');
-        final response = await _dio.get(
-          '/anime/$animeId/episodes',
-          queryParameters: {'page[limit]': 100, 'sort': 'number'},
-        );
-        episodesList = response.data['data'] ?? [];
+        int pageOffset = 0;
+        const pageLimit = 100;
+        bool hasMore = true;
+
+        while (hasMore) {
+          await _enforceRateLimit();
+          final response = await _dio.get(
+            '/anime/$animeId/episodes',
+            queryParameters: {
+              'page[limit]': pageLimit,
+              'page[offset]': pageOffset,
+              'sort': 'number',
+            },
+          );
+          final List pageEpisodes = response.data['data'] ?? [];
+          final links = response.data['links'] as Map<String, dynamic>?;
+
+          episodesList.addAll(pageEpisodes);
+
+          // Check if there's a next page
+          hasMore = links?['next'] != null && pageEpisodes.length == pageLimit;
+          if (hasMore) {
+            pageOffset += pageLimit;
+            // Small delay to avoid rate limiting
+            await Future.delayed(const Duration(milliseconds: 200));
+          }
+        }
+
         Logger.info(
-          'Kitsu episodes endpoint returned ${episodesList.length} episodes',
+          'Kitsu episodes endpoint returned ${episodesList.length} total episodes for anime $animeId (paginated)',
         );
       } catch (e) {
         // Log the specific error for debugging
@@ -406,6 +454,7 @@ class KitsuExternalDataSourceImpl {
     try {
       String? animePosterImage =
           coverImage ?? await _fetchAnimePosterImage(animeId);
+      await _enforceRateLimit();
       final response = await _dio.get(
         '/anime/$animeId/episodes',
         queryParameters: {
@@ -443,6 +492,7 @@ class KitsuExternalDataSourceImpl {
 
   Future<String?> _fetchAnimePosterImage(String animeId) async {
     try {
+      await _enforceRateLimit();
       final animeResponse = await _dio.get('/anime/$animeId');
       final animeData = animeResponse.data['data'];
       final posterObj =
@@ -550,6 +600,7 @@ class KitsuExternalDataSourceImpl {
 
   Future<int?> _getChapterCount(String mangaId) async {
     try {
+      await _enforceRateLimit();
       final mangaResponse = await _dio.get('/manga/$mangaId');
       final mangaData = mangaResponse.data['data'];
       final attrs = mangaData?['attributes'] as Map<String, dynamic>? ?? {};
@@ -708,6 +759,7 @@ class KitsuExternalDataSourceImpl {
 
   Future<_KitsuChapterPage> _fetchChapterPage(Uri uri) async {
     Logger.debug('Kitsu chapters request: $uri');
+    await _enforceRateLimit();
     final response = await _dio.getUri(uri);
     return _parseKitsuChapterResponse(response);
   }
@@ -735,6 +787,7 @@ class KitsuExternalDataSourceImpl {
         Logger.debug(
           'Kitsu chapters fallback request ($filterKey): $fallbackUri',
         );
+        await _enforceRateLimit();
         final response = await _dio.getUri(fallbackUri);
         Logger.debug(
           'Kitsu chapters fallback succeeded for $mangaId using $filterKey',
@@ -834,6 +887,13 @@ class KitsuExternalDataSourceImpl {
       return parsed != null ? parsed / 10.0 : 0.0;
     }
 
+    DateTime? parseDate(dynamic value) {
+      if (value == null) return null;
+      final dateString = value.toString();
+      if (dateString.isEmpty) return null;
+      return DateTime.tryParse(dateString);
+    }
+
     return MediaEntity(
       id: json['id']?.toString() ?? '',
       title:
@@ -851,6 +911,7 @@ class KitsuExternalDataSourceImpl {
       status: _mapKitsuStatus(attrs['status']?.toString()),
       totalEpisodes: safeToInt(attrs['episodeCount']),
       totalChapters: safeToInt(attrs['chapterCount']),
+      startDate: parseDate(attrs['startDate'] ?? attrs['startDateMal']),
       sourceId: sourceId,
       sourceName: sourceName,
     );

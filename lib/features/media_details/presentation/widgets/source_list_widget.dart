@@ -39,21 +39,7 @@ class SourceListWidget extends StatelessWidget {
 
     // Show loading state
     if (isLoading) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            CircularProgressIndicator(color: colorScheme.primary),
-            const SizedBox(height: 16),
-            Text(
-              'Loading sources...',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ],
-        ),
-      );
+      return const _SourceListSkeleton();
     }
 
     // Show error state
@@ -250,6 +236,129 @@ class SourceListWidget extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _SourceListSkeleton extends StatelessWidget {
+  const _SourceListSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return SingleChildScrollView(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _SkeletonBar(width: 140, height: 14, colorScheme: colorScheme),
+            const SizedBox(height: 16),
+            ...List.generate(4, (_) => const _SourceCardSkeleton()).expand((
+              widget,
+            ) sync* {
+              yield widget;
+              yield const SizedBox(height: 12);
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SourceCardSkeleton extends StatelessWidget {
+  const _SourceCardSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Container(
+      height: 84,
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: colorScheme.surfaceContainerLow,
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _SkeletonBar(
+                  width: double.infinity,
+                  height: 14,
+                  colorScheme: colorScheme,
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: const [
+                    Expanded(child: _SkeletonPill()),
+                    SizedBox(width: 8),
+                    Expanded(child: _SkeletonPill(width: 70)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SkeletonBar extends StatelessWidget {
+  final double width;
+  final double height;
+  final ColorScheme colorScheme;
+
+  const _SkeletonBar({
+    required this.width,
+    required this.height,
+    required this.colorScheme,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(8),
+      ),
+    );
+  }
+}
+
+class _SkeletonPill extends StatelessWidget {
+  final double? width;
+
+  const _SkeletonPill({this.width});
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      width: width,
+      height: 20,
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(999),
       ),
     );
   }

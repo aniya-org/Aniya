@@ -224,6 +224,32 @@ class ProviderCache {
     }
   }
 
+  /// Remove a specific cached mapping entry
+  Future<void> removeMapping({
+    required String primaryProviderId,
+    required String primaryMediaId,
+  }) async {
+    if (_box == null) {
+      throw CacheException('Cache not initialized. Call init() first.');
+    }
+
+    final key = '${primaryProviderId}_$primaryMediaId';
+    try {
+      final existed = _box!.containsKey(key);
+      await _box!.delete(key);
+      _accessTimes.remove(key);
+      await _saveAccessTimes();
+      if (existed) {
+        Logger.info(
+          'Cache DELETE: Removed mapping for $key',
+          tag: 'ProviderCache',
+        );
+      }
+    } catch (e) {
+      Logger.error('Failed to remove cache mapping for $key', error: e);
+    }
+  }
+
   /// Get cache size in bytes
   Future<int> getCacheSize() async {
     if (_box == null) {

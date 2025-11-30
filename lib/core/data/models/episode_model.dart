@@ -10,6 +10,7 @@ class EpisodeModel extends EpisodeEntity {
     super.thumbnail,
     super.duration,
     super.releaseDate,
+    super.seasonNumber,
     super.sourceProvider,
     super.alternativeData,
   });
@@ -43,6 +44,7 @@ class EpisodeModel extends EpisodeEntity {
       releaseDate: json['releaseDate'] != null
           ? DateTime.parse(json['releaseDate'] as String)
           : null,
+      seasonNumber: json['seasonNumber'] as int?,
       sourceProvider: json['sourceProvider'] as String?,
       alternativeData: alternativeData,
     );
@@ -69,6 +71,7 @@ class EpisodeModel extends EpisodeEntity {
       'thumbnail': thumbnail,
       'duration': duration,
       'releaseDate': releaseDate?.toIso8601String(),
+      'seasonNumber': seasonNumber,
       'sourceProvider': sourceProvider,
       'alternativeData': alternativeDataJson,
     };
@@ -99,6 +102,7 @@ class EpisodeModel extends EpisodeEntity {
       thumbnail: thumbnail,
       duration: duration,
       releaseDate: releaseDate,
+      seasonNumber: seasonNumber,
       sourceProvider: sourceProvider,
       alternativeData: alternativeData,
     );
@@ -112,6 +116,7 @@ class EpisodeModel extends EpisodeEntity {
     String? thumbnail,
     int? duration,
     DateTime? releaseDate,
+    int? seasonNumber,
     String? sourceProvider,
     Map<String, EpisodeData>? alternativeData,
   }) {
@@ -123,6 +128,7 @@ class EpisodeModel extends EpisodeEntity {
       thumbnail: thumbnail ?? this.thumbnail,
       duration: duration ?? this.duration,
       releaseDate: releaseDate ?? this.releaseDate,
+      seasonNumber: seasonNumber ?? this.seasonNumber,
       sourceProvider: sourceProvider ?? this.sourceProvider,
       alternativeData: alternativeData ?? this.alternativeData,
     );

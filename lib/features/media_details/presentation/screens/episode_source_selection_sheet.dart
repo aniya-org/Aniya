@@ -365,13 +365,13 @@ class _EpisodeSourceSelectionSheetState
       tag: 'EpisodeSourceSelectionSheet',
     );
 
-    await _viewModel.selectExtension(extension);
-
     if (mounted) {
       setState(() {
         _currentStep = EpisodeSourceSelectionStep.searchMedia;
       });
     }
+
+    await _viewModel.selectExtension(extension);
   }
 
   /// Handle media search
@@ -398,13 +398,13 @@ class _EpisodeSourceSelectionSheetState
       tag: 'EpisodeSourceSelectionSheet',
     );
 
-    await _viewModel.selectMedia(media);
-
     if (mounted) {
       setState(() {
         _currentStep = EpisodeSourceSelectionStep.selectSource;
       });
     }
+
+    await _viewModel.selectMedia(media);
   }
 
   /// Handle source selection

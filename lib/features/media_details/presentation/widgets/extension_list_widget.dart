@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:aniya/core/domain/entities/extension_entity.dart';
 import 'package:aniya/core/widgets/extension_card.dart';
+import 'package:aniya/core/widgets/pulsing_skeleton.dart';
 
 /// Widget displaying available extensions with recent extensions at top
 ///
@@ -37,21 +38,7 @@ class ExtensionListWidget extends StatelessWidget {
 
     // Show loading state
     if (isLoading) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            CircularProgressIndicator(color: colorScheme.primary),
-            const SizedBox(height: 16),
-            Text(
-              'Loading extensions...',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ],
-        ),
-      );
+      return const _ExtensionListSkeleton();
     }
 
     // Show empty state if no extensions available
@@ -152,6 +139,77 @@ class ExtensionListWidget extends StatelessWidget {
       child: ExtensionCard(
         extension: extension,
         onTap: () => onExtensionSelected(extension),
+      ),
+    );
+  }
+}
+
+class _ExtensionListSkeleton extends StatelessWidget {
+  const _ExtensionListSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const PulsingSkeleton(width: 80, height: 14),
+          const SizedBox(height: 12),
+          ...List.generate(3, (_) => const _ExtensionCardSkeleton()).expand((
+            widget,
+          ) sync* {
+            yield widget;
+            yield const SizedBox(height: 12);
+          }),
+          const SizedBox(height: 8),
+          Divider(
+            height: 1,
+            color: Theme.of(context).colorScheme.outlineVariant,
+          ),
+          const SizedBox(height: 16),
+          const PulsingSkeleton(width: 140, height: 14),
+          const SizedBox(height: 12),
+          ...List.generate(5, (_) => const _ExtensionCardSkeleton()).expand((
+            widget,
+          ) sync* {
+            yield widget;
+            yield const SizedBox(height: 12);
+          }),
+        ],
+      ),
+    );
+  }
+}
+
+class _ExtensionCardSkeleton extends StatelessWidget {
+  const _ExtensionCardSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 72,
+      decoration: BoxDecoration(borderRadius: BorderRadius.circular(16)),
+      child: Row(
+        children: const [
+          PulsingSkeleton(
+            width: 48,
+            height: 48,
+            borderRadius: BorderRadius.all(Radius.circular(16)),
+          ),
+          SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                PulsingSkeleton(height: 14),
+                SizedBox(height: 8),
+                PulsingSkeleton(width: 120, height: 10),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

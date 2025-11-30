@@ -8,6 +8,10 @@ class SimklExternalDataSourceImpl {
   late final Dio _dio;
   late final String? _clientId;
 
+  // Rate limiting: 1 request per second (conservative limit)
+  DateTime? _lastRequestTime;
+  static const Duration _minRequestInterval = Duration(seconds: 1);
+
   SimklExternalDataSourceImpl() {
     _dio = Dio();
     _clientId = dotenv.env['SIMKL_CLIENT_ID'];
@@ -15,6 +19,22 @@ class SimklExternalDataSourceImpl {
     if (_clientId != null) {
       _dio.options.queryParameters = {'client_id': _clientId};
     }
+  }
+
+  /// Ensure rate limit of 1 request per second
+  Future<void> _enforceRateLimit() async {
+    final now = DateTime.now();
+    if (_lastRequestTime != null) {
+      final timeSinceLastRequest = now.difference(_lastRequestTime!);
+      if (timeSinceLastRequest < _minRequestInterval) {
+        final waitTime = _minRequestInterval - timeSinceLastRequest;
+        Logger.debug(
+          'Simkl rate limiting: waiting ${waitTime.inMilliseconds}ms',
+        );
+        await Future.delayed(waitTime);
+      }
+    }
+    _lastRequestTime = DateTime.now();
   }
 
   /// Advanced search with filtering (Simkl has limited filtering options)
@@ -56,6 +76,7 @@ class SimklExternalDataSourceImpl {
         queryParams['sort'] = sort;
       }
 
+      await _enforceRateLimit();
       final response = await _dio.get(
         '/search/$simklType',
         queryParameters: queryParams,

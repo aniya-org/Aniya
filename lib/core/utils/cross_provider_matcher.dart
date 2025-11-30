@@ -103,6 +103,60 @@ class CrossProviderMatcher {
     return normalized;
   }
 
+  String _buildCacheKey({
+    required String title,
+    String? englishTitle,
+    String? romajiTitle,
+    int? year,
+    required MediaType type,
+  }) {
+    final normalizedTitle = normalizeTitle(title);
+    final normalizedEnglish = englishTitle != null
+        ? normalizeTitle(englishTitle)
+        : '';
+    final normalizedRomaji = romajiTitle != null
+        ? normalizeTitle(romajiTitle)
+        : '';
+    final yearPart = year?.toString() ?? 'unknown';
+    return '$normalizedTitle|$normalizedEnglish|$normalizedRomaji|$yearPart|${type.name}';
+  }
+
+  /// Remove cached mappings for a given media descriptor if present
+  Future<void> invalidateCachedMatches({
+    required String title,
+    String? englishTitle,
+    String? romajiTitle,
+    int? year,
+    required MediaType type,
+    required String primarySourceId,
+    required ProviderCache cache,
+  }) async {
+    final cacheKey = _buildCacheKey(
+      title: title,
+      englishTitle: englishTitle,
+      romajiTitle: romajiTitle,
+      year: year,
+      type: type,
+    );
+
+    try {
+      await cache.removeMapping(
+        primaryProviderId: primarySourceId,
+        primaryMediaId: cacheKey,
+      );
+      Logger.info(
+        'Invalidated cached provider mappings for "$title" ($cacheKey)',
+        tag: 'CrossProviderMatcher',
+      );
+    } catch (e) {
+      Logger.error(
+        'Failed to invalidate cached mappings for "$title"',
+        tag: 'CrossProviderMatcher',
+        error: e,
+      );
+    }
+  }
+
   /// Calculate confidence score for a potential match
   /// Returns a value between 0.0 and 1.0
   ///
@@ -244,12 +298,20 @@ class CrossProviderMatcher {
       tag: 'CrossProviderMatcher',
     );
 
+    final cacheKey = _buildCacheKey(
+      title: title,
+      englishTitle: englishTitle,
+      romajiTitle: romajiTitle,
+      year: year,
+      type: type,
+    );
+
     // Check cache first
     if (cache != null) {
       try {
         final cachedMappings = await cache.getMappings(
           primaryProviderId: primarySourceId,
-          primaryMediaId: title, // Using title as ID for now
+          primaryMediaId: cacheKey,
         );
 
         if (cachedMappings != null && cachedMappings.isNotEmpty) {
@@ -338,7 +400,7 @@ class CrossProviderMatcher {
             sourceRomajiTitle: romajiTitle,
             targetRomajiTitle: null, // MediaEntity doesn't have romajiTitle
             sourceYear: year,
-            targetYear: null, // MediaEntity doesn't have year
+            targetYear: result.startDate?.year,
             sourceType: type,
             targetType: result.type,
           );
@@ -416,7 +478,7 @@ class CrossProviderMatcher {
 
         await cache.storeMapping(
           primaryProviderId: primarySourceId,
-          primaryMediaId: title, // Using title as ID for now
+          primaryMediaId: cacheKey,
           providerMappings: mappings,
         );
 

@@ -2,6 +2,7 @@ import '../domain/entities/chapter_entity.dart';
 import '../domain/entities/episode_entity.dart';
 import '../domain/entities/media_entity.dart';
 import '../domain/entities/media_details_entity.dart';
+import '../data/datasources/tmdb_external_data_source.dart';
 import 'cross_provider_matcher.dart';
 import 'provider_priority_config.dart';
 import 'logger.dart';
@@ -83,6 +84,13 @@ class DataAggregator {
       tag: 'DataAggregator',
     );
 
+    // Collect cover images from all providers for fallback detection
+    final providerCoverImages = <String, String?>{};
+    providerCoverImages[primaryMedia.sourceId] = primaryMedia.coverImage;
+    for (final entry in matches.entries) {
+      providerCoverImages[entry.key] = entry.value.mediaEntity?.coverImage;
+    }
+
     // Fetch episodes from all providers in parallel
     final episodeFutures = <String, Future<List<EpisodeEntity>>>{};
 
@@ -101,10 +109,13 @@ class DataAggregator {
           .execute<List<EpisodeEntity>>(
             operation: () =>
                 episodeFetcher(match.providerMediaId, providerId).timeout(
-                  const Duration(seconds: 10),
+                  const Duration(
+                    seconds: 60,
+                  ), // Increased timeout for large series
                   onTimeout: () {
                     Logger.warning(
-                      'Episode fetch timeout for provider $providerId',
+                      'Episode fetch timeout for provider $providerId (60s limit)',
+                      tag: 'DataAggregator',
                     );
                     return <EpisodeEntity>[];
                   },
@@ -117,6 +128,7 @@ class DataAggregator {
             Logger.error(
               'Episode fetch failed for provider $providerId after retries',
               error: error,
+              tag: 'DataAggregator',
             );
             return <EpisodeEntity>[];
           });
@@ -149,37 +161,197 @@ class DataAggregator {
       return [];
     }
 
-    // Get primary provider episodes as base
-    final primaryEpisodes = episodesByProvider[primaryMedia.sourceId] ?? [];
+    // Check if TMDB has season information
+    // If TMDB has season info, we'll use it for season-based grouping and matching
+    final tmdbEpisodes = episodesByProvider['tmdb'] ?? [];
+    final tmdbHasSeasonInfo =
+        tmdbEpisodes.isNotEmpty &&
+        tmdbEpisodes.any((e) => e.seasonNumber != null);
 
-    // If primary has episodes, use it as base and enhance with other providers
-    if (primaryEpisodes.isNotEmpty) {
-      final result = _mergeEpisodesWithPrimary(
-        primaryEpisodes,
-        primaryMedia.sourceId,
-        episodesByProvider,
-        primaryCoverImage: primaryMedia.coverImage,
-      );
-      final duration = DateTime.now().difference(startTime).inMilliseconds;
-      Logger.info(
-        'Episode aggregation completed: ${result.length} episodes in ${duration}ms',
-        tag: 'DataAggregator',
-      );
-      return result;
+    // Find the provider with the most episodes (preferring those with thumbnails)
+    // This will be our base episode list
+    String? bestBaseProviderId;
+    List<EpisodeEntity>? bestBaseEpisodes;
+    double bestScore = 0.0;
+    bool useSeasonBasedMatching = false;
+
+    // Always find the provider with the most episodes for the base
+    for (final entry in episodesByProvider.entries) {
+      final providerId = entry.key;
+      final episodes = entry.value;
+
+      if (episodes.isEmpty) continue;
+
+      // Calculate score: episode count + bonus for thumbnails
+      double score = episodes.length.toDouble();
+      final episodesWithThumbnails = episodes
+          .where((e) => e.thumbnail != null && e.thumbnail!.isNotEmpty)
+          .length;
+      score +=
+          episodesWithThumbnails * 2.0; // Prefer providers with episode images
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestBaseProviderId = providerId;
+        bestBaseEpisodes = episodes;
+      }
     }
 
-    // If primary has no episodes, select best provider based on priority
-    Logger.info(
-      'Primary provider has no episodes, using fallback selection',
+    // If TMDB has season info, we'll use season-based matching
+    // This allows us to match episodes by season+episode when TMDB provides that structure
+    if (tmdbHasSeasonInfo) {
+      Logger.info(
+        'TMDB has season information (${tmdbEpisodes.where((e) => e.seasonNumber != null).length} episodes with seasons). Will use season-based matching and grouping.',
+        tag: 'DataAggregator',
+      );
+      useSeasonBasedMatching = true;
+
+      // If the base provider doesn't have season info, try to infer it from TMDB
+      // by matching episodes and assigning season numbers
+      if (bestBaseEpisodes != null &&
+          bestBaseProviderId != null &&
+          !bestBaseEpisodes.any((e) => e.seasonNumber != null)) {
+        Logger.info(
+          'Base provider $bestBaseProviderId does not have season info. Will infer season numbers from TMDB structure.',
+          tag: 'DataAggregator',
+        );
+
+        // Get season metadata from TMDB (names and episode counts)
+        // Try to get it from the first TMDB episode's mediaId (which is the tvId)
+        final tmdbTvId = tmdbEpisodes.isNotEmpty
+            ? tmdbEpisodes.first.mediaId
+            : null;
+        Map<int, Map<String, dynamic>>? tmdbSeasonMetadata;
+        if (tmdbTvId != null) {
+          tmdbSeasonMetadata = TmdbExternalDataSourceImpl.getSeasonMetadata(
+            tmdbTvId,
+          );
+        }
+
+        // Group TMDB episodes by season to understand the structure
+        final tmdbSeasonGroups = <int, List<EpisodeEntity>>{};
+        for (final ep in tmdbEpisodes) {
+          if (ep.seasonNumber != null) {
+            tmdbSeasonGroups.putIfAbsent(ep.seasonNumber!, () => []).add(ep);
+          }
+        }
+
+        // Sort seasons and calculate episode ranges
+        // Use actual episode counts from season metadata if available, otherwise count episodes
+        final sortedSeasons = tmdbSeasonGroups.keys.toList()..sort();
+        final seasonRanges =
+            <int, int>{}; // season -> episode count in that season
+        final seasonNames = <int, String?>{}; // season -> season name
+
+        for (final season in sortedSeasons) {
+          // Get episode count from metadata if available, otherwise count episodes
+          if (tmdbSeasonMetadata != null &&
+              tmdbSeasonMetadata.containsKey(season)) {
+            final metadata = tmdbSeasonMetadata[season]!;
+            seasonRanges[season] =
+                metadata['episode_count'] as int? ??
+                tmdbSeasonGroups[season]!.length;
+            seasonNames[season] = metadata['name'] as String?;
+          } else {
+            // Fallback: count actual episodes in this season
+            seasonRanges[season] = tmdbSeasonGroups[season]!.length;
+          }
+        }
+
+        Logger.info(
+          'TMDB season structure: ${seasonRanges.map((k, v) => MapEntry('S$k', '$v episodes (${seasonNames[k] ?? "unnamed"})'))}',
+          tag: 'DataAggregator',
+        );
+
+        // Assign season numbers to base episodes based on TMDB structure
+        // Calculate cumulative episode counts per season
+        int currentGlobalEp = 0;
+        final updatedBaseEpisodes = <EpisodeEntity>[];
+        for (final season in sortedSeasons) {
+          final seasonEpCount = seasonRanges[season] ?? 0;
+          final seasonStart = currentGlobalEp + 1;
+          final seasonEnd = currentGlobalEp + seasonEpCount;
+
+          // Assign season numbers to base episodes in this range
+          for (final ep in bestBaseEpisodes) {
+            if (ep.number >= seasonStart && ep.number <= seasonEnd) {
+              // Check if we've already added this episode
+              if (!updatedBaseEpisodes.any((e) => e.id == ep.id)) {
+                updatedBaseEpisodes.add(ep.copyWith(seasonNumber: season));
+              }
+            }
+          }
+
+          currentGlobalEp = seasonEnd;
+        }
+
+        // Add any remaining episodes that don't fit into TMDB's season structure
+        for (final ep in bestBaseEpisodes) {
+          if (!updatedBaseEpisodes.any((e) => e.id == ep.id)) {
+            updatedBaseEpisodes.add(ep);
+          }
+        }
+
+        // Sort by episode number to maintain order
+        updatedBaseEpisodes.sort((a, b) => a.number.compareTo(b.number));
+        bestBaseEpisodes = updatedBaseEpisodes;
+
+        Logger.info(
+          'Assigned season numbers to ${updatedBaseEpisodes.where((e) => e.seasonNumber != null).length} base episodes based on TMDB structure.',
+          tag: 'DataAggregator',
+        );
+      }
+    }
+
+    // If we found a good base provider, use it
+    if (bestBaseEpisodes != null && bestBaseProviderId != null) {
+      final isPrimary = bestBaseProviderId == primaryMedia.sourceId;
+
+      if (isPrimary) {
+        // Use primary as base and enhance with other providers
+        final result = _mergeEpisodesWithPrimary(
+          bestBaseEpisodes,
+          bestBaseProviderId,
+          episodesByProvider,
+          primaryCoverImage: primaryMedia.coverImage,
+          providerCoverImages: providerCoverImages,
+          useSeasonBasedMatching: useSeasonBasedMatching,
+        );
+        final duration = DateTime.now().difference(startTime).inMilliseconds;
+        Logger.info(
+          'Episode aggregation completed using primary provider: ${result.length} episodes in ${duration}ms',
+          tag: 'DataAggregator',
+        );
+        return result;
+      } else {
+        // Use best provider as base (has more episodes than primary)
+        Logger.info(
+          'Using provider $bestBaseProviderId with ${bestBaseEpisodes.length} episodes as base (primary ${primaryMedia.sourceId} has ${episodesByProvider[primaryMedia.sourceId]?.length ?? 0} episodes)',
+          tag: 'DataAggregator',
+        );
+        final result = _mergeEpisodesWithPrimary(
+          bestBaseEpisodes,
+          bestBaseProviderId,
+          episodesByProvider,
+          primaryCoverImage: primaryMedia.coverImage,
+          providerCoverImages: providerCoverImages,
+          useSeasonBasedMatching: useSeasonBasedMatching,
+        );
+        final duration = DateTime.now().difference(startTime).inMilliseconds;
+        Logger.info(
+          'Episode aggregation completed using best provider: ${result.length} episodes in ${duration}ms',
+          tag: 'DataAggregator',
+        );
+        return result;
+      }
+    }
+
+    // If no provider has episodes, return empty list
+    Logger.warning(
+      'No episodes found from any provider',
       tag: 'DataAggregator',
     );
-    final result = _selectBestEpisodeList(episodesByProvider);
-    final duration = DateTime.now().difference(startTime).inMilliseconds;
-    Logger.info(
-      'Episode aggregation completed (fallback): ${result.length} episodes in ${duration}ms',
-      tag: 'DataAggregator',
-    );
-    return result;
+    return [];
   }
 
   /// Merge episodes using primary provider's list as base
@@ -192,6 +364,8 @@ class DataAggregator {
     String primaryProviderId,
     Map<String, List<EpisodeEntity>> episodesByProvider, {
     String? primaryCoverImage,
+    Map<String, String?> providerCoverImages = const {},
+    bool useSeasonBasedMatching = false,
   }) {
     Logger.debug(
       'Merging ${primaryEpisodes.length} episodes with data from ${episodesByProvider.length - 1} additional providers',
@@ -203,73 +377,189 @@ class DataAggregator {
     // Get priority order for episode thumbnails
     final thumbnailPriority = priorityConfig.episodeThumbnailPriority;
 
+    // Get the cover image for the primary provider (the one providing the base episodes)
+    // This is important because when a non-primary provider has more episodes and becomes the base,
+    // we need to check against that provider's cover image, not the original primary media's cover image
+    final primaryProviderCoverImage =
+        providerCoverImages[primaryProviderId] ?? primaryCoverImage;
+
+    Logger.debug(
+      'Using provider $primaryProviderId as base with cover image: ${primaryProviderCoverImage?.substring(0, primaryProviderCoverImage.length > 100 ? 100 : primaryProviderCoverImage.length) ?? "null"}...',
+      tag: 'DataAggregator',
+    );
+
     for (final primaryEpisode in primaryEpisodes) {
-      var enhancedEpisode = primaryEpisode;
+      var releaseDate = primaryEpisode.releaseDate;
+      final alternativeData = Map<String, EpisodeData>.from(
+        primaryEpisode.alternativeData ?? const {},
+      );
+      alternativeData[primaryProviderId] = EpisodeData(
+        title: primaryEpisode.title,
+        thumbnail: primaryEpisode.thumbnail,
+        airDate: primaryEpisode.releaseDate,
+      );
 
-      // Check if primary episode needs a better thumbnail
-      // A thumbnail is considered "missing" if it's null, empty, or just the cover image fallback
-      final needsBetterThumbnail =
-          primaryEpisode.thumbnail == null ||
-          primaryEpisode.thumbnail!.isEmpty ||
-          _isFallbackCoverImage(primaryEpisode.thumbnail, primaryCoverImage);
+      // Always choose the best thumbnail from all providers according to priority
+      // Priority order: Jikan > MyAnimeList > Kitsu > AniList > Simkl > TMDB
+      String? bestThumbnail = null;
+      String? bestThumbnailProvider = null;
+      var primaryIsFallback = true;
 
-      if (needsBetterThumbnail) {
-        // Try providers in priority order
-        for (final providerId in thumbnailPriority) {
-          if (providerId == primaryProviderId) continue;
+      // Always search for the best thumbnail according to priority
+      // This ensures we get the highest quality thumbnail from the highest priority provider
+      // Try providers in priority order (highest to lowest)
+      // Include the primary provider in the search if it's in the priority list
+      for (final providerId in thumbnailPriority) {
+        final providerEpisodes = episodesByProvider[providerId] ?? [];
+        if (providerEpisodes.isEmpty) {
+          Logger.debug(
+            'Episode ${primaryEpisode.number}: Provider $providerId has no episodes',
+            tag: 'DataAggregator',
+          );
+          continue;
+        }
+        final matchingEpisode = _findMatchingEpisode(
+          primaryEpisode,
+          providerEpisodes,
+          useSeasonBasedMatching: useSeasonBasedMatching,
+        );
+        if (matchingEpisode == null) {
+          Logger.debug(
+            'Episode ${primaryEpisode.number}: No matching episode found in $providerId (has ${providerEpisodes.length} episodes)',
+            tag: 'DataAggregator',
+          );
+        }
 
-          final providerEpisodes = episodesByProvider[providerId] ?? [];
-          final matchingEpisode = _findMatchingEpisode(
-            primaryEpisode,
-            providerEpisodes,
+        if (matchingEpisode != null) {
+          alternativeData[providerId] = EpisodeData(
+            title: matchingEpisode.title,
+            thumbnail: matchingEpisode.thumbnail,
+            airDate: matchingEpisode.releaseDate,
+          );
+        }
+
+        if (matchingEpisode != null &&
+            matchingEpisode.thumbnail != null &&
+            matchingEpisode.thumbnail!.isNotEmpty) {
+          // Check if this thumbnail is a fallback by comparing to the provider's cover image
+          final providerCoverImage = providerCoverImages[providerId];
+          final isMatchingFallback = _isFallbackCoverImage(
+            matchingEpisode.thumbnail,
+            providerCoverImage ?? primaryCoverImage,
           );
 
-          if (matchingEpisode != null &&
-              matchingEpisode.thumbnail != null &&
-              matchingEpisode.thumbnail!.isNotEmpty &&
-              !_isFallbackCoverImage(
-                matchingEpisode.thumbnail,
-                primaryCoverImage,
-              )) {
-            // Found a real thumbnail! Create enhanced episode
-            enhancedEpisode = EpisodeEntity(
-              id: primaryEpisode.id,
-              mediaId: primaryEpisode.mediaId,
-              title: primaryEpisode.title,
-              number: primaryEpisode.number,
-              thumbnail: matchingEpisode.thumbnail,
-              duration: primaryEpisode.duration ?? matchingEpisode.duration,
-              releaseDate:
-                  primaryEpisode.releaseDate ?? matchingEpisode.releaseDate,
-            );
+          // Found a thumbnail from this provider
+          final currentPriority = bestThumbnailProvider != null
+              ? (thumbnailPriority.contains(bestThumbnailProvider)
+                    ? thumbnailPriority.indexOf(bestThumbnailProvider)
+                    : 999)
+              : 999;
+          final newPriority = thumbnailPriority.indexOf(providerId);
 
-            Logger.info(
-              'Enhanced episode ${primaryEpisode.number} with thumbnail from $providerId',
-            );
-            break;
+          // Use this thumbnail if:
+          // 1. We don't have a thumbnail yet, OR
+          // 2. Current thumbnail is a fallback AND this is NOT a fallback (real thumbnail), OR
+          // 3. Current thumbnail is a fallback AND this is also a fallback BUT this provider has higher priority, OR
+          // 4. Current thumbnail is NOT a fallback AND this is NOT a fallback AND this provider has higher priority
+          final shouldUse =
+              bestThumbnail == null ||
+              (primaryIsFallback && !isMatchingFallback) ||
+              (primaryIsFallback &&
+                  isMatchingFallback &&
+                  newPriority < currentPriority) ||
+              (!primaryIsFallback &&
+                  !isMatchingFallback &&
+                  newPriority < currentPriority);
+
+          if (shouldUse) {
+            bestThumbnail = matchingEpisode.thumbnail;
+            bestThumbnailProvider = providerId;
+            // Update primaryIsFallback for next iteration
+            primaryIsFallback = isMatchingFallback;
+            // If we found a real (non-fallback) thumbnail from the highest priority provider (Jikan), we can stop
+            if (newPriority == 0 && !isMatchingFallback) {
+              break;
+            }
           }
         }
       }
 
+      // If no thumbnail was found from priority providers, fall back to primary provider's thumbnail
+      if (bestThumbnail == null &&
+          primaryEpisode.thumbnail != null &&
+          primaryEpisode.thumbnail!.isNotEmpty) {
+        final isPrimaryFallback = _isFallbackCoverImage(
+          primaryEpisode.thumbnail,
+          primaryProviderCoverImage,
+        );
+        if (!isPrimaryFallback) {
+          bestThumbnail = primaryEpisode.thumbnail;
+          bestThumbnailProvider = primaryProviderId;
+          primaryIsFallback = false;
+        }
+      }
+
+      // Check if the final best thumbnail is a fallback cover image
+      // Compare against the provider's cover image that provided this thumbnail
+      final bestProviderCoverImage = bestThumbnailProvider != null
+          ? (providerCoverImages[bestThumbnailProvider] ?? primaryCoverImage)
+          : primaryCoverImage;
+      final finalThumbnailIsFallback =
+          bestThumbnail != null &&
+          _isFallbackCoverImage(bestThumbnail, bestProviderCoverImage);
+
+      // Log fallback detection for debugging
+      if (bestThumbnail != null && finalThumbnailIsFallback) {
+        final thumbnailPreview = bestThumbnail.length > 100
+            ? '${bestThumbnail.substring(0, 100)}...'
+            : bestThumbnail;
+        final coverPreview = bestProviderCoverImage != null
+            ? (bestProviderCoverImage.length > 100
+                  ? '${bestProviderCoverImage.substring(0, 100)}...'
+                  : bestProviderCoverImage)
+            : 'null';
+        Logger.debug(
+          'Episode ${primaryEpisode.number}: Detected fallback cover image from $bestThumbnailProvider. Thumbnail: $thumbnailPreview, Cover: $coverPreview',
+          tag: 'DataAggregator',
+        );
+      }
+
+      // Only set thumbnail if it's not a fallback cover image
+      final finalThumbnail = finalThumbnailIsFallback ? null : bestThumbnail;
+
+      if (bestThumbnailProvider != null &&
+          bestThumbnailProvider != primaryProviderId &&
+          !finalThumbnailIsFallback) {
+        final priorityIndex = thumbnailPriority.indexOf(bestThumbnailProvider);
+        Logger.debug(
+          'Episode ${primaryEpisode.number}: Selected thumbnail from $bestThumbnailProvider (priority: $priorityIndex)',
+          tag: 'DataAggregator',
+        );
+      } else if (finalThumbnailIsFallback) {
+        Logger.debug(
+          'Episode ${primaryEpisode.number}: Thumbnail is fallback cover image, setting to null',
+          tag: 'DataAggregator',
+        );
+      }
+
       // If primary episode lacks release date, try to find one
-      if (enhancedEpisode.releaseDate == null) {
+      if (releaseDate == null) {
         for (final entry in episodesByProvider.entries) {
           if (entry.key == primaryProviderId) continue;
 
           final matchingEpisode = _findMatchingEpisode(
             primaryEpisode,
             entry.value,
+            useSeasonBasedMatching:
+                false, // Don't use season matching for release date enhancement
           );
 
           if (matchingEpisode != null && matchingEpisode.releaseDate != null) {
-            enhancedEpisode = EpisodeEntity(
-              id: enhancedEpisode.id,
-              mediaId: enhancedEpisode.mediaId,
-              title: enhancedEpisode.title,
-              number: enhancedEpisode.number,
-              thumbnail: enhancedEpisode.thumbnail,
-              duration: enhancedEpisode.duration,
-              releaseDate: matchingEpisode.releaseDate,
+            releaseDate = matchingEpisode.releaseDate;
+            alternativeData[entry.key] = EpisodeData(
+              title: matchingEpisode.title,
+              thumbnail: matchingEpisode.thumbnail,
+              airDate: matchingEpisode.releaseDate,
             );
 
             Logger.info(
@@ -280,64 +570,128 @@ class DataAggregator {
         }
       }
 
-      mergedEpisodes.add(enhancedEpisode);
+      mergedEpisodes.add(
+        EpisodeEntity(
+          id: primaryEpisode.id,
+          mediaId: primaryEpisode.mediaId,
+          title: primaryEpisode.title,
+          number: primaryEpisode.number,
+          thumbnail: finalThumbnail,
+          duration: primaryEpisode.duration,
+          releaseDate: releaseDate,
+          seasonNumber: primaryEpisode.seasonNumber, // Preserve season number
+          alternativeData: alternativeData.isEmpty
+              ? null
+              : Map.unmodifiable(alternativeData),
+        ),
+      );
     }
 
     Logger.info('Merged ${mergedEpisodes.length} episodes');
     return mergedEpisodes;
   }
 
-  /// Select the best episode list when primary provider has no episodes
+  /// Find a matching episode in a list based on episode number or season+episode
   ///
-  /// This method selects the episode list from the provider with the highest
-  /// priority that has episodes available, preferring providers with more
-  /// complete metadata (thumbnails, release dates).
-  List<EpisodeEntity> _selectBestEpisodeList(
-    Map<String, List<EpisodeEntity>> episodesByProvider,
-  ) {
-    Logger.info('Selecting best episode list from available providers');
-
-    // Get priority order
-    final priority = priorityConfig.episodeThumbnailPriority;
-
-    // Try providers in priority order
-    for (final providerId in priority) {
-      final episodes = episodesByProvider[providerId];
-      if (episodes != null && episodes.isNotEmpty) {
-        Logger.info(
-          'Selected episodes from $providerId (${episodes.length} episodes)',
-        );
-        return episodes;
-      }
-    }
-
-    // If no priority provider has episodes, return first non-empty list
-    for (final entry in episodesByProvider.entries) {
-      if (entry.value.isNotEmpty) {
-        Logger.info(
-          'Selected episodes from ${entry.key} (${entry.value.length} episodes)',
-        );
-        return entry.value;
-      }
-    }
-
-    Logger.warning('No episodes found from any provider');
-    return [];
-  }
-
-  /// Find a matching episode in a list based on episode number
-  ///
-  /// This is a simple matching strategy that matches episodes by their number.
-  /// In the future, this could be enhanced with fuzzy title matching.
+  /// If useSeasonBasedMatching is true and target has season info, matches by season+episode.
+  /// If target has season info but candidate doesn't, tries to map global episode number to season+episode.
+  /// Otherwise, matches by episode number only.
   EpisodeEntity? _findMatchingEpisode(
     EpisodeEntity targetEpisode,
-    List<EpisodeEntity> candidateEpisodes,
-  ) {
-    // Try exact number match first
+    List<EpisodeEntity> candidateEpisodes, {
+    bool useSeasonBasedMatching = false,
+  }) {
+    // If using season-based matching and target has season info, try season+episode match first
+    if (useSeasonBasedMatching && targetEpisode.seasonNumber != null) {
+      // First, try exact season+episode match (if candidate also has season info)
+      for (final candidate in candidateEpisodes) {
+        if (candidate.seasonNumber != null &&
+            candidate.seasonNumber == targetEpisode.seasonNumber &&
+            candidate.number == targetEpisode.number) {
+          Logger.debug(
+            'Episode S${targetEpisode.seasonNumber}E${targetEpisode.number}: Found season+episode match in provider (S${candidate.seasonNumber}E${candidate.number})',
+            tag: 'DataAggregator',
+          );
+          return candidate;
+        }
+      }
+
+      // If target has season info but candidates don't, try to map global episode numbers
+      // Calculate which global episode number corresponds to this season+episode
+      // by counting episodes in previous seasons
+      int? targetGlobalNumber;
+      if (targetEpisode.seasonNumber != null) {
+        // Find all episodes with season info to calculate season boundaries
+        final episodesWithSeasons = candidateEpisodes
+            .where((e) => e.seasonNumber != null)
+            .toList();
+        if (episodesWithSeasons.isNotEmpty) {
+          // Group by season to find episode counts per season
+          final seasonGroups = <int, List<EpisodeEntity>>{};
+          for (final ep in episodesWithSeasons) {
+            if (ep.seasonNumber != null) {
+              seasonGroups.putIfAbsent(ep.seasonNumber!, () => []).add(ep);
+            }
+          }
+
+          // Calculate global episode number for target season+episode
+          int globalNum = targetEpisode.number;
+          for (final season in seasonGroups.keys.toList()..sort()) {
+            if (season < targetEpisode.seasonNumber!) {
+              final seasonEpCount = seasonGroups[season]!
+                  .map((e) => e.number)
+                  .reduce(
+                    (a, b) => a > b ? a : b,
+                  ); // Max episode number in season
+              globalNum += seasonEpCount;
+            }
+          }
+          targetGlobalNumber = globalNum;
+        }
+      }
+
+      // Try to match by calculated global number
+      if (targetGlobalNumber != null) {
+        for (final candidate in candidateEpisodes) {
+          if (candidate.number == targetGlobalNumber) {
+            Logger.debug(
+              'Episode S${targetEpisode.seasonNumber}E${targetEpisode.number}: Found match by calculated global number ${targetGlobalNumber} (episode ${candidate.number})',
+              tag: 'DataAggregator',
+            );
+            return candidate;
+          }
+        }
+      }
+    }
+
+    // Try exact number match
     for (final candidate in candidateEpisodes) {
       if (candidate.number == targetEpisode.number) {
+        Logger.debug(
+          'Episode ${targetEpisode.number}: Found exact match in provider (episode ${candidate.number})',
+          tag: 'DataAggregator',
+        );
         return candidate;
       }
+    }
+
+    // For episodes with different numbering, try to find the closest match within a small range (±2 episodes)
+    EpisodeEntity? closestMatch;
+    int smallestDiff = 999;
+    for (final candidate in candidateEpisodes) {
+      final diff = (candidate.number - targetEpisode.number).abs();
+      if (diff <= 2 && diff < smallestDiff) {
+        smallestDiff = diff;
+        closestMatch = candidate;
+      }
+    }
+
+    if (closestMatch != null) {
+      Logger.debug(
+        'Episode ${targetEpisode.number}: Found close match (episode ${closestMatch.number}, diff: $smallestDiff)',
+        tag: 'DataAggregator',
+      );
+      return closestMatch;
     }
 
     // Could add fuzzy title matching here in the future
@@ -358,7 +712,59 @@ class DataAggregator {
     final normalizedCover = _normalizeImageUrl(coverImage);
 
     // Check if they're the same image (possibly with different sizes)
-    return normalizedThumbnail == normalizedCover;
+    if (normalizedThumbnail == normalizedCover) {
+      return true;
+    }
+
+    // Additional check: Look for common cover/poster image patterns in the URL
+    // This catches cases where the URL structure is different but it's still a cover image
+    final thumbnailLower = thumbnail.toLowerCase();
+
+    // Check if thumbnail contains common cover/poster keywords
+    final hasCoverKeywords =
+        thumbnailLower.contains('poster') ||
+        thumbnailLower.contains('cover') ||
+        thumbnailLower.contains('main_picture') ||
+        thumbnailLower.contains('poster_image');
+
+    // If thumbnail has cover keywords and the base paths are similar, it's likely a fallback
+    if (hasCoverKeywords) {
+      // Extract base path (domain + main path without size/format variations)
+      final thumbnailBase = _extractBasePath(thumbnail);
+      final coverBase = _extractBasePath(coverImage);
+      if (thumbnailBase.isNotEmpty &&
+          coverBase.isNotEmpty &&
+          thumbnailBase == coverBase) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /// Extract base path from URL for comparison
+  String _extractBasePath(String url) {
+    try {
+      final uri = Uri.parse(url);
+      // Get path without filename variations
+      final path = uri.path;
+      // Remove size suffixes and file extensions
+      final basePath = path
+          .replaceAll(
+            RegExp(
+              r'[_-]?(small|medium|large|original|l|m|s|w\d+)[_-]?',
+              caseSensitive: false,
+            ),
+            '',
+          )
+          .replaceAll(
+            RegExp(r'\.(jpg|jpeg|png|webp)$', caseSensitive: false),
+            '',
+          );
+      return basePath.toLowerCase();
+    } catch (e) {
+      return '';
+    }
   }
 
   /// Normalize an image URL for comparison
@@ -368,12 +774,18 @@ class DataAggregator {
     // Remove common size suffixes from various providers
     // MyAnimeList: /images/anime/1079/138100l.jpg -> /images/anime/1079/138100
     // Kitsu: /poster_images/1376/large.jpg -> /poster_images/1376
+    // Handle MyAnimeList format: 138851l.jpg -> 138851
     String normalized = url
         .replaceAll(
           RegExp(
             r'[_-]?(small|medium|large|original|l|m|s)\.(jpg|jpeg|png|webp)$',
             caseSensitive: false,
           ),
+          '',
+        )
+        // Handle MyAnimeList single-letter suffix before extension (e.g., 138851l.jpg)
+        .replaceAll(
+          RegExp(r'([a-z])\.(jpg|jpeg|png|webp)$', caseSensitive: false),
           '',
         )
         .replaceAll(
@@ -1114,21 +1526,346 @@ class DataAggregator {
     final mergedStaff = mergeStaff(staffLists);
     final mergedRecommendations = mergeRecommendations(recommendationLists);
 
-    // Create aggregated details
-    final aggregatedDetails = primaryDetails.copyWith(
+    // Merge all other fields intelligently (highest values, highest quality, most recent)
+    var aggregatedDetails = primaryDetails;
+
+    // Merge genres and tags (deduplicate)
+    final allGenres = <String>{...primaryDetails.genres};
+    final allTags = <String>{...primaryDetails.tags};
+    for (final details in detailsByProvider.values) {
+      allGenres.addAll(details.genres);
+      allTags.addAll(details.tags);
+    }
+
+    // Choose highest rating/score
+    double? bestRating = primaryDetails.rating;
+    int? bestAverageScore =
+        primaryDetails.averageScore ?? primaryDetails.meanScore;
+    for (final details in detailsByProvider.values) {
+      if (details.rating != null &&
+          (bestRating == null || details.rating! > bestRating)) {
+        bestRating = details.rating;
+      }
+      final score = details.averageScore ?? details.meanScore;
+      if (score != null &&
+          (bestAverageScore == null || score > bestAverageScore)) {
+        bestAverageScore = score;
+      }
+    }
+
+    // Choose highest popularity and favorites
+    int? bestPopularity = primaryDetails.popularity;
+    int? bestFavorites = primaryDetails.favorites;
+    for (final details in detailsByProvider.values) {
+      if (details.popularity != null &&
+          (bestPopularity == null || details.popularity! > bestPopularity)) {
+        bestPopularity = details.popularity;
+      }
+      if (details.favorites != null &&
+          (bestFavorites == null || details.favorites! > bestFavorites)) {
+        bestFavorites = details.favorites;
+      }
+    }
+
+    // Choose highest episode/chapter/volume counts
+    int? bestEpisodes = primaryDetails.episodes;
+    int? bestChapters = primaryDetails.chapters;
+    int? bestVolumes = primaryDetails.volumes;
+    for (final details in detailsByProvider.values) {
+      if (details.episodes != null &&
+          (bestEpisodes == null || details.episodes! > bestEpisodes)) {
+        bestEpisodes = details.episodes;
+      }
+      if (details.chapters != null &&
+          (bestChapters == null || details.chapters! > bestChapters)) {
+        bestChapters = details.chapters;
+      }
+      if (details.volumes != null &&
+          (bestVolumes == null || details.volumes! > bestVolumes)) {
+        bestVolumes = details.volumes;
+      }
+    }
+
+    // Choose longest duration
+    int? bestDuration = primaryDetails.duration;
+    for (final details in detailsByProvider.values) {
+      if (details.duration != null &&
+          (bestDuration == null || details.duration! > bestDuration)) {
+        bestDuration = details.duration;
+      }
+    }
+
+    // Choose most recent dates (latest start, latest end)
+    DateTime? earliestStartDate = primaryDetails.startDate;
+    DateTime? latestEndDate = primaryDetails.endDate;
+    for (final details in detailsByProvider.values) {
+      if (details.startDate != null) {
+        if (earliestStartDate == null ||
+            details.startDate!.isBefore(earliestStartDate)) {
+          earliestStartDate = details.startDate;
+        }
+      }
+      if (details.endDate != null) {
+        if (latestEndDate == null || details.endDate!.isAfter(latestEndDate)) {
+          latestEndDate = details.endDate;
+        }
+      }
+    }
+
+    // Choose best images (non-null, non-empty, prefer primary source first, then higher quality sources)
+    String bestCoverImage = primaryDetails.coverImage;
+    String? bestBannerImage = primaryDetails.bannerImage;
+
+    // Only use alternative sources if primary source lacks the image
+    // Priority order for images: Jikan > AniList > Kitsu > Simkl > TMDB
+    final imagePriority = [
+      'tmdb',
+      'jikan',
+      'myanimelist',
+      'mal',
+      'anilist',
+      'kitsu',
+      'simkl',
+    ];
+    for (final providerId in imagePriority) {
+      final details = detailsByProvider[providerId];
+      if (details != null) {
+        // Only use alternative cover if primary is empty
+        if (bestCoverImage.isEmpty && details.coverImage.isNotEmpty) {
+          bestCoverImage = details.coverImage;
+        }
+        // Only use alternative banner if primary is null or empty
+        // Prioritize primary source's banner over alternatives
+        if (bestBannerImage == null || bestBannerImage.isEmpty) {
+          if (details.bannerImage != null && details.bannerImage!.isNotEmpty) {
+            bestBannerImage = details.bannerImage;
+          }
+        }
+      }
+    }
+
+    // Choose longest/most complete description
+    String? bestDescription = primaryDetails.description;
+    if (bestDescription == null || bestDescription.isEmpty) {
+      for (final details in detailsByProvider.values) {
+        if (details.description != null &&
+            details.description!.isNotEmpty &&
+            (bestDescription == null ||
+                details.description!.length > bestDescription.length)) {
+          bestDescription = details.description;
+        }
+      }
+    }
+
+    // Merge studios (deduplicate by name)
+    final studiosMap = <String, StudioEntity>{};
+    if (primaryDetails.studios != null) {
+      for (final studio in primaryDetails.studios!) {
+        studiosMap[studio.name.toLowerCase()] = studio;
+      }
+    }
+    for (final details in detailsByProvider.values) {
+      if (details.studios != null) {
+        for (final studio in details.studios!) {
+          final key = studio.name.toLowerCase();
+          if (!studiosMap.containsKey(key)) {
+            studiosMap[key] = studio;
+          } else {
+            // Prefer main studios
+            if (studio.isMain && !studiosMap[key]!.isMain) {
+              studiosMap[key] = studio;
+            }
+          }
+        }
+      }
+    }
+
+    // Merge relations (deduplicate by id)
+    final relationsMap = <String, MediaRelationEntity>{};
+    if (primaryDetails.relations != null) {
+      for (final relation in primaryDetails.relations!) {
+        relationsMap[relation.id] = relation;
+      }
+    }
+    for (final details in detailsByProvider.values) {
+      if (details.relations != null) {
+        for (final relation in details.relations!) {
+          if (!relationsMap.containsKey(relation.id)) {
+            relationsMap[relation.id] = relation;
+          }
+        }
+      }
+    }
+
+    // Choose best trailer (prefer YouTube)
+    TrailerEntity? bestTrailer = primaryDetails.trailer;
+    if (bestTrailer == null || bestTrailer.site.toLowerCase() != 'youtube') {
+      for (final details in detailsByProvider.values) {
+        if (details.trailer != null) {
+          if (bestTrailer == null ||
+              details.trailer!.site.toLowerCase() == 'youtube') {
+            bestTrailer = details.trailer;
+          }
+        }
+      }
+    }
+
+    // Build data source attribution map
+    final dataSourceAttribution = <String, String>{
+      'title': primaryDetails.sourceId,
+      'coverImage': bestCoverImage == primaryDetails.coverImage
+          ? primaryDetails.sourceId
+          : _findProviderForImage(bestCoverImage, detailsByProvider),
+      if (bestBannerImage != null)
+        'bannerImage': bestBannerImage == primaryDetails.bannerImage
+            ? primaryDetails.sourceId
+            : _findProviderForImage(bestBannerImage, detailsByProvider),
+      if (bestDescription != null &&
+          bestDescription != primaryDetails.description)
+        'description': _findProviderForDescription(
+          bestDescription,
+          detailsByProvider,
+        ),
+      if (bestRating != null && bestRating != primaryDetails.rating)
+        'rating': _findProviderForRating(bestRating, detailsByProvider),
+      if (bestEpisodes != null && bestEpisodes != primaryDetails.episodes)
+        'episodes': _findProviderForEpisodes(bestEpisodes, detailsByProvider),
+      if (bestChapters != null && bestChapters != primaryDetails.chapters)
+        'chapters': _findProviderForChapters(bestChapters, detailsByProvider),
+    };
+
+    // Build contributing providers list
+    final contributingProviders = <String>[
+      primaryDetails.sourceId,
+      ...detailsByProvider.keys,
+    ];
+
+    // Build match confidences map
+    final matchConfidences = <String, double>{};
+    for (final entry in matches.entries) {
+      matchConfidences[entry.key] = entry.value.confidence;
+    }
+
+    // Create aggregated details with all merged data
+    aggregatedDetails = primaryDetails.copyWith(
+      // Basic info
+      coverImage: bestCoverImage,
+      bannerImage: bestBannerImage,
+      description: bestDescription ?? primaryDetails.description,
+
+      // Ratings and scores
+      rating: bestRating,
+      averageScore: bestAverageScore,
+
+      // Popularity metrics
+      popularity: bestPopularity,
+      favorites: bestFavorites,
+
+      // Counts
+      episodes: bestEpisodes,
+      chapters: bestChapters,
+      volumes: bestVolumes,
+      duration: bestDuration,
+
+      // Dates
+      startDate: earliestStartDate,
+      endDate: latestEndDate,
+
+      // Genres and tags (deduplicated)
+      genres: allGenres.toList(),
+      tags: allTags.toList(),
+
+      // Rich metadata
       characters: mergedCharacters.isNotEmpty ? mergedCharacters : null,
       staff: mergedStaff.isNotEmpty ? mergedStaff : null,
       recommendations: mergedRecommendations.isNotEmpty
           ? mergedRecommendations
           : null,
+      studios: studiosMap.values.isNotEmpty ? studiosMap.values.toList() : null,
+      relations: relationsMap.values.isNotEmpty
+          ? relationsMap.values.toList()
+          : null,
+      trailer: bestTrailer,
+
+      // Attribution
+      dataSourceAttribution: dataSourceAttribution,
+      contributingProviders: contributingProviders,
+      matchConfidences: matchConfidences,
     );
 
     Logger.info(
       'Aggregated details: ${mergedCharacters.length} characters, '
-      '${mergedStaff.length} staff, ${mergedRecommendations.length} recommendations',
+      '${mergedStaff.length} staff, ${mergedRecommendations.length} recommendations, '
+      '${allGenres.length} genres, ${bestEpisodes ?? 0} episodes',
     );
 
     return aggregatedDetails;
+  }
+
+  /// Helper to find which provider contributed a specific image
+  String _findProviderForImage(
+    String imageUrl,
+    Map<String, MediaDetailsEntity> detailsByProvider,
+  ) {
+    for (final entry in detailsByProvider.entries) {
+      if (entry.value.coverImage == imageUrl ||
+          entry.value.bannerImage == imageUrl) {
+        return entry.key;
+      }
+    }
+    return 'unknown';
+  }
+
+  /// Helper to find which provider contributed a specific description
+  String _findProviderForDescription(
+    String description,
+    Map<String, MediaDetailsEntity> detailsByProvider,
+  ) {
+    for (final entry in detailsByProvider.entries) {
+      if (entry.value.description == description) {
+        return entry.key;
+      }
+    }
+    return 'unknown';
+  }
+
+  /// Helper to find which provider contributed a specific rating
+  String _findProviderForRating(
+    double rating,
+    Map<String, MediaDetailsEntity> detailsByProvider,
+  ) {
+    for (final entry in detailsByProvider.entries) {
+      if (entry.value.rating == rating) {
+        return entry.key;
+      }
+    }
+    return 'unknown';
+  }
+
+  /// Helper to find which provider contributed episode count
+  String _findProviderForEpisodes(
+    int episodes,
+    Map<String, MediaDetailsEntity> detailsByProvider,
+  ) {
+    for (final entry in detailsByProvider.entries) {
+      if (entry.value.episodes == episodes) {
+        return entry.key;
+      }
+    }
+    return 'unknown';
+  }
+
+  /// Helper to find which provider contributed chapter count
+  String _findProviderForChapters(
+    int chapters,
+    Map<String, MediaDetailsEntity> detailsByProvider,
+  ) {
+    for (final entry in detailsByProvider.entries) {
+      if (entry.value.chapters == chapters) {
+        return entry.key;
+      }
+    }
+    return 'unknown';
   }
 
   /// Normalize a name for comparison

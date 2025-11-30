@@ -36,12 +36,16 @@ class ProviderPriorityConfig {
     List<String>? mangaChapterPriority,
     List<String>? characterPriority,
     double? minConfidenceThreshold,
+    // 'jikan', 'anilist', 'kitsu', 'simkl', 'tmdb'
   }) : episodeThumbnailPriority =
-           episodeThumbnailPriority ?? ['kitsu', 'anilist', 'jikan', 'tmdb'],
+           episodeThumbnailPriority ??
+           ['tmdb', 'jikan', 'mal', 'myanimelist', 'anilist', 'kitsu', 'simkl'],
        imageQualityPriority =
-           imageQualityPriority ?? ['tmdb', 'kitsu', 'anilist', 'simkl'],
+           imageQualityPriority ??
+           ['tmdb', 'jikan', 'mal', 'myanimelist', 'anilist', 'kitsu', 'simkl'],
        animeMetadataPriority =
-           animeMetadataPriority ?? ['anilist', 'kitsu', 'jikan', 'simkl'],
+           animeMetadataPriority ??
+           ['jikan', 'mal', 'myanimelist', 'anilist', 'kitsu', 'simkl'],
        mangaChapterPriority = mangaChapterPriority ?? ['kitsu', 'anilist'],
        characterPriority = characterPriority ?? ['anilist', 'jikan', 'kitsu'],
        minConfidenceThreshold = minConfidenceThreshold ?? 0.8 {

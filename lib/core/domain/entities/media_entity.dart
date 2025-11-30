@@ -16,6 +16,7 @@ class MediaEntity extends Equatable {
   final MediaStatus status;
   final int? totalEpisodes;
   final int? totalChapters;
+  final DateTime? startDate;
   final String sourceId;
   final String sourceName;
 
@@ -31,6 +32,7 @@ class MediaEntity extends Equatable {
     required this.status,
     this.totalEpisodes,
     this.totalChapters,
+    this.startDate,
     required this.sourceId,
     required this.sourceName,
   });
@@ -48,6 +50,7 @@ class MediaEntity extends Equatable {
     status,
     totalEpisodes,
     totalChapters,
+    startDate,
     sourceId,
     sourceName,
   ];

@@ -40,6 +40,9 @@ class EpisodeEntity extends Equatable {
   final int? duration;
   final DateTime? releaseDate;
 
+  /// Season number (if available, e.g., from TMDB)
+  final int? seasonNumber;
+
   /// Provider that supplied this episode data
   final String? sourceProvider;
 
@@ -54,6 +57,7 @@ class EpisodeEntity extends Equatable {
     this.thumbnail,
     this.duration,
     this.releaseDate,
+    this.seasonNumber,
     this.sourceProvider,
     this.alternativeData,
   });
@@ -67,6 +71,7 @@ class EpisodeEntity extends Equatable {
     thumbnail,
     duration,
     releaseDate,
+    seasonNumber,
     sourceProvider,
     alternativeData,
   ];
@@ -79,6 +84,7 @@ class EpisodeEntity extends Equatable {
     String? thumbnail,
     int? duration,
     DateTime? releaseDate,
+    int? seasonNumber,
     String? sourceProvider,
     Map<String, EpisodeData>? alternativeData,
   }) {
@@ -90,6 +96,7 @@ class EpisodeEntity extends Equatable {
       thumbnail: thumbnail ?? this.thumbnail,
       duration: duration ?? this.duration,
       releaseDate: releaseDate ?? this.releaseDate,
+      seasonNumber: seasonNumber ?? this.seasonNumber,
       sourceProvider: sourceProvider ?? this.sourceProvider,
       alternativeData: alternativeData ?? this.alternativeData,
     );
