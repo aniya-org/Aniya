@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:get_it/get_it.dart';
 import 'package:get/get.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -7,8 +8,10 @@ import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dartotsu_extension_bridge/ExtensionManager.dart';
+import 'package:path_provider/path_provider.dart';
 import '../domain/services/offline_storage_manager.dart';
 import '../domain/services/lazy_extension_loader.dart';
+import '../services/data_migration_service.dart';
 import '../services/tracking_auth_service.dart';
 import '../services/extension_discovery_service.dart';
 import '../services/permission_service.dart';
@@ -45,6 +48,10 @@ import '../data/datasources/tracking_data_source.dart';
 import '../data/datasources/jikan_external_data_source.dart';
 import '../data/datasources/mal_external_data_source.dart';
 import '../data/datasources/repository_local_data_source.dart';
+import '../data/datasources/watch_history_local_data_source.dart';
+import '../domain/repositories/watch_history_repository.dart';
+import '../data/repositories/watch_history_repository_impl.dart';
+import '../services/watch_history_controller.dart';
 import '../domain/usecases/get_trending_media_usecase.dart';
 import '../domain/usecases/get_popular_media_usecase.dart';
 import '../domain/usecases/get_library_items_usecase.dart';
@@ -92,8 +99,10 @@ final sl = GetIt.instance;
 
 /// Initialize all dependencies
 Future<void> initializeDependencies() async {
-  // Initialize Hive
-  await Hive.initFlutter();
+  // Initialize Hive using a deterministic application directory so desktop builds
+  // don't try to write into the project root (which causes locking errors).
+  final storageDir = await _resolveAppStorageDirectory();
+  await Hive.initFlutter(storageDir.path);
 
   // Initialize Isar
   // Note: Isar requires at least one collection schema to open
@@ -322,6 +331,28 @@ Future<void> initializeDependencies() async {
     ),
   );
 
+  // WatchHistoryLocalDataSource requires async initialization
+  // For now, we'll use a placeholder that will be initialized later
+  sl.registerLazySingleton<WatchHistoryLocalDataSource>(
+    () => throw UnimplementedError(
+      'WatchHistoryLocalDataSource must be initialized asynchronously. '
+      'Call initializeWatchHistoryDataSource() after initializeDependencies()',
+    ),
+  );
+
+  // WatchHistoryRepository requires WatchHistoryLocalDataSource
+  // Will be properly initialized after initializeWatchHistoryDataSource()
+  sl.registerLazySingleton<WatchHistoryRepository>(
+    () => WatchHistoryRepositoryImpl(
+      localDataSource: sl<WatchHistoryLocalDataSource>(),
+    ),
+  );
+
+  // Register WatchHistoryController
+  sl.registerLazySingleton<WatchHistoryController>(
+    () => WatchHistoryController(repository: sl<WatchHistoryRepository>()),
+  );
+
   // RepositoryRepository requires RepositoryLocalDataSource
   // Will be properly initialized after initializeRepositoryDataSource()
   sl.registerLazySingleton<RepositoryRepository>(
@@ -421,6 +452,7 @@ Future<void> initializeDependencies() async {
       getTrendingMedia: sl<GetTrendingMediaUseCase>(),
       getLibraryItems: sl<GetLibraryItemsUseCase>(),
       tmdbService: sl<TmdbService>(),
+      watchHistoryRepository: sl<WatchHistoryRepository>(),
     ),
   );
   sl.registerLazySingleton<BrowseViewModel>(
@@ -454,6 +486,8 @@ Future<void> initializeDependencies() async {
       getChapters: sl<GetChaptersUseCase>(),
       addToLibrary: sl<AddToLibraryUseCase>(),
       mediaRepository: sl<MediaRepository>(),
+      libraryRepository: sl<LibraryRepository>(),
+      watchHistoryRepository: sl<WatchHistoryRepository>(),
     ),
   );
   sl.registerFactory<EpisodeSourceSelectionViewModel>(
@@ -482,6 +516,10 @@ Future<void> initializeDependencies() async {
       authRepository: sl<TrackingAuthRepository>(),
     ),
   );
+
+  sl.registerLazySingleton<DataMigrationService>(
+    () => DataMigrationService(libraryDataSource: sl<LibraryLocalDataSource>()),
+  );
 }
 
 /// Initialize MediaLocalDataSource asynchronously
@@ -502,6 +540,12 @@ Future<void> initializeLibraryDataSource() async {
   }
   final dataSource = await LibraryLocalDataSourceImpl.create();
   sl.registerSingleton<LibraryLocalDataSource>(dataSource);
+
+  // Run data migrations after library data source is initialized
+  if (sl.isRegistered<DataMigrationService>()) {
+    final migrationService = sl<DataMigrationService>();
+    await migrationService.runMigrations();
+  }
 }
 
 /// Initialize RepositoryLocalDataSource asynchronously
@@ -539,6 +583,48 @@ Future<void> initializeRepositoryDataSource() async {
   );
 }
 
+/// Initialize WatchHistoryLocalDataSource asynchronously
+/// This is required for watch history persistence
+Future<void> initializeWatchHistoryDataSource() async {
+  // Unregister the placeholder if it exists
+  if (sl.isRegistered<WatchHistoryLocalDataSource>()) {
+    await sl.unregister<WatchHistoryLocalDataSource>();
+  }
+  final dataSource = await WatchHistoryLocalDataSourceImpl.create();
+  sl.registerSingleton<WatchHistoryLocalDataSource>(dataSource);
+
+  // Re-register WatchHistoryRepository with the initialized data source
+  if (sl.isRegistered<WatchHistoryRepository>()) {
+    await sl.unregister<WatchHistoryRepository>();
+  }
+  sl.registerLazySingleton<WatchHistoryRepository>(
+    () => WatchHistoryRepositoryImpl(
+      localDataSource: sl<WatchHistoryLocalDataSource>(),
+    ),
+  );
+
+  // Re-register WatchHistoryController with the updated repository
+  if (sl.isRegistered<WatchHistoryController>()) {
+    await sl.unregister<WatchHistoryController>();
+  }
+  sl.registerLazySingleton<WatchHistoryController>(
+    () => WatchHistoryController(repository: sl<WatchHistoryRepository>()),
+  );
+
+  // Re-register HomeViewModel with the updated repository
+  if (sl.isRegistered<HomeViewModel>()) {
+    await sl.unregister<HomeViewModel>();
+  }
+  sl.registerLazySingleton<HomeViewModel>(
+    () => HomeViewModel(
+      getTrendingMedia: sl<GetTrendingMediaUseCase>(),
+      getLibraryItems: sl<GetLibraryItemsUseCase>(),
+      tmdbService: sl<TmdbService>(),
+      watchHistoryRepository: sl<WatchHistoryRepository>(),
+    ),
+  );
+}
+
 /// Get ExtensionManager from GetX (if available) or return null
 /// This is a workaround since ExtensionManager is managed by GetX
 /// The ExtensionManager is registered by DartotsuExtensionBridge.init()
@@ -560,4 +646,12 @@ Future<void> disposeDependencies() async {
     await sl<Isar>().close();
   }
   await Hive.close();
+}
+
+Future<Directory> _resolveAppStorageDirectory() async {
+  final dir = await getApplicationSupportDirectory();
+  if (!await dir.exists()) {
+    await dir.create(recursive: true);
+  }
+  return dir;
 }

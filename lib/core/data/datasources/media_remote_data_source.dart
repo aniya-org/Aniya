@@ -1,9 +1,11 @@
 import 'package:dartotsu_extension_bridge/ExtensionManager.dart';
+import 'package:dartotsu_extension_bridge/Extensions/Extensions.dart';
 import 'package:dartotsu_extension_bridge/Models/DMedia.dart';
 import 'package:dartotsu_extension_bridge/Models/DEpisode.dart';
 import 'package:dartotsu_extension_bridge/Models/Pages.dart';
 import 'package:dartotsu_extension_bridge/Models/Source.dart';
 
+import '../../domain/entities/media_entity.dart';
 import '../models/media_model.dart';
 import '../models/episode_model.dart';
 import '../models/chapter_model.dart';
@@ -51,22 +53,49 @@ class MediaRemoteDataSourceImpl implements MediaRemoteDataSource {
     if (extensionManager == null) {
       return null;
     }
-    final extension = extensionManager!.currentManager;
 
-    // Check all installed extension lists
-    final allSources = [
-      ...extension.installedAnimeExtensions.value,
-      ...extension.installedMangaExtensions.value,
-      ...extension.installedNovelExtensions.value,
-      ...extension.installedMovieExtensions.value,
-      ...extension.installedTvShowExtensions.value,
+    final managers = <Extension>{};
+    managers.add(extensionManager!.currentManager);
+
+    for (final type in getSupportedExtensions) {
+      try {
+        final manager = type.getManager();
+        if (!managers.contains(manager)) {
+          managers.add(manager);
+        }
+      } catch (_) {}
+    }
+
+    for (final manager in managers) {
+      final source = _findSourceInManager(manager, sourceId);
+      if (source != null) {
+        return source;
+      }
+    }
+    return null;
+  }
+
+  Source? _findSourceInManager(Extension manager, String sourceId) {
+    final buckets = [
+      manager.installedAnimeExtensions.value,
+      manager.installedMangaExtensions.value,
+      manager.installedNovelExtensions.value,
+      manager.installedMovieExtensions.value,
+      manager.installedTvShowExtensions.value,
+      manager.installedCartoonExtensions.value,
+      manager.installedDocumentaryExtensions.value,
+      manager.installedLivestreamExtensions.value,
+      manager.installedNsfwExtensions.value,
     ];
 
-    try {
-      return allSources.firstWhere((source) => source.id == sourceId);
-    } catch (e) {
-      return null;
+    for (final bucket in buckets) {
+      try {
+        return bucket.firstWhere((source) => source.id == sourceId);
+      } catch (_) {
+        continue;
+      }
     }
+    return null;
   }
 
   @override
@@ -79,6 +108,7 @@ class MediaRemoteDataSourceImpl implements MediaRemoteDataSource {
 
       final methods = source.methods;
       final Pages result = await methods.search(query, 1, []);
+      final fallbackType = _mapBridgeItemTypeToMediaType(source.itemType);
 
       return result.list
           .map(
@@ -86,6 +116,7 @@ class MediaRemoteDataSourceImpl implements MediaRemoteDataSource {
               dMedia,
               sourceId,
               source.name ?? 'Unknown',
+              fallbackType: fallbackType,
             ),
           )
           .toList();
@@ -110,6 +141,7 @@ class MediaRemoteDataSourceImpl implements MediaRemoteDataSource {
         detailedMedia,
         sourceId,
         source.name ?? 'Unknown',
+        fallbackType: _mapBridgeItemTypeToMediaType(source.itemType),
       );
     } catch (e) {
       throw ServerException('Failed to get media details: ${e.toString()}');
@@ -181,6 +213,7 @@ class MediaRemoteDataSourceImpl implements MediaRemoteDataSource {
 
       final methods = source.methods;
       final Pages result = await methods.getLatestUpdates(page);
+      final fallbackType = _mapBridgeItemTypeToMediaType(source.itemType);
 
       return result.list
           .map(
@@ -188,6 +221,7 @@ class MediaRemoteDataSourceImpl implements MediaRemoteDataSource {
               dMedia,
               sourceId,
               source.name ?? 'Unknown',
+              fallbackType: fallbackType,
             ),
           )
           .toList();
@@ -206,6 +240,7 @@ class MediaRemoteDataSourceImpl implements MediaRemoteDataSource {
 
       final methods = source.methods;
       final Pages result = await methods.getPopular(page);
+      final fallbackType = _mapBridgeItemTypeToMediaType(source.itemType);
 
       return result.list
           .map(
@@ -213,6 +248,7 @@ class MediaRemoteDataSourceImpl implements MediaRemoteDataSource {
               dMedia,
               sourceId,
               source.name ?? 'Unknown',
+              fallbackType: fallbackType,
             ),
           )
           .toList();
@@ -271,6 +307,31 @@ class MediaRemoteDataSourceImpl implements MediaRemoteDataSource {
       throw ServerException(
         'Failed to get novel chapter content: ${e.toString()}',
       );
+    }
+  }
+
+  MediaType _mapBridgeItemTypeToMediaType(ItemType? itemType) {
+    switch (itemType) {
+      case ItemType.manga:
+        return MediaType.manga;
+      case ItemType.anime:
+        return MediaType.anime;
+      case ItemType.novel:
+        return MediaType.novel;
+      case ItemType.movie:
+        return MediaType.movie;
+      case ItemType.tvShow:
+        return MediaType.tvShow;
+      case ItemType.cartoon:
+        return MediaType.anime;
+      case ItemType.documentary:
+        return MediaType.tvShow;
+      case ItemType.livestream:
+        return MediaType.tvShow;
+      case ItemType.nsfw:
+        return MediaType.anime;
+      case null:
+        return MediaType.anime;
     }
   }
 }

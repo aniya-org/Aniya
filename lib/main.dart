@@ -5,6 +5,8 @@ import 'package:media_kit/media_kit.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:dartotsu_extension_bridge/dartotsu_extension_bridge.dart';
+import 'package:dartotsu_extension_bridge/Aniyomi/desktop/aniyomi_desktop.dart';
+import 'package:dartotsu_extension_bridge/CloudStream/desktop/desktop.dart';
 import 'package:dartotsu_extension_bridge/ExtensionManager.dart' as bridge;
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
@@ -36,6 +38,26 @@ void main() async {
   // Initialize global error handler
   ErrorHandler.initialize();
 
+  // Configure desktop plugin runtimes programmatically when supported
+  if (PlatformUtils.isDesktop) {
+    cloudstreamConfig
+      ..enableDesktopJsPlugins = true
+      ..enableDesktopDexPlugins = true
+      ..enableTelemetry = true
+      ..enableVerboseLogging = false
+      ..jsTimeoutSeconds = 30
+      ..dexTimeoutSeconds = 60
+      ..maxMemoryMb = 256;
+
+    aniyomiDesktopConfig
+      ..enableDesktopAniyomi = true
+      ..enableTelemetry = true
+      ..verboseLogging = false
+      ..dexTimeoutSeconds = 60
+      ..networkTimeoutSeconds = 30
+      ..maxMemoryMb = 512;
+  }
+
   try {
     // Initialize media_kit
     MediaKit.ensureInitialized();
@@ -45,8 +67,7 @@ void main() async {
     Logger.info('Initializing extension bridge...', tag: 'Main');
     try {
       // Ensure the Isar database directory exists before initializing the bridge
-      final docDir = await getApplicationDocumentsDirectory();
-      final isarDir = Directory(p.join(docDir.path, 'isar'));
+      final isarDir = await _resolveExtensionBridgeIsarDirectory();
       if (!await isarDir.exists()) {
         await isarDir.create(recursive: true);
         Logger.debug('Created Isar directory: ${isarDir.path}', tag: 'Main');
@@ -84,6 +105,7 @@ void main() async {
     await initializeMediaDataSource();
     await initializeLibraryDataSource();
     await initializeRepositoryDataSource();
+    await initializeWatchHistoryDataSource();
     Logger.info('Data sources initialized successfully', tag: 'Main');
   } catch (e, stackTrace) {
     Logger.error(
@@ -267,6 +289,16 @@ class _AniyaAppState extends State<AniyaApp> {
         return bridge.ExtensionType.lnreader;
     }
   }
+}
+
+Future<Directory> _resolveExtensionBridgeIsarDirectory() async {
+  final docDir = await getApplicationDocumentsDirectory();
+  final isStandardDocPath =
+      Platform.isAndroid || Platform.isIOS || Platform.isMacOS;
+  final basePath = isStandardDocPath
+      ? docDir.path
+      : p.join(docDir.path, 'aniya', 'databases');
+  return Directory(p.join(basePath, 'isar'));
 }
 
 /// Error app shown when initialization fails

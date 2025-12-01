@@ -201,7 +201,10 @@ class AuthRepositoryImpl implements AuthRepository {
           url = _simklAuth.getAuthorizationUrl(redirectUri);
           break;
         case TrackingService.jikan:
-          throw ServerException('Jikan does not require authentication');
+        case TrackingService.local:
+          throw ServerException(
+            'Jikan and local do not require authentication',
+          );
       }
 
       return Right(url);
@@ -276,6 +279,7 @@ class AuthRepositoryImpl implements AuthRepository {
       case TrackingService.simkl:
         return await _simklAuth.exchangeCodeForToken(code, redirectUri);
       case TrackingService.jikan:
+      case TrackingService.local:
         throw ServerException('Jikan does not require authentication');
     }
   }
@@ -292,6 +296,7 @@ class AuthRepositoryImpl implements AuthRepository {
       case TrackingService.simkl:
         return await _simklAuth.refreshToken(refreshToken);
       case TrackingService.jikan:
+      case TrackingService.local:
         throw ServerException('Jikan does not support token refresh');
     }
   }
@@ -308,6 +313,7 @@ class AuthRepositoryImpl implements AuthRepository {
       case TrackingService.simkl:
         return await _simklAuth.getUserInfo(accessToken);
       case TrackingService.jikan:
+      case TrackingService.local:
         throw ServerException('Jikan does not require authentication');
     }
   }
@@ -346,6 +352,7 @@ class AuthRepositoryImpl implements AuthRepository {
         avatarUrl = userInfo['user']?['avatar'];
         break;
       case TrackingService.jikan:
+      case TrackingService.local:
         throw ServerException('Jikan does not require authentication');
     }
 

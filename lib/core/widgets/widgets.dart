@@ -3,6 +3,7 @@ library;
 
 export 'media_card.dart';
 export 'episode_card.dart';
+export 'chapter_card.dart';
 export 'extension_card.dart';
 export 'loading_indicator.dart';
 export 'error_view.dart';

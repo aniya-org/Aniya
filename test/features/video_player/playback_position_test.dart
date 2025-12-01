@@ -1,33 +1,39 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:aniya/core/data/datasources/library_local_data_source.dart';
 import 'package:aniya/core/data/repositories/library_repository_impl.dart';
 import 'package:aniya/core/domain/entities/library_item_entity.dart';
 import 'package:aniya/core/domain/entities/media_entity.dart';
 import 'package:aniya/core/data/models/library_item_model.dart';
+import 'package:aniya/core/enums/tracking_service.dart';
 
 void main() {
   group('Playback Position Saving', () {
     late Box<Map<dynamic, dynamic>> libraryBox;
     late Box<int> playbackBox;
     late Box<int> readingBox;
+    late Box<String> indexBox;
     late LibraryLocalDataSourceImpl dataSource;
     late LibraryRepositoryImpl repository;
 
     setUp(() async {
       // Initialize Hive for testing
-      Hive.init('./test/hive_test');
+      final tempDir = await getTemporaryDirectory();
+      Hive.init(tempDir.path);
 
       // Open test boxes
       libraryBox = await Hive.openBox<Map<dynamic, dynamic>>('test_library');
       playbackBox = await Hive.openBox<int>('test_playback');
       readingBox = await Hive.openBox<int>('test_reading');
+      indexBox = await Hive.openBox<String>('test_library_index');
 
       // Create data source and repository
       dataSource = LibraryLocalDataSourceImpl(
         box: libraryBox,
         playbackBox: playbackBox,
         readingBox: readingBox,
+        indexBox: indexBox,
       );
       repository = LibraryRepositoryImpl(localDataSource: dataSource);
     });
@@ -37,9 +43,11 @@ void main() {
       await libraryBox.clear();
       await playbackBox.clear();
       await readingBox.clear();
+      await indexBox.clear();
       await libraryBox.close();
       await playbackBox.close();
       await readingBox.close();
+      await indexBox.close();
       await Hive.deleteFromDisk();
     });
 
@@ -57,10 +65,11 @@ void main() {
 
       final libraryItem = LibraryItemEntity(
         id: 'test_item_1',
+        mediaId: testMedia.id,
+        userService: TrackingService.local,
         media: testMedia,
         status: LibraryStatus.watching,
-        currentEpisode: 1,
-        currentChapter: 0,
+        progress: const WatchProgress(currentEpisode: 1, currentChapter: 0),
         addedAt: DateTime.now(),
       );
 
@@ -117,10 +126,11 @@ void main() {
 
       final libraryItem = LibraryItemEntity(
         id: 'test_item_2',
+        mediaId: testMedia.id,
+        userService: TrackingService.local,
         media: testMedia,
         status: LibraryStatus.watching,
-        currentEpisode: 1,
-        currentChapter: 0,
+        progress: const WatchProgress(currentEpisode: 1, currentChapter: 0),
         addedAt: DateTime.now(),
       );
 
@@ -166,10 +176,11 @@ void main() {
 
       final libraryItem = LibraryItemEntity(
         id: 'test_item_3',
+        mediaId: testMedia.id,
+        userService: TrackingService.local,
         media: testMedia,
         status: LibraryStatus.watching,
-        currentEpisode: 1,
-        currentChapter: 0,
+        progress: const WatchProgress(currentEpisode: 1, currentChapter: 0),
         addedAt: DateTime.now(),
       );
 

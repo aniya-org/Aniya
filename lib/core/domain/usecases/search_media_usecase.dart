@@ -37,6 +37,7 @@ class SearchMediaUseCase {
         params.query,
         params.type,
         sourceId: params.sourceId,
+        onSourceProgress: params.onSourceProgress,
       );
     }
   }
@@ -47,8 +48,14 @@ class SearchMediaParams {
   final String query;
   final MediaType type;
   final String? sourceId;
+  final SourceProgressCallback? onSourceProgress;
 
-  SearchMediaParams({required this.query, required this.type, this.sourceId});
+  SearchMediaParams({
+    required this.query,
+    required this.type,
+    this.sourceId,
+    this.onSourceProgress,
+  });
 }
 
 /// Advanced search parameters (extends basic params)
@@ -66,6 +73,7 @@ class SearchMediaParamsAdvanced extends SearchMediaParams {
     required super.query,
     required super.type,
     required String super.sourceId,
+    SourceProgressCallback? onSourceProgress,
     this.genres,
     this.year,
     this.season,
@@ -74,5 +82,5 @@ class SearchMediaParamsAdvanced extends SearchMediaParams {
     this.minScore,
     this.maxScore,
     this.sort,
-  });
+  }) : super(onSourceProgress: onSourceProgress);
 }

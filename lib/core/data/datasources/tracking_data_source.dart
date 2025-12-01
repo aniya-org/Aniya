@@ -95,7 +95,10 @@ class TrackingDataSourceImpl implements TrackingDataSource {
         case TrackingService.simkl:
           return await _authenticateSimkl(token);
         case TrackingService.jikan:
-          throw ServerException('Jikan does not require authentication');
+        case TrackingService.local:
+          throw ServerException(
+            'Jikan and local do not require authentication',
+          );
       }
     } catch (e) {
       throw ServerException('Failed to authenticate: ${e.toString()}');
@@ -195,6 +198,7 @@ class TrackingDataSourceImpl implements TrackingDataSource {
           await _syncProgressSimkl(token, mediaId, episode, chapter);
           break;
         case TrackingService.jikan:
+        case TrackingService.local:
           throw ServerException('Jikan does not support progress sync');
       }
     } catch (e) {
@@ -303,6 +307,7 @@ class TrackingDataSourceImpl implements TrackingDataSource {
         case TrackingService.simkl:
           return await _fetchLibrarySimkl(token);
         case TrackingService.jikan:
+        case TrackingService.local:
           throw ServerException('Jikan does not support library fetch');
       }
     } catch (e) {
@@ -386,6 +391,7 @@ class TrackingDataSourceImpl implements TrackingDataSource {
           await _updateStatusSimkl(token, mediaId, status);
           break;
         case TrackingService.jikan:
+        case TrackingService.local:
           throw ServerException('Jikan does not support status update');
       }
     } catch (e) {

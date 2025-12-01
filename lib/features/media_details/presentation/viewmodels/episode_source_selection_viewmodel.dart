@@ -260,6 +260,54 @@ class EpisodeSourceSelectionViewModel extends ChangeNotifier {
           ItemType.livestream,
         ];
         break;
+      case MediaType.cartoon:
+        ordered = const [
+          ItemType.cartoon,
+          ItemType.anime,
+          ItemType.tvShow,
+          ItemType.movie,
+          ItemType.documentary,
+          ItemType.livestream,
+          ItemType.manga,
+          ItemType.novel,
+        ];
+        break;
+      case MediaType.documentary:
+        ordered = const [
+          ItemType.documentary,
+          ItemType.tvShow,
+          ItemType.movie,
+          ItemType.anime,
+          ItemType.cartoon,
+          ItemType.livestream,
+          ItemType.manga,
+          ItemType.novel,
+        ];
+        break;
+      case MediaType.livestream:
+        ordered = const [
+          ItemType.livestream,
+          ItemType.tvShow,
+          ItemType.anime,
+          ItemType.movie,
+          ItemType.cartoon,
+          ItemType.documentary,
+          ItemType.manga,
+          ItemType.novel,
+        ];
+        break;
+      case MediaType.nsfw:
+        ordered = const [
+          ItemType.anime,
+          ItemType.manga,
+          ItemType.tvShow,
+          ItemType.movie,
+          ItemType.novel,
+          ItemType.cartoon,
+          ItemType.documentary,
+          ItemType.livestream,
+        ];
+        break;
     }
 
     return {for (var i = 0; i < ordered.length; i++) ordered[i]: i};

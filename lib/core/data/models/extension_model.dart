@@ -17,6 +17,7 @@ class ExtensionModel extends ExtensionEntity {
     super.iconUrl,
     super.apkUrl,
     super.description,
+    super.isExecutableOnDesktop,
   });
 
   factory ExtensionModel.fromJson(Map<String, dynamic> json) {
@@ -42,6 +43,7 @@ class ExtensionModel extends ExtensionEntity {
       iconUrl: json['iconUrl'] as String?,
       apkUrl: json['apkUrl'] as String?,
       description: json['description'] as String?,
+      isExecutableOnDesktop: json['isExecutableOnDesktop'] as bool?,
     );
   }
 
@@ -60,6 +62,7 @@ class ExtensionModel extends ExtensionEntity {
       'iconUrl': iconUrl,
       'apkUrl': apkUrl,
       'description': description,
+      'isExecutableOnDesktop': isExecutableOnDesktop,
     };
   }
 
@@ -82,6 +85,7 @@ class ExtensionModel extends ExtensionEntity {
       iconUrl: source.iconUrl,
       apkUrl: source.apkUrl,
       description: null, // Source doesn't have description
+      isExecutableOnDesktop: source.isExecutableOnDesktop,
     );
   }
 
@@ -134,9 +138,11 @@ class ExtensionModel extends ExtensionEntity {
       iconUrl: iconUrl,
       apkUrl: apkUrl,
       description: description,
+      isExecutableOnDesktop: isExecutableOnDesktop,
     );
   }
 
+  @override
   ExtensionModel copyWith({
     String? id,
     String? name,
@@ -151,6 +157,7 @@ class ExtensionModel extends ExtensionEntity {
     String? iconUrl,
     String? apkUrl,
     String? description,
+    bool? isExecutableOnDesktop,
   }) {
     return ExtensionModel(
       id: id ?? this.id,
@@ -166,6 +173,8 @@ class ExtensionModel extends ExtensionEntity {
       iconUrl: iconUrl ?? this.iconUrl,
       apkUrl: apkUrl ?? this.apkUrl,
       description: description ?? this.description,
+      isExecutableOnDesktop:
+          isExecutableOnDesktop ?? this.isExecutableOnDesktop,
     );
   }
 }

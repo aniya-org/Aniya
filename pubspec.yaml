@@ -102,6 +102,9 @@ dependencies:
   markdown_widget: ^2.3.2+8
   html: ^0.15.4
 
+  # YT Trailers & Videos
+  youtube_player_flutter: ^9.1.3
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

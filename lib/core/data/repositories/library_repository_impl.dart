@@ -6,6 +6,7 @@ import '../../error/failures.dart';
 import '../../error/exceptions.dart';
 import '../datasources/library_local_data_source.dart';
 import '../models/library_item_model.dart';
+import '../models/media_model.dart';
 
 /// Implementation of LibraryRepository
 /// Handles library management with local storage
@@ -40,6 +41,43 @@ class LibraryRepositoryImpl implements LibraryRepository {
   }
 
   @override
+  Future<Either<Failure, LibraryItemEntity>> getLibraryItem(
+    String mediaId,
+  ) async {
+    try {
+      final item = await localDataSource.getLibraryItem(mediaId);
+      if (item == null) {
+        return Left(NotFoundFailure('Library item not found: $mediaId'));
+      }
+      return Right(item.toEntity());
+    } on CacheException catch (e) {
+      return Left(CacheFailure(e.message));
+    } on StorageException catch (e) {
+      return Left(StorageFailure(e.message));
+    } catch (e) {
+      return Left(
+        UnknownFailure('Failed to get library item: ${e.toString()}'),
+      );
+    }
+  }
+
+  @override
+  Future<Either<Failure, bool>> isInLibrary(String mediaId) async {
+    try {
+      final item = await localDataSource.getLibraryItem(mediaId);
+      return Right(item != null);
+    } on CacheException catch (e) {
+      return Left(CacheFailure(e.message));
+    } on StorageException catch (e) {
+      return Left(StorageFailure(e.message));
+    } catch (e) {
+      return Left(
+        UnknownFailure('Failed to check library status: ${e.toString()}'),
+      );
+    }
+  }
+
+  @override
   Future<Either<Failure, Unit>> addToLibrary(LibraryItemEntity item) async {
     try {
       // Check if item already exists
@@ -53,13 +91,14 @@ class LibraryRepositoryImpl implements LibraryRepository {
         id: item.id,
         mediaId: item.mediaId,
         userService: item.userService,
-        media: item.media,
+        media: item.media != null ? MediaModel.fromEntity(item.media!) : null,
+        mediaType: item.mediaType,
+        normalizedId: item.normalizedId,
+        sourceId: item.sourceId,
+        sourceName: item.sourceName,
         status: item.status,
-        progress: WatchProgress(
-          currentEpisode: item.progress?.currentEpisode,
-          currentChapter: item.progress?.currentChapter,
-        ),
-        addedAt: item.addedAt,
+        progress: item.progress ?? const WatchProgress(),
+        addedAt: item.addedAt ?? DateTime.now(),
         lastUpdated: item.lastUpdated,
       );
       await localDataSource.addToLibrary(model);
@@ -92,13 +131,14 @@ class LibraryRepositoryImpl implements LibraryRepository {
         id: item.id,
         mediaId: item.mediaId,
         userService: item.userService,
-        media: item.media,
+        media: item.media != null ? MediaModel.fromEntity(item.media!) : null,
+        mediaType: item.mediaType,
+        normalizedId: item.normalizedId,
+        sourceId: item.sourceId,
+        sourceName: item.sourceName,
         status: item.status,
-        progress: WatchProgress(
-          currentEpisode: item.progress?.currentEpisode,
-          currentChapter: item.progress?.currentChapter,
-        ),
-        addedAt: item.addedAt,
+        progress: item.progress ?? const WatchProgress(),
+        addedAt: item.addedAt ?? DateTime.now(),
         lastUpdated: item.lastUpdated,
       );
       await localDataSource.updateLibraryItem(model);

@@ -6,8 +6,15 @@ import '../../../../core/data/datasources/tmdb_external_data_source.dart';
 import '../../../../core/di/injection_container.dart';
 import '../../../../core/domain/entities/entities.dart';
 import '../../../../core/domain/entities/source_entity.dart';
+import '../../../../core/domain/entities/library_item_entity.dart';
+import '../../../../core/domain/entities/watch_history_entry.dart';
+import '../../../../core/domain/repositories/library_repository.dart';
+import '../../../../core/domain/usecases/add_to_library_usecase.dart';
+import '../../../../core/domain/usecases/remove_from_library_usecase.dart';
+import '../../../../core/services/watch_history_controller.dart';
 import '../../../../core/enums/tracking_service.dart';
 import '../../../../core/error/exceptions.dart';
+import '../../../../core/error/failures.dart';
 import '../../../../core/utils/logger.dart';
 import '../../../../core/utils/cross_provider_matcher.dart';
 import '../../../../core/utils/data_aggregator.dart';
@@ -40,6 +47,10 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
   late final CrossProviderMatcher _matcher;
   late final DataAggregator _aggregator;
   late final ProviderCache _cache;
+  late final AddToLibraryUseCase _addToLibraryUseCase;
+  late final RemoveFromLibraryUseCase _removeFromLibraryUseCase;
+  late final LibraryRepository _libraryRepository;
+  late final WatchHistoryController _watchHistoryController;
   late TabController _tabController;
 
   MediaDetailsEntity? _fullDetails;
@@ -68,6 +79,9 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
   // Chapters state
   List<ChapterEntity> _chapters = [];
   bool _isLoadingChapters = false;
+  LibraryItemEntity? _libraryItem;
+  LibraryStatus? _libraryStatus;
+  bool _isLibraryActionInProgress = false;
 
   @override
   void initState() {
@@ -77,16 +91,98 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
     _matcher = sl<CrossProviderMatcher>();
     _aggregator = sl<DataAggregator>();
     _cache = sl<ProviderCache>();
+    _addToLibraryUseCase = sl<AddToLibraryUseCase>();
+    _removeFromLibraryUseCase = sl<RemoveFromLibraryUseCase>();
+    _libraryRepository = sl<LibraryRepository>();
+    _watchHistoryController = sl<WatchHistoryController>();
     // 3 tabs for Anime/Manga (Overview, Episodes/Chapters, More Info)
     final isAnime = widget.media.type == MediaType.anime;
     _tabController = TabController(length: 3, vsync: this);
     _initializeAttributionFromMedia(widget.media);
     _fetchFullDetails();
+    _loadLibraryEntry();
     if (isAnime) {
       _fetchEpisodes();
     } else {
       _fetchChapters();
     }
+  }
+
+  String _buildLibraryItemId() {
+    return '${widget.media.id}_${TrackingService.local.name}';
+  }
+
+  Future<void> _loadLibraryEntry() async {
+    final result = await _libraryRepository.getLibraryItem(
+      _buildLibraryItemId(),
+    );
+    if (!mounted) return;
+    result.fold(
+      (failure) {
+        if (failure is! NotFoundFailure) {
+          Logger.error(
+            'Failed to load library item: ${failure.message}',
+            tag: 'AnimeMangaDetailsScreen',
+          );
+        }
+        setState(() {
+          _libraryItem = null;
+          _libraryStatus = null;
+        });
+      },
+      (item) {
+        setState(() {
+          _libraryItem = item;
+          _libraryStatus = item.status;
+        });
+      },
+    );
+  }
+
+  void _showMovieSourceSelection() {
+    if (widget.media.type != MediaType.movie) return;
+
+    final media = widget.media;
+    final details = _fullDetails;
+    final episode = EpisodeEntity(
+      id: media.id,
+      mediaId: media.id,
+      number: 1,
+      title: details?.title ?? media.title,
+      releaseDate: details?.startDate,
+      thumbnail:
+          details?.bannerImage ?? details?.coverImage ?? media.coverImage,
+      sourceProvider: media.sourceId,
+    );
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) {
+        return EpisodeSourceSelectionSheet(
+          media: media,
+          episode: episode,
+          isChapter: false,
+          onSourceSelected: (selection) {
+            _navigateToVideoPlayer(
+              context,
+              episode,
+              selection.source,
+              selection.allSources,
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildPlayButton(BuildContext context) {
+    return FloatingActionButton.extended(
+      onPressed: _showMovieSourceSelection,
+      icon: const Icon(Icons.play_arrow_rounded),
+      label: const Text('Play'),
+    );
   }
 
   void _initializeAttributionFromMedia(MediaEntity media) {
@@ -377,6 +473,7 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
       case TrackingService.simkl:
         return 'Simkl';
       case TrackingService.jikan:
+      case TrackingService.local:
         return 'Jikan';
     }
   }
@@ -398,6 +495,9 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
     final isAnime = widget.media.type == MediaType.anime;
 
     return Scaffold(
+      floatingActionButton: widget.media.type == MediaType.movie
+          ? _buildPlayButton(context)
+          : null,
       body: NestedScrollView(
         headerSliverBuilder: (BuildContext context, bool innerBoxIsScrolled) {
           return <Widget>[
@@ -577,21 +677,33 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
                       children: [
                         Expanded(
                           child: FilledButton.icon(
-                            onPressed: () {
-                              // TODO: Implement Add to Library
-                            },
-                            icon: const Icon(Icons.add),
-                            label: const Text('Add to Library'),
+                            onPressed: _isLibraryActionInProgress
+                                ? null
+                                : (_libraryStatus != null
+                                      ? _confirmRemoveFromLibrary
+                                      : _showAddToLibraryDialog),
+                            icon: Icon(
+                              _libraryStatus != null ? Icons.delete : Icons.add,
+                            ),
+                            label: Text(
+                              _libraryStatus != null
+                                  ? _getStatusDisplayName(_libraryStatus!)
+                                  : 'Add to Library',
+                            ),
                           ),
                         ),
                         const SizedBox(width: 12),
                         Expanded(
                           child: OutlinedButton.icon(
-                            onPressed: () {
-                              // TODO: Implement Custom List
-                            },
-                            icon: const Icon(Icons.playlist_add),
-                            label: const Text('Custom List'),
+                            onPressed: _playOrContinue,
+                            icon: const Icon(Icons.play_arrow),
+                            label: Text(
+                              widget.media.type == MediaType.movie
+                                  ? 'Play'
+                                  : widget.media.type == MediaType.anime
+                                  ? 'Play'
+                                  : 'Read',
+                            ),
                           ),
                         ),
                       ],
@@ -1144,6 +1256,63 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
                           ),
                         ),
                       ),
+                      // Progress indicator for episode
+                      FutureBuilder<WatchHistoryEntry?>(
+                        future: _watchHistoryController.getEntryForMedia(
+                          widget.media.id,
+                          widget.media.sourceId,
+                          MediaType.anime,
+                        ),
+                        builder: (context, snapshot) {
+                          if (snapshot.hasData &&
+                              snapshot.data != null &&
+                              snapshot.data!.episodeNumber == episode.number) {
+                            final entry = snapshot.data!;
+                            return Padding(
+                              padding: const EdgeInsets.only(top: 8),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.play_circle,
+                                    size: 12,
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.primary,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    entry.progressDisplayString,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelSmall
+                                        ?.copyWith(
+                                          color: Theme.of(
+                                            context,
+                                          ).colorScheme.primary,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                  ),
+                                  if (entry.remainingTimeFormatted != null) ...[
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      '• ${entry.remainingTimeFormatted}',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelSmall
+                                          ?.copyWith(
+                                            color: Theme.of(
+                                              context,
+                                            ).colorScheme.onSurfaceVariant,
+                                          ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            );
+                          }
+                          return const SizedBox.shrink();
+                        },
+                      ),
                     ],
                   ),
                 ),
@@ -1290,36 +1459,87 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
               return Card(
                 margin: const EdgeInsets.only(bottom: 12),
                 elevation: 2,
-                child: ListTile(
-                  leading: CircleAvatar(
-                    backgroundColor: Theme.of(
-                      context,
-                    ).colorScheme.primaryContainer,
-                    child: Text(
-                      '${chapter.number.toInt()}',
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.onPrimaryContainer,
-                        fontWeight: FontWeight.bold,
+                child: Column(
+                  children: [
+                    ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor: Theme.of(
+                          context,
+                        ).colorScheme.primaryContainer,
+                        child: Text(
+                          '${chapter.number.toInt()}',
+                          style: TextStyle(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onPrimaryContainer,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ),
+                      title: Text(
+                        chapter.title.isNotEmpty
+                            ? chapter.title
+                            : 'Chapter ${chapter.number}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      subtitle: chapter.releaseDate != null
+                          ? Text(
+                              DateFormat(
+                                'MMM d, y',
+                              ).format(chapter.releaseDate!),
+                            )
+                          : null,
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () {
+                        _showChapterSourceSelection(context, chapter);
+                      },
                     ),
-                  ),
-                  title: Text(
-                    chapter.title.isNotEmpty
-                        ? chapter.title
-                        : 'Chapter ${chapter.number}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  subtitle: chapter.releaseDate != null
-                      ? Text(
-                          DateFormat('MMM d, y').format(chapter.releaseDate!),
-                        )
-                      : null,
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () {
-                    _showChapterSourceSelection(context, chapter);
-                  },
+                    // Progress indicator for chapter
+                    FutureBuilder<WatchHistoryEntry?>(
+                      future: _watchHistoryController.getEntryForMedia(
+                        widget.media.id,
+                        widget.media.sourceId,
+                        widget.media.type,
+                      ),
+                      builder: (context, snapshot) {
+                        if (snapshot.hasData &&
+                            snapshot.data != null &&
+                            snapshot.data!.chapterNumber == chapter.number) {
+                          final entry = snapshot.data!;
+                          return Padding(
+                            padding: const EdgeInsets.only(
+                              left: 16,
+                              right: 16,
+                              bottom: 8,
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.book,
+                                  size: 12,
+                                  color: Theme.of(context).colorScheme.primary,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  entry.progressDisplayString,
+                                  style: Theme.of(context).textTheme.labelSmall
+                                      ?.copyWith(
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.primary,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }
+                        return const SizedBox.shrink();
+                      },
+                    ),
+                  ],
                 ),
               );
             }, childCount: _chapters.length),
@@ -1879,9 +2099,303 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
       );
     }
   }
+
+  /// Show dialog to select library status and add media to library
+  void _showAddToLibraryDialog() {
+    if (_libraryStatus != null) {
+      return;
+    }
+    final title = widget.media.title;
+
+    // Determine appropriate statuses based on media type
+    final statuses = widget.media.type == MediaType.anime
+        ? [
+            LibraryStatus.planToWatch,
+            LibraryStatus.currentlyWatching,
+            LibraryStatus.completed,
+            LibraryStatus.onHold,
+            LibraryStatus.dropped,
+          ]
+        : [
+            LibraryStatus.planToWatch,
+            LibraryStatus.currentlyWatching,
+            LibraryStatus.completed,
+            LibraryStatus.onHold,
+            LibraryStatus.dropped,
+          ];
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Add to Library'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 16),
+            const Text('Select status:'),
+            const SizedBox(height: 8),
+            ...statuses.map(
+              (status) => RadioListTile<LibraryStatus>(
+                title: Text(_getStatusDisplayName(status)),
+                value: status,
+                groupValue: null,
+                onChanged: (selected) {
+                  Navigator.of(context).pop();
+                  if (selected != null) {
+                    _addToLibrary(selected);
+                  }
+                },
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _getStatusDisplayName(LibraryStatus status) {
+    switch (status) {
+      case LibraryStatus.planToWatch:
+        return widget.media.type == MediaType.manga
+            ? 'Plan to Read'
+            : 'Plan to Watch';
+      case LibraryStatus.currentlyWatching:
+        return 'Currently Watching';
+      case LibraryStatus.completed:
+        return 'Completed';
+      case LibraryStatus.onHold:
+        return 'On Hold';
+      case LibraryStatus.dropped:
+        return 'Dropped';
+      case LibraryStatus.wantToWatch:
+        return 'Want to Watch';
+      case LibraryStatus.watched:
+        return 'Watched';
+      case LibraryStatus.watching:
+        return 'Watching';
+      case LibraryStatus.finished:
+        return 'Finished';
+    }
+  }
+
+  Future<void> _addToLibrary(LibraryStatus status) async {
+    if (_isLibraryActionInProgress) return;
+    setState(() => _isLibraryActionInProgress = true);
+    try {
+      final normalizedId = LibraryItemEntity.generateNormalizedId(
+        widget.media.title,
+        widget.media.type,
+        _fullDetails?.startDate?.year ?? widget.media.startDate?.year,
+      );
+
+      final libraryItem = LibraryItemEntity(
+        id: _buildLibraryItemId(),
+        mediaId: widget.media.id,
+        userService: TrackingService.local,
+        media: widget.media,
+        mediaType: widget.media.type,
+        normalizedId: normalizedId,
+        sourceId: widget.media.sourceId,
+        sourceName: widget.media.sourceName,
+        status: status,
+        addedAt: DateTime.now(),
+        lastUpdated: DateTime.now(),
+      );
+
+      final result = await _addToLibraryUseCase.call(
+        AddToLibraryParams(item: libraryItem),
+      );
+
+      if (!mounted) return;
+
+      result.fold(
+        (failure) {
+          setState(() => _isLibraryActionInProgress = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to add to library: ${failure.message}'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        },
+        (_) {
+          setState(() {
+            _libraryItem = libraryItem;
+            _libraryStatus = status;
+            _isLibraryActionInProgress = false;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Added to library: ${_getStatusDisplayName(status)}',
+              ),
+              backgroundColor: Colors.green,
+            ),
+          );
+        },
+      );
+    } catch (e) {
+      Logger.error(
+        'Failed to add to library: $e',
+        tag: 'AnimeMangaDetailsScreen',
+      );
+      if (mounted) {
+        setState(() => _isLibraryActionInProgress = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to add to library: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _confirmRemoveFromLibrary() async {
+    final shouldRemove = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove from Library'),
+        content: Text('Remove "${widget.media.title}" from your library?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(context).pop(true),
+            icon: const Icon(Icons.delete),
+            label: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldRemove == true) {
+      await _removeFromLibrary();
+    }
+  }
+
+  Future<void> _removeFromLibrary() async {
+    final item = _libraryItem;
+    if (item == null || _isLibraryActionInProgress) return;
+    setState(() => _isLibraryActionInProgress = true);
+    final result = await _removeFromLibraryUseCase.call(
+      RemoveFromLibraryParams(itemId: item.id),
+    );
+
+    if (!mounted) return;
+
+    result.fold(
+      (failure) {
+        setState(() => _isLibraryActionInProgress = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to remove from library: ${failure.message}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      },
+      (_) {
+        setState(() {
+          _libraryItem = null;
+          _libraryStatus = null;
+          _isLibraryActionInProgress = false;
+        });
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Removed from library')));
+      },
+    );
+  }
+
+  /// Play or Continue button functionality
+  void _playOrContinue() async {
+    try {
+      final mediaType = widget.media.type;
+
+      // Check watch history for existing progress
+      final watchHistory = await _watchHistoryController.getEntryForMedia(
+        widget.media.id,
+        widget.media.sourceId,
+        widget.media.type,
+      );
+
+      if (mediaType == MediaType.movie) {
+        // For movies, show source selection
+        _showMovieSourceSelection();
+      } else if (mediaType == MediaType.anime) {
+        // For anime, check if we have watch history
+        if (watchHistory != null && watchHistory.episodeNumber != null) {
+          // Continue from last watched episode
+          await _continueFromEpisode(watchHistory.episodeNumber!);
+        } else {
+          // Play first episode
+          await _playFirstEpisode();
+        }
+      } else {
+        // For manga/novel, check if we have reading history
+        if (watchHistory != null && watchHistory.chapterNumber != null) {
+          // Continue from last read chapter
+          await _continueFromChapter(watchHistory.chapterNumber!.toDouble());
+        } else {
+          // Read first chapter
+          await _readFirstChapter();
+        }
+      }
+    } catch (e) {
+      Logger.error(
+        'Error in play/continue: $e',
+        tag: 'AnimeMangaDetailsScreen',
+      );
+      // Fallback
+      if (widget.media.type == MediaType.movie) {
+        _showMovieSourceSelection();
+      } else if (widget.media.type == MediaType.anime) {
+        _playFirstEpisode();
+      } else {
+        _readFirstChapter();
+      }
+    }
+  }
+
+  Future<void> _continueFromEpisode(int episodeNumber) async {
+    final episode = _episodes.firstWhere(
+      (e) => e.number == episodeNumber,
+      orElse: () => _episodes.first,
+    );
+    _showEpisodeSourceSelection(context, episode);
+  }
+
+  Future<void> _playFirstEpisode() async {
+    if (_episodes.isNotEmpty) {
+      _showEpisodeSourceSelection(context, _episodes.first);
+    }
+  }
+
+  Future<void> _continueFromChapter(double chapterNumber) async {
+    final chapter = _chapters.firstWhere(
+      (c) => c.number == chapterNumber,
+      orElse: () => _chapters.first,
+    );
+    _showChapterSourceSelection(context, chapter);
+  }
+
+  Future<void> _readFirstChapter() async {
+    if (_chapters.isNotEmpty) {
+      _showChapterSourceSelection(context, _chapters.first);
+    }
+  }
 }
 
-// Custom delegate for pinned tab bar
 class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
   final TabBar _tabBar;
 

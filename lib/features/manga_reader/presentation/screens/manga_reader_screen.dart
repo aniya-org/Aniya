@@ -3,9 +3,12 @@ import 'package:photo_view/photo_view.dart';
 import 'package:photo_view/photo_view_gallery.dart';
 import '../../../../core/di/injection_container.dart';
 import '../../../../core/domain/entities/chapter_entity.dart';
+import '../../../../core/domain/entities/media_entity.dart';
+import '../../../../core/domain/entities/source_entity.dart';
 import '../../../../core/domain/usecases/get_chapter_pages_usecase.dart';
 import '../../../../core/domain/usecases/save_reading_position_usecase.dart';
 import '../../../../core/domain/usecases/get_reading_position_usecase.dart';
+import '../../../../core/services/watch_history_controller.dart';
 import '../viewmodels/manga_reader_viewmodel.dart';
 
 /// Manga reader screen for reading manga chapters
@@ -22,11 +25,17 @@ class MangaReaderScreen extends StatefulWidget {
   final String sourceId;
   final String itemId;
 
+  /// Optional media info for watch history tracking
+  final MediaEntity? media;
+  final SourceEntity? source;
+
   const MangaReaderScreen({
     super.key,
     required this.chapter,
     required this.sourceId,
     required this.itemId,
+    this.media,
+    this.source,
   });
 
   @override
@@ -37,6 +46,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
   late MangaReaderViewModel _viewModel;
   late PageController _pageController;
   late ScrollController _scrollController;
+  WatchHistoryController? _watchHistoryController;
   bool _showControls = true;
   bool _isInitialized = false;
 
@@ -55,6 +65,12 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
         getReadingPosition: sl<GetReadingPositionUseCase>(),
       );
     }
+
+    // Initialize WatchHistoryController if available
+    if (sl.isRegistered<WatchHistoryController>()) {
+      _watchHistoryController = sl<WatchHistoryController>();
+    }
+
     _pageController = PageController();
     _scrollController = ScrollController();
     _initializeReader();
@@ -101,6 +117,27 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
       // Switching to horizontal mode
       _pageController = PageController(initialPage: _viewModel.currentPage);
     }
+  }
+
+  /// Update watch history with current reading progress
+  Future<void> _updateWatchHistory(int pageNumber) async {
+    if (_watchHistoryController == null) return;
+    if (widget.media == null || widget.source == null) return;
+
+    await _watchHistoryController!.updateReadingProgress(
+      mediaId: widget.media!.id,
+      mediaType: widget.media!.type,
+      title: widget.media!.title,
+      coverImage: widget.media!.coverImage,
+      sourceId: widget.source!.id,
+      sourceName: widget.source!.name,
+      pageNumber: pageNumber,
+      totalPages: _viewModel.pages.length,
+      chapterNumber: widget.chapter.number.toInt(),
+      chapterId: widget.chapter.id,
+      chapterTitle: widget.chapter.title,
+      normalizedId: null, // MediaEntity doesn't have normalizedId yet
+    );
   }
 
   @override
@@ -234,6 +271,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
       pageController: _pageController,
       onPageChanged: (index) {
         _viewModel.setCurrentPage(index, widget.itemId, widget.chapter.id);
+        _updateWatchHistory(index);
       },
     );
   }
@@ -339,6 +377,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
                       widget.itemId,
                       widget.chapter.id,
                     );
+                    _updateWatchHistory(page);
                     // Scroll to approximate position
                     final scrollPosition =
                         (page / _viewModel.pages.length) *

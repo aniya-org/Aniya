@@ -1,0 +1,212 @@
+import '../../domain/entities/watch_history_entry.dart';
+import '../../domain/entities/media_entity.dart';
+
+/// Data model for WatchHistoryEntry with JSON serialization support
+class WatchHistoryEntryModel extends WatchHistoryEntry {
+  const WatchHistoryEntryModel({
+    required super.id,
+    required super.mediaId,
+    super.normalizedId,
+    required super.mediaType,
+    required super.title,
+    super.coverImage,
+    required super.sourceId,
+    required super.sourceName,
+    super.episodeNumber,
+    super.episodeId,
+    super.episodeTitle,
+    super.playbackPositionMs,
+    super.totalDurationMs,
+    super.chapterNumber,
+    super.chapterId,
+    super.chapterTitle,
+    super.volumeNumber,
+    super.pageNumber,
+    super.totalPages,
+    super.livestreamId,
+    super.wasLive,
+    required super.createdAt,
+    required super.lastPlayedAt,
+    super.completedAt,
+  });
+
+  /// Create from JSON map
+  factory WatchHistoryEntryModel.fromJson(Map<String, dynamic> json) {
+    return WatchHistoryEntryModel(
+      id: json['id'] as String,
+      mediaId: json['mediaId'] as String,
+      normalizedId: json['normalizedId'] as String?,
+      mediaType: MediaType.values.firstWhere(
+        (e) => e.name == json['mediaType'],
+        orElse: () => MediaType.anime,
+      ),
+      title: json['title'] as String,
+      coverImage: json['coverImage'] as String?,
+      sourceId: json['sourceId'] as String,
+      sourceName: json['sourceName'] as String,
+      episodeNumber: json['episodeNumber'] as int?,
+      episodeId: json['episodeId'] as String?,
+      episodeTitle: json['episodeTitle'] as String?,
+      playbackPositionMs: json['playbackPositionMs'] as int?,
+      totalDurationMs: json['totalDurationMs'] as int?,
+      chapterNumber: json['chapterNumber'] as int?,
+      chapterId: json['chapterId'] as String?,
+      chapterTitle: json['chapterTitle'] as String?,
+      volumeNumber: json['volumeNumber'] as int?,
+      pageNumber: json['pageNumber'] as int?,
+      totalPages: json['totalPages'] as int?,
+      livestreamId: json['livestreamId'] as String?,
+      wasLive: json['wasLive'] as bool?,
+      createdAt: DateTime.parse(json['createdAt'] as String),
+      lastPlayedAt: DateTime.parse(json['lastPlayedAt'] as String),
+      completedAt: json['completedAt'] != null
+          ? DateTime.parse(json['completedAt'] as String)
+          : null,
+    );
+  }
+
+  /// Convert to JSON map
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'mediaId': mediaId,
+      'normalizedId': normalizedId,
+      'mediaType': mediaType.name,
+      'title': title,
+      'coverImage': coverImage,
+      'sourceId': sourceId,
+      'sourceName': sourceName,
+      'episodeNumber': episodeNumber,
+      'episodeId': episodeId,
+      'episodeTitle': episodeTitle,
+      'playbackPositionMs': playbackPositionMs,
+      'totalDurationMs': totalDurationMs,
+      'chapterNumber': chapterNumber,
+      'chapterId': chapterId,
+      'chapterTitle': chapterTitle,
+      'volumeNumber': volumeNumber,
+      'pageNumber': pageNumber,
+      'totalPages': totalPages,
+      'livestreamId': livestreamId,
+      'wasLive': wasLive,
+      'createdAt': createdAt.toIso8601String(),
+      'lastPlayedAt': lastPlayedAt.toIso8601String(),
+      'completedAt': completedAt?.toIso8601String(),
+    };
+  }
+
+  /// Convert to entity
+  WatchHistoryEntry toEntity() {
+    return WatchHistoryEntry(
+      id: id,
+      mediaId: mediaId,
+      normalizedId: normalizedId,
+      mediaType: mediaType,
+      title: title,
+      coverImage: coverImage,
+      sourceId: sourceId,
+      sourceName: sourceName,
+      episodeNumber: episodeNumber,
+      episodeId: episodeId,
+      episodeTitle: episodeTitle,
+      playbackPositionMs: playbackPositionMs,
+      totalDurationMs: totalDurationMs,
+      chapterNumber: chapterNumber,
+      chapterId: chapterId,
+      chapterTitle: chapterTitle,
+      volumeNumber: volumeNumber,
+      pageNumber: pageNumber,
+      totalPages: totalPages,
+      livestreamId: livestreamId,
+      wasLive: wasLive,
+      createdAt: createdAt,
+      lastPlayedAt: lastPlayedAt,
+      completedAt: completedAt,
+    );
+  }
+
+  /// Create from entity
+  factory WatchHistoryEntryModel.fromEntity(WatchHistoryEntry entity) {
+    return WatchHistoryEntryModel(
+      id: entity.id,
+      mediaId: entity.mediaId,
+      normalizedId: entity.normalizedId,
+      mediaType: entity.mediaType,
+      title: entity.title,
+      coverImage: entity.coverImage,
+      sourceId: entity.sourceId,
+      sourceName: entity.sourceName,
+      episodeNumber: entity.episodeNumber,
+      episodeId: entity.episodeId,
+      episodeTitle: entity.episodeTitle,
+      playbackPositionMs: entity.playbackPositionMs,
+      totalDurationMs: entity.totalDurationMs,
+      chapterNumber: entity.chapterNumber,
+      chapterId: entity.chapterId,
+      chapterTitle: entity.chapterTitle,
+      volumeNumber: entity.volumeNumber,
+      pageNumber: entity.pageNumber,
+      totalPages: entity.totalPages,
+      livestreamId: entity.livestreamId,
+      wasLive: entity.wasLive,
+      createdAt: entity.createdAt,
+      lastPlayedAt: entity.lastPlayedAt,
+      completedAt: entity.completedAt,
+    );
+  }
+
+  @override
+  WatchHistoryEntryModel copyWith({
+    String? id,
+    String? mediaId,
+    String? normalizedId,
+    MediaType? mediaType,
+    String? title,
+    String? coverImage,
+    String? sourceId,
+    String? sourceName,
+    int? episodeNumber,
+    String? episodeId,
+    String? episodeTitle,
+    int? playbackPositionMs,
+    int? totalDurationMs,
+    int? chapterNumber,
+    String? chapterId,
+    String? chapterTitle,
+    int? volumeNumber,
+    int? pageNumber,
+    int? totalPages,
+    String? livestreamId,
+    bool? wasLive,
+    DateTime? createdAt,
+    DateTime? lastPlayedAt,
+    DateTime? completedAt,
+  }) {
+    return WatchHistoryEntryModel(
+      id: id ?? this.id,
+      mediaId: mediaId ?? this.mediaId,
+      normalizedId: normalizedId ?? this.normalizedId,
+      mediaType: mediaType ?? this.mediaType,
+      title: title ?? this.title,
+      coverImage: coverImage ?? this.coverImage,
+      sourceId: sourceId ?? this.sourceId,
+      sourceName: sourceName ?? this.sourceName,
+      episodeNumber: episodeNumber ?? this.episodeNumber,
+      episodeId: episodeId ?? this.episodeId,
+      episodeTitle: episodeTitle ?? this.episodeTitle,
+      playbackPositionMs: playbackPositionMs ?? this.playbackPositionMs,
+      totalDurationMs: totalDurationMs ?? this.totalDurationMs,
+      chapterNumber: chapterNumber ?? this.chapterNumber,
+      chapterId: chapterId ?? this.chapterId,
+      chapterTitle: chapterTitle ?? this.chapterTitle,
+      volumeNumber: volumeNumber ?? this.volumeNumber,
+      pageNumber: pageNumber ?? this.pageNumber,
+      totalPages: totalPages ?? this.totalPages,
+      livestreamId: livestreamId ?? this.livestreamId,
+      wasLive: wasLive ?? this.wasLive,
+      createdAt: createdAt ?? this.createdAt,
+      lastPlayedAt: lastPlayedAt ?? this.lastPlayedAt,
+      completedAt: completedAt ?? this.completedAt,
+    );
+  }
+}

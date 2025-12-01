@@ -391,11 +391,19 @@ class _MediaDetailsScreenState extends State<MediaDetailsScreen> {
             itemCount: viewModel.episodes.length,
             itemBuilder: (context, index) {
               final episode = viewModel.episodes[index];
+              final progressEntry = viewModel.getEpisodeProgress(
+                episode.number,
+              );
+              final progress = progressEntry?.progressPercentage ?? 0.0;
+              final isWatched = progressEntry?.isCurrentUnitCompleted ?? false;
+
               return Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: EpisodeCard(
                   episode: episode,
                   onTap: () => _playEpisode(context, episode),
+                  isWatched: isWatched,
+                  progress: progress > 0 ? progress : null,
                 ),
               );
             },
@@ -429,17 +437,19 @@ class _MediaDetailsScreenState extends State<MediaDetailsScreen> {
             itemCount: viewModel.chapters.length,
             itemBuilder: (context, index) {
               final chapter = viewModel.chapters[index];
-              return Card(
-                child: ListTile(
-                  leading: CircleAvatar(
-                    child: Text(chapter.number.toStringAsFixed(0)),
-                  ),
-                  title: Text(chapter.title),
-                  subtitle: chapter.releaseDate != null
-                      ? Text(_formatDate(chapter.releaseDate!))
-                      : null,
-                  trailing: const Icon(Icons.chevron_right),
+              final progressEntry = viewModel.getChapterProgress(
+                chapter.number.toInt(),
+              );
+              final progress = progressEntry?.progressPercentage ?? 0.0;
+              final isRead = progressEntry?.isCurrentUnitCompleted ?? false;
+
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: ChapterCard(
+                  chapter: chapter,
                   onTap: () => _readChapter(context, chapter),
+                  isRead: isRead,
+                  progress: progress > 0 ? progress : null,
                 ),
               );
             },
@@ -557,6 +567,8 @@ class _MediaDetailsScreenState extends State<MediaDetailsScreen> {
           chapter: chapter,
           sourceId: source.id,
           itemId: widget.media.id,
+          media: widget.media,
+          source: source,
         ),
       ),
     );
@@ -586,6 +598,14 @@ class _MediaDetailsScreenState extends State<MediaDetailsScreen> {
         return Icons.theaters;
       case MediaType.tvShow:
         return Icons.tv;
+      case MediaType.cartoon:
+        return Icons.animation;
+      case MediaType.documentary:
+        return Icons.video_library;
+      case MediaType.livestream:
+        return Icons.live_tv;
+      case MediaType.nsfw:
+        return Icons.eighteen_up_rating;
     }
   }
 
@@ -601,6 +621,14 @@ class _MediaDetailsScreenState extends State<MediaDetailsScreen> {
         return 'Movie';
       case MediaType.tvShow:
         return 'TV Show';
+      case MediaType.cartoon:
+        return 'Cartoon';
+      case MediaType.documentary:
+        return 'Documentary';
+      case MediaType.livestream:
+        return 'Livestream';
+      case MediaType.nsfw:
+        return 'NSFW';
     }
   }
 
@@ -636,10 +664,6 @@ class _MediaDetailsScreenState extends State<MediaDetailsScreen> {
       case LibraryStatus.finished:
         return 'Finished';
     }
-  }
-
-  String _formatDate(DateTime date) {
-    return '${date.day}/${date.month}/${date.year}';
   }
 
   Widget _buildSkeletonScreen(BuildContext context) {

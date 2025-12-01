@@ -7,6 +7,26 @@ import '../../../core/error/failures.dart';
 
 /// Repository interface for media-related operations
 /// Provides methods to search, fetch, and manage media content from extensions
+class SourceSearchProgress {
+  final String sourceId;
+  final String sourceName;
+  final bool isLoading;
+  final bool hasError;
+  final String? errorMessage;
+  final List<MediaEntity> results;
+
+  const SourceSearchProgress({
+    required this.sourceId,
+    required this.sourceName,
+    required this.isLoading,
+    required this.hasError,
+    this.errorMessage,
+    required this.results,
+  });
+}
+
+typedef SourceProgressCallback = void Function(SourceSearchProgress progress);
+
 abstract class MediaRepository {
   /// Search for media across all enabled extensions or external sources
   ///
@@ -19,6 +39,7 @@ abstract class MediaRepository {
     String query,
     MediaType type, {
     String? sourceId,
+    SourceProgressCallback? onSourceProgress,
   });
 
   /// Advanced search for media with filtering and pagination (external sources only)

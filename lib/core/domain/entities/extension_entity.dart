@@ -81,6 +81,11 @@ class ExtensionEntity extends Equatable {
   /// Description of the extension
   final String? description;
 
+  /// Whether this extension can be executed on desktop platforms.
+  /// For CloudStream: true if plugin has JS code, false if DEX-only.
+  /// Null means unknown (e.g., not yet checked or not applicable).
+  final bool? isExecutableOnDesktop;
+
   const ExtensionEntity({
     required this.id,
     required this.name,
@@ -95,6 +100,7 @@ class ExtensionEntity extends Equatable {
     this.iconUrl,
     this.apkUrl,
     this.description,
+    this.isExecutableOnDesktop,
   });
 
   /// Creates a copy of this extension with the given fields replaced.
@@ -112,6 +118,7 @@ class ExtensionEntity extends Equatable {
     String? iconUrl,
     String? apkUrl,
     String? description,
+    bool? isExecutableOnDesktop,
   }) {
     return ExtensionEntity(
       id: id ?? this.id,
@@ -127,6 +134,8 @@ class ExtensionEntity extends Equatable {
       iconUrl: iconUrl ?? this.iconUrl,
       apkUrl: apkUrl ?? this.apkUrl,
       description: description ?? this.description,
+      isExecutableOnDesktop:
+          isExecutableOnDesktop ?? this.isExecutableOnDesktop,
     );
   }
 
@@ -145,5 +154,6 @@ class ExtensionEntity extends Equatable {
     iconUrl,
     apkUrl,
     description,
+    isExecutableOnDesktop,
   ];
 }

@@ -33,7 +33,7 @@ class _ExtensionScreenState extends State<ExtensionScreen>
   String _selectedLanguage = 'All';
   String _searchQuery = '';
   domain.ItemType? _selectedCloudStreamCategory;
-  bridge.ExtensionType _currentExtensionType = bridge.ExtensionType.mangayomi;
+  bridge.ExtensionType? _currentExtensionType;
 
   @override
   void initState() {
@@ -146,12 +146,11 @@ class _ExtensionScreenState extends State<ExtensionScreen>
       pinned: true,
       forceElevated: innerBoxIsScrolled,
       actions: [
-        if (_currentExtensionType == bridge.ExtensionType.cloudstream)
-          IconButton(
-            icon: const Icon(Icons.link),
-            tooltip: 'Install CloudStream extension from URL',
-            onPressed: () => _showCloudStreamUrlDialog(context),
-          ),
+        IconButton(
+          icon: const Icon(Icons.link),
+          tooltip: 'Install CloudStream extension from URL',
+          onPressed: () => _showCloudStreamUrlDialog(context),
+        ),
         // Update All button (if updates available)
         if (_extensionsController.updatePendingExtensions.isNotEmpty)
           TextButton.icon(
@@ -263,22 +262,26 @@ class _ExtensionScreenState extends State<ExtensionScreen>
           Expanded(
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
-              child: SegmentedButton<bridge.ExtensionType>(
+              child: SegmentedButton<bridge.ExtensionType?>(
                 segments: const [
-                  ButtonSegment(
+                  ButtonSegment<bridge.ExtensionType?>(
+                    value: null,
+                    label: Text('All'),
+                  ),
+                  ButtonSegment<bridge.ExtensionType?>(
                     value: bridge.ExtensionType.mangayomi,
                     label: Text('Mangayomi'),
                   ),
-                  ButtonSegment(
+                  ButtonSegment<bridge.ExtensionType?>(
                     value: bridge.ExtensionType.aniyomi,
                     label: Text('Aniyomi'),
                   ),
-                  ButtonSegment(
+                  ButtonSegment<bridge.ExtensionType?>(
                     value: bridge.ExtensionType.cloudstream,
                     label: Text('CloudStream'),
                   ),
                 ],
-                selected: {_currentExtensionType},
+                selected: <bridge.ExtensionType?>{_currentExtensionType},
                 onSelectionChanged: (selected) {
                   setState(() {
                     _currentExtensionType = selected.first;
@@ -388,6 +391,7 @@ class _ExtensionScreenState extends State<ExtensionScreen>
     final filteredExtensions = _getFilteredExtensions(
       installed: installed,
       itemType: itemType,
+      extensionType: _currentExtensionType,
     );
     final pending = installed
         ? _getFilteredExtensions(
@@ -424,7 +428,7 @@ class _ExtensionScreenState extends State<ExtensionScreen>
   /// CloudStream extensions support multiple content types:
   /// anime, movie, tv_show, cartoon, documentary, livestream
   Widget _buildCloudStreamExtensionList({required bool installed}) {
-    final categoryCounts = _cloudStreamCategoryCounts(installed: installed);
+    final categoryMetrics = _cloudStreamCategoryCounts(installed: installed);
     final selectedType = _selectedCloudStreamCategory;
     final cloudStreamPool =
         (installed
@@ -436,6 +440,7 @@ class _ExtensionScreenState extends State<ExtensionScreen>
       installed: installed,
       cloudStreamOnly: true,
       itemType: selectedType,
+      extensionType: _currentExtensionType,
       base: cloudStreamPool,
     );
     final dedupedExtensions = _dedupeCloudStreamExtensions(
@@ -449,6 +454,7 @@ class _ExtensionScreenState extends State<ExtensionScreen>
         installed: true,
         cloudStreamOnly: true,
         itemType: selectedType,
+        extensionType: _currentExtensionType,
         base: _extensionsController.updatePendingExtensions
             .where((e) => e.type == domain.ExtensionType.cloudstream)
             .toList(),
@@ -475,12 +481,17 @@ class _ExtensionScreenState extends State<ExtensionScreen>
       physics: installed ? null : const NeverScrollableScrollPhysics(),
     );
 
-    final chips = _buildCloudStreamCategoryFilter(categoryCounts);
+    // Check if we should show the desktop warning banner
+    final showDesktopWarning = _shouldShowDesktopWarningBanner(
+      installed: installed,
+      extensions: dedupedExtensions,
+    );
 
     if (installed) {
       return Column(
         children: [
-          chips,
+          if (showDesktopWarning) _buildDesktopWarningBanner(context),
+          _buildCloudStreamCategoryFilter(categoryMetrics),
           Expanded(child: listWidget),
         ],
       );
@@ -490,15 +501,84 @@ class _ExtensionScreenState extends State<ExtensionScreen>
     return ListView(
       padding: EdgeInsets.zero,
       children: [
-        chips,
+        if (showDesktopWarning) _buildDesktopWarningBanner(context),
+        _buildCloudStreamCategoryFilter(categoryMetrics),
         if (groups.isNotEmpty) _buildCloudStreamGroupSection(context, groups),
         listWidget,
       ],
     );
   }
 
-  Widget _buildCloudStreamCategoryFilter(Map<domain.ItemType, int> counts) {
-    final total = counts.values.fold<int>(0, (sum, value) => sum + value);
+  /// Whether to show the desktop warning banner.
+  bool _shouldShowDesktopWarningBanner({
+    required bool installed,
+    required List<domain.ExtensionEntity> extensions,
+  }) {
+    // Only show on desktop platforms
+    if (!Platform.isLinux && !Platform.isWindows) return false;
+
+    // Only show for installed extensions tab
+    if (!installed) return false;
+
+    // Check if any installed CloudStream extensions are DEX-only
+    final hasNonExecutable = extensions.any(
+      (e) => e.isExecutableOnDesktop == false,
+    );
+
+    return hasNonExecutable;
+  }
+
+  /// Builds the desktop warning banner for DEX-only plugins.
+  Widget _buildDesktopWarningBanner(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: colorScheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: colorScheme.secondary.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.info_outline,
+            color: colorScheme.onSecondaryContainer,
+            size: 20,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Some plugins require Android',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    color: colorScheme.onSecondaryContainer,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Plugins marked "DEX" contain Android bytecode and cannot run on desktop. '
+                  'Look for JS-based plugins or wait for DEX runtime support.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSecondaryContainer,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCloudStreamCategoryFilter(_CloudStreamCategoryMetrics metrics) {
+    final counts = metrics.perTypeCounts;
+    final total = metrics.uniqueCount;
     final chips = <Widget>[
       ChoiceChip(
         label: Text('All ($total)'),
@@ -823,14 +903,15 @@ class _ExtensionScreenState extends State<ExtensionScreen>
 
   /// Opens the repository settings sheet (Requirement 2.1)
   void _openRepoSettings(BuildContext context) {
+    final effectiveType = _effectiveExtensionType();
     final currentConfig = _extensionsController.getRepositoryConfig(
-      _currentExtensionType,
+      effectiveType,
     );
 
     RepoSettingsSheet.show(
       context: context,
       currentConfig: currentConfig,
-      currentExtensionType: _mapBridgeTypeToDomain(_currentExtensionType),
+      currentExtensionType: _mapBridgeTypeToDomain(effectiveType),
       onSave: (type, config) {
         _extensionsController.applyRepositoryConfig(
           _mapDomainTypeToBridge(type),
@@ -932,7 +1013,7 @@ class _ExtensionScreenState extends State<ExtensionScreen>
     };
   }
 
-  Map<domain.ItemType, int> _cloudStreamCategoryCounts({
+  _CloudStreamCategoryMetrics _cloudStreamCategoryCounts({
     required bool installed,
   }) {
     final identifierBuckets = {
@@ -942,22 +1023,30 @@ class _ExtensionScreenState extends State<ExtensionScreen>
     final source = installed
         ? _extensionsController.installedEntities
         : _extensionsController.availableEntities;
+    final allIdentifiers = <String>{};
     for (final extension in source) {
       if (extension.type != domain.ExtensionType.cloudstream) continue;
+      final identifier = _cloudStreamIdentifier(extension);
+      allIdentifiers.add(identifier);
       identifierBuckets
           .putIfAbsent(extension.itemType, () => <String>{})
-          .add(_cloudStreamIdentifier(extension));
+          .add(identifier);
     }
-    return {
+    final perTypeCounts = {
       for (final entry in identifierBuckets.entries)
         entry.key: entry.value.length,
     };
+    return _CloudStreamCategoryMetrics(
+      perTypeCounts: perTypeCounts,
+      uniqueCount: allIdentifiers.length,
+    );
   }
 
   List<domain.ExtensionEntity> _getFilteredExtensions({
     required bool installed,
     domain.ItemType? itemType,
     bool cloudStreamOnly = false,
+    bridge.ExtensionType? extensionType,
     List<domain.ExtensionEntity>? base,
   }) {
     final installedList = _extensionsController.installedEntities;
@@ -979,6 +1068,10 @@ class _ExtensionScreenState extends State<ExtensionScreen>
       if (itemType != null && extension.itemType != itemType) {
         return false;
       }
+      if (extensionType != null &&
+          !_matchesExtensionType(extension.type, extensionType)) {
+        return false;
+      }
       if (_selectedLanguage != 'All' &&
           extension.language.toLowerCase() != _selectedLanguage.toLowerCase()) {
         return false;
@@ -989,6 +1082,26 @@ class _ExtensionScreenState extends State<ExtensionScreen>
       }
       return true;
     }).toList();
+  }
+
+  bool _matchesExtensionType(
+    domain.ExtensionType extensionType,
+    bridge.ExtensionType selected,
+  ) {
+    switch (selected) {
+      case bridge.ExtensionType.mangayomi:
+        return extensionType == domain.ExtensionType.mangayomi;
+      case bridge.ExtensionType.aniyomi:
+        return extensionType == domain.ExtensionType.aniyomi;
+      case bridge.ExtensionType.cloudstream:
+        return extensionType == domain.ExtensionType.cloudstream;
+      case bridge.ExtensionType.lnreader:
+        return extensionType == domain.ExtensionType.lnreader;
+    }
+  }
+
+  bridge.ExtensionType _effectiveExtensionType() {
+    return _currentExtensionType ?? bridge.ExtensionType.mangayomi;
   }
 
   domain.ExtensionType _mapBridgeTypeToDomain(bridge.ExtensionType type) {
@@ -1034,7 +1147,7 @@ class _ExtensionScreenState extends State<ExtensionScreen>
                     controller: urlController,
                     decoration: const InputDecoration(
                       labelText: 'Extension URL',
-                      hintText: 'https://example.com/plugin.cs3',
+                      hintText: 'https://example.com/repo.json',
                     ),
                     keyboardType: TextInputType.url,
                     autofocus: true,
@@ -1074,6 +1187,16 @@ class _ExtensionScreenState extends State<ExtensionScreen>
       },
     );
   }
+}
+
+class _CloudStreamCategoryMetrics {
+  const _CloudStreamCategoryMetrics({
+    required this.perTypeCounts,
+    required this.uniqueCount,
+  });
+
+  final Map<domain.ItemType, int> perTypeCounts;
+  final int uniqueCount;
 }
 
 class _CloudStreamGroupBundle {

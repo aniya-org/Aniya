@@ -1,8 +1,10 @@
 import 'package:flutter/foundation.dart';
 import '../../../../core/domain/entities/media_entity.dart';
 import '../../../../core/domain/entities/library_item_entity.dart';
+import '../../../../core/domain/entities/watch_history_entry.dart';
 import '../../../../core/domain/usecases/get_trending_media_usecase.dart';
 import '../../../../core/domain/usecases/get_library_items_usecase.dart';
+import '../../../../core/domain/repositories/watch_history_repository.dart';
 import '../../../../core/services/tmdb_service.dart';
 import '../../../../core/utils/error_message_mapper.dart';
 import '../../../../core/utils/logger.dart';
@@ -11,16 +13,20 @@ class HomeViewModel extends ChangeNotifier {
   final GetTrendingMediaUseCase getTrendingMedia;
   final GetLibraryItemsUseCase getLibraryItems;
   final TmdbService tmdbService;
+  final WatchHistoryRepository? watchHistoryRepository;
 
   HomeViewModel({
     required this.getTrendingMedia,
     required this.getLibraryItems,
     required this.tmdbService,
+    this.watchHistoryRepository,
   });
 
   final List<MediaEntity> _trendingAnime = [];
   final List<MediaEntity> _trendingManga = [];
   List<LibraryItemEntity> _continueWatching = [];
+  List<WatchHistoryEntry> _continueWatchingHistory = [];
+  List<WatchHistoryEntry> _continueReadingHistory = [];
   List<Map> _trendingMovies = []; // TMDB movies
   List<Map> _trendingTVShows = []; // TMDB TV shows
   List<Map> _popularMovies = []; // TMDB popular movies
@@ -31,12 +37,21 @@ class HomeViewModel extends ChangeNotifier {
   List<MediaEntity> get trendingAnime => _trendingAnime;
   List<MediaEntity> get trendingManga => _trendingManga;
   List<LibraryItemEntity> get continueWatching => _continueWatching;
+  List<WatchHistoryEntry> get continueWatchingHistory =>
+      _continueWatchingHistory;
+  List<WatchHistoryEntry> get continueReadingHistory => _continueReadingHistory;
   List<Map> get trendingMovies => _trendingMovies;
   List<Map> get trendingTVShows => _trendingTVShows;
   List<Map> get popularMovies => _popularMovies;
   List<Map> get popularTVShows => _popularTVShows;
   bool get isLoading => _isLoading;
   String? get error => _error;
+
+  /// Returns true if there's any continue watching/reading content
+  bool get hasContinueContent =>
+      _continueWatching.isNotEmpty ||
+      _continueWatchingHistory.isNotEmpty ||
+      _continueReadingHistory.isNotEmpty;
 
   Future<void> loadHomeData() async {
     _isLoading = true;
@@ -56,6 +71,9 @@ class HomeViewModel extends ChangeNotifier {
           error: failure,
         );
       }, (items) => _continueWatching = items);
+
+      // Load watch history (Continue Watching from history)
+      await _loadWatchHistory();
 
       // Load TMDB content
       await _loadTmdbContent();
@@ -112,6 +130,51 @@ class HomeViewModel extends ChangeNotifier {
       );
       // Don't set error here as we don't want to block the whole screen
       // if only TMDB fails
+    }
+  }
+
+  /// Load watch history for Continue Watching and Continue Reading sections
+  Future<void> _loadWatchHistory() async {
+    if (watchHistoryRepository == null) return;
+
+    try {
+      // Load Continue Watching (video types)
+      final watchingResult = await watchHistoryRepository!.getContinueWatching(
+        limit: 10,
+      );
+      watchingResult.fold(
+        (failure) => Logger.error(
+          'Failed to load continue watching history',
+          tag: 'HomeViewModel',
+          error: failure,
+        ),
+        (entries) => _continueWatchingHistory = entries,
+      );
+
+      // Load Continue Reading (manga/novels)
+      final readingResult = await watchHistoryRepository!.getContinueReading(
+        limit: 10,
+      );
+      readingResult.fold(
+        (failure) => Logger.error(
+          'Failed to load continue reading history',
+          tag: 'HomeViewModel',
+          error: failure,
+        ),
+        (entries) => _continueReadingHistory = entries,
+      );
+
+      Logger.info(
+        'Watch history loaded: ${_continueWatchingHistory.length} watching, ${_continueReadingHistory.length} reading',
+        tag: 'HomeViewModel',
+      );
+    } catch (e, stackTrace) {
+      Logger.error(
+        'Error loading watch history',
+        tag: 'HomeViewModel',
+        error: e,
+        stackTrace: stackTrace,
+      );
     }
   }
 }

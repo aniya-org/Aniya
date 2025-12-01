@@ -9,6 +9,14 @@ import '../../../../core/domain/entities/media_entity.dart';
 import '../../../../core/domain/entities/media_details_entity.dart';
 import '../../../../core/domain/entities/episode_entity.dart';
 import '../../../../core/domain/entities/source_entity.dart';
+import '../../../../core/domain/entities/library_item_entity.dart';
+import '../../../../core/domain/entities/watch_history_entry.dart';
+import '../../../../core/domain/repositories/library_repository.dart';
+import '../../../../core/domain/usecases/add_to_library_usecase.dart';
+import '../../../../core/domain/usecases/remove_from_library_usecase.dart';
+import '../../../../core/error/failures.dart';
+import '../../../../core/services/watch_history_controller.dart';
+import '../../../../core/enums/tracking_service.dart';
 import '../../../../core/data/datasources/external_remote_data_source.dart';
 import '../../../../core/widgets/provider_badge.dart';
 import '../../../../core/widgets/provider_attribution_dialog.dart';
@@ -37,6 +45,10 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
   late final DataAggregator _aggregator;
   late final ProviderCache _cache;
   late final ExternalRemoteDataSource _externalDataSource;
+  late final AddToLibraryUseCase _addToLibraryUseCase;
+  late final RemoveFromLibraryUseCase _removeFromLibraryUseCase;
+  late final LibraryRepository _libraryRepository;
+  late final WatchHistoryController _watchHistoryController;
   late TabController _tabController;
 
   Map? _fullDetails;
@@ -53,6 +65,9 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
   List<EpisodeEntity>? _aggregatedEpisodes;
   bool _isAggregating = false;
   List<String> _contributingProviders = [];
+  LibraryItemEntity? _libraryItem;
+  LibraryStatus? _libraryStatus;
+  bool _isLibraryActionInProgress = false;
 
   @override
   void initState() {
@@ -62,9 +77,22 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
     _aggregator = sl<DataAggregator>();
     _cache = sl<ProviderCache>();
     _externalDataSource = sl<ExternalRemoteDataSource>();
+    _addToLibraryUseCase = sl<AddToLibraryUseCase>();
+    _removeFromLibraryUseCase = sl<RemoveFromLibraryUseCase>();
+    _libraryRepository = sl<LibraryRepository>();
+    _watchHistoryController = sl<WatchHistoryController>();
     // 3 tabs for TV Shows (Overview, Episodes, More Info), 2 for Movies
     _tabController = TabController(length: widget.isMovie ? 2 : 3, vsync: this);
     _fetchFullDetails();
+    _loadLibraryEntry();
+  }
+
+  Widget _buildPlayButton(BuildContext context) {
+    return FloatingActionButton.extended(
+      onPressed: _showMovieSourceSelection,
+      icon: const Icon(Icons.play_arrow_rounded),
+      label: const Text('Play'),
+    );
   }
 
   @override
@@ -702,6 +730,7 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
         .toList();
 
     return Scaffold(
+      floatingActionButton: widget.isMovie ? _buildPlayButton(context) : null,
       body: NestedScrollView(
         headerSliverBuilder: (BuildContext context, bool innerBoxIsScrolled) {
           return <Widget>[
@@ -880,21 +909,27 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
                       children: [
                         Expanded(
                           child: FilledButton.icon(
-                            onPressed: () {
-                              // TODO: Implement Add to Library
-                            },
-                            icon: const Icon(Icons.add),
-                            label: const Text('Add to Library'),
+                            onPressed: _isLibraryActionInProgress
+                                ? null
+                                : (_libraryStatus != null
+                                      ? _confirmRemoveFromLibrary
+                                      : _showAddToLibraryDialog),
+                            icon: Icon(
+                              _libraryStatus != null ? Icons.delete : Icons.add,
+                            ),
+                            label: Text(
+                              _libraryStatus != null
+                                  ? _getStatusDisplayName(_libraryStatus!)
+                                  : 'Add to Library',
+                            ),
                           ),
                         ),
                         const SizedBox(width: 12),
                         Expanded(
                           child: OutlinedButton.icon(
-                            onPressed: () {
-                              // TODO: Implement Custom List
-                            },
-                            icon: const Icon(Icons.playlist_add),
-                            label: const Text('Custom List'),
+                            onPressed: _playOrContinue,
+                            icon: const Icon(Icons.play_arrow),
+                            label: const Text('Play'),
                           ),
                         ),
                       ],
@@ -1377,6 +1412,59 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
                         ],
                       ),
                     ],
+                    // Progress indicator for aggregated episode
+                    FutureBuilder<WatchHistoryEntry?>(
+                      future: _watchHistoryController.getEntryForMedia(
+                        widget.tmdbData['id'].toString(),
+                        'tmdb',
+                        MediaType.tvShow,
+                      ),
+                      builder: (context, snapshot) {
+                        if (snapshot.hasData &&
+                            snapshot.data != null &&
+                            snapshot.data!.episodeNumber == episode.number) {
+                          final entry = snapshot.data!;
+                          return Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.play_circle,
+                                  size: 12,
+                                  color: Theme.of(context).colorScheme.primary,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  entry.progressDisplayString,
+                                  style: Theme.of(context).textTheme.labelSmall
+                                      ?.copyWith(
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.primary,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                ),
+                                if (entry.remainingTimeFormatted != null) ...[
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    '• ${entry.remainingTimeFormatted}',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelSmall
+                                        ?.copyWith(
+                                          color: Theme.of(
+                                            context,
+                                          ).colorScheme.onSurfaceVariant,
+                                        ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          );
+                        }
+                        return const SizedBox.shrink();
+                      },
+                    ),
                   ],
                 ),
               ),
@@ -1454,6 +1542,60 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
                       style: Theme.of(context).textTheme.labelSmall?.copyWith(
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
+                    ),
+                    // Progress indicator for TMDB episode
+                    FutureBuilder<WatchHistoryEntry?>(
+                      future: _watchHistoryController.getEntryForMedia(
+                        widget.tmdbData['id'].toString(),
+                        'tmdb',
+                        MediaType.tvShow,
+                      ),
+                      builder: (context, snapshot) {
+                        if (snapshot.hasData &&
+                            snapshot.data != null &&
+                            snapshot.data!.episodeNumber ==
+                                episode['episode_number']) {
+                          final entry = snapshot.data!;
+                          return Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.play_circle,
+                                  size: 12,
+                                  color: Theme.of(context).colorScheme.primary,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  entry.progressDisplayString,
+                                  style: Theme.of(context).textTheme.labelSmall
+                                      ?.copyWith(
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.primary,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                ),
+                                if (entry.remainingTimeFormatted != null) ...[
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    '• ${entry.remainingTimeFormatted}',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelSmall
+                                        ?.copyWith(
+                                          color: Theme.of(
+                                            context,
+                                          ).colorScheme.onSurfaceVariant,
+                                        ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          );
+                        }
+                        return const SizedBox.shrink();
+                      },
                     ),
                   ],
                 ),
@@ -1735,6 +1877,78 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
     );
   }
 
+  void _showMovieSourceSelection() {
+    final movieId = widget.tmdbData['id']?.toString();
+    if (movieId == null) return;
+
+    final title =
+        (_fullDetails?['title'] as String?) ??
+        (widget.tmdbData['title'] as String?) ??
+        'Unknown';
+    final releaseDateStr =
+        (_fullDetails?['release_date'] as String?) ??
+        (widget.tmdbData['release_date'] as String?);
+    final posterPath =
+        (_fullDetails?['poster_path'] as String?) ??
+        (widget.tmdbData['poster_path'] as String?);
+    final genres =
+        ((_fullDetails?['genres'] as List?) ??
+                (widget.tmdbData['genres'] as List?) ??
+                [])
+            .map((g) => g['name'] as String?)
+            .whereType<String>()
+            .toList();
+
+    final coverImage = posterPath != null
+        ? TmdbService.getPosterUrl(posterPath)
+        : '';
+
+    final media = MediaEntity(
+      id: movieId,
+      title: title,
+      coverImage: coverImage,
+      type: MediaType.movie,
+      genres: genres,
+      status: _mapTmdbStatus(
+        (_fullDetails?['status'] as String?) ??
+            widget.tmdbData['status'] as String?,
+      ),
+      sourceId: 'tmdb',
+      sourceName: 'TMDB',
+    );
+
+    final episode = EpisodeEntity(
+      id: movieId,
+      mediaId: movieId,
+      number: 1,
+      title: title,
+      releaseDate: releaseDateStr?.isNotEmpty == true
+          ? DateTime.tryParse(releaseDateStr!)
+          : null,
+      thumbnail: coverImage.isNotEmpty ? coverImage : null,
+      sourceProvider: 'tmdb',
+    );
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => EpisodeSourceSelectionSheet(
+        media: media,
+        episode: episode,
+        isChapter: false,
+        onSourceSelected: (selection) {
+          _navigateToVideoPlayer(
+            media,
+            episode,
+            selection.source,
+            selection.allSources,
+          );
+        },
+      ),
+    );
+  }
+
   /// Show episode source selection sheet for aggregated episode
   /// Requirements: 1.1
   void _showEpisodeSourceSelectionForAggregated(EpisodeEntity episode) {
@@ -1793,6 +2007,356 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
         ),
       ),
     );
+  }
+
+  /// Play or Continue button functionality
+  void _playOrContinue() async {
+    try {
+      final mediaType = widget.isMovie ? MediaType.movie : MediaType.tvShow;
+      final mediaId = widget.tmdbData['id'].toString();
+
+      // Check watch history for existing progress
+      final watchHistory = await _watchHistoryController.getEntryForMedia(
+        mediaId,
+        'tmdb',
+        mediaType,
+      );
+
+      if (widget.isMovie) {
+        // For movies, always show source selection
+        _showMovieSourceSelection();
+      } else {
+        // For TV shows, check if we have watch history
+        if (watchHistory != null && watchHistory.episodeNumber != null) {
+          // Continue from last watched episode
+          await _continueFromEpisode(watchHistory.episodeNumber!);
+        } else {
+          // Play first episode
+          await _playFirstEpisode();
+        }
+      }
+    } catch (e) {
+      Logger.error('Error in play/continue: $e', tag: 'TmdbDetailsScreen');
+      // Fallback to showing source selection
+      if (widget.isMovie) {
+        _showMovieSourceSelection();
+      } else {
+        _playFirstEpisode();
+      }
+    }
+  }
+
+  Future<void> _continueFromEpisode(int episodeNumber) async {
+    // Try to find the episode in aggregated episodes first
+    if (_aggregatedEpisodes != null) {
+      final episode = _aggregatedEpisodes!.firstWhere(
+        (e) => e.number == episodeNumber,
+        orElse: () => _aggregatedEpisodes!.first,
+      );
+      _showEpisodeSourceSelectionForAggregated(episode);
+    } else {
+      // Fall back to TMDB episodes
+      final tmdbEpisodes = _seasonDetails?['episodes'] as List? ?? [];
+      final episode = tmdbEpisodes.firstWhere(
+        (e) => e['episode_number'] == episodeNumber,
+        orElse: () => tmdbEpisodes.first,
+      );
+      _showEpisodeSourceSelection(episode);
+    }
+  }
+
+  Future<void> _playFirstEpisode() async {
+    if (_aggregatedEpisodes != null && _aggregatedEpisodes!.isNotEmpty) {
+      _showEpisodeSourceSelectionForAggregated(_aggregatedEpisodes!.first);
+    } else {
+      final tmdbEpisodes = _seasonDetails?['episodes'] as List? ?? [];
+      if (tmdbEpisodes.isNotEmpty) {
+        _showEpisodeSourceSelection(tmdbEpisodes.first);
+      }
+    }
+  }
+
+  String _buildLibraryItemId() {
+    final mediaId = widget.tmdbData['id'].toString();
+    return '${mediaId}_${TrackingService.local.name}';
+  }
+
+  Future<void> _loadLibraryEntry() async {
+    final result = await _libraryRepository.getLibraryItem(
+      _buildLibraryItemId(),
+    );
+    if (!mounted) return;
+    result.fold(
+      (failure) {
+        if (failure is! NotFoundFailure) {
+          Logger.error(
+            'Failed to load library item: ${failure.message}',
+            tag: 'TmdbDetailsScreen',
+          );
+        }
+        setState(() {
+          _libraryItem = null;
+          _libraryStatus = null;
+        });
+      },
+      (item) {
+        setState(() {
+          _libraryItem = item;
+          _libraryStatus = item.status;
+        });
+      },
+    );
+  }
+
+  Future<void> _confirmRemoveFromLibrary() async {
+    final shouldRemove = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove from Library'),
+        content: Text(
+          'Remove "${_fullDetails?['title'] ?? _fullDetails?['name'] ?? widget.tmdbData['title'] ?? widget.tmdbData['name']}" from your library?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(context).pop(true),
+            icon: const Icon(Icons.delete),
+            label: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldRemove == true) {
+      await _removeFromLibrary();
+    }
+  }
+
+  Future<void> _removeFromLibrary() async {
+    final item = _libraryItem;
+    if (item == null || _isLibraryActionInProgress) return;
+    setState(() => _isLibraryActionInProgress = true);
+    final result = await _removeFromLibraryUseCase.call(
+      RemoveFromLibraryParams(itemId: item.id),
+    );
+
+    if (!mounted) return;
+
+    result.fold(
+      (failure) {
+        setState(() => _isLibraryActionInProgress = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to remove from library: ${failure.message}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      },
+      (_) {
+        setState(() {
+          _libraryItem = null;
+          _libraryStatus = null;
+          _isLibraryActionInProgress = false;
+        });
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Removed from library')));
+      },
+    );
+  }
+
+  /// Show dialog to select library status and add media to library
+  void _showAddToLibraryDialog() {
+    if (_libraryStatus != null) return;
+
+    final title = widget.isMovie
+        ? (_fullDetails?['title'] as String?) ??
+              (widget.tmdbData['title'] as String?) ??
+              'Unknown'
+        : (_fullDetails?['name'] as String?) ??
+              (widget.tmdbData['name'] as String?) ??
+              'Unknown';
+
+    // Determine appropriate statuses based on media type
+    final statuses = widget.isMovie
+        ? [
+            LibraryStatus.wantToWatch,
+            LibraryStatus.watched,
+            LibraryStatus.completed,
+          ]
+        : [
+            LibraryStatus.planToWatch,
+            LibraryStatus.currentlyWatching,
+            LibraryStatus.completed,
+            LibraryStatus.onHold,
+            LibraryStatus.dropped,
+          ];
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Add to Library'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 16),
+            const Text('Select status:'),
+            const SizedBox(height: 8),
+            ...statuses.map(
+              (status) => RadioListTile<LibraryStatus>(
+                title: Text(_getStatusDisplayName(status)),
+                value: status,
+                groupValue: null,
+                onChanged: (selected) {
+                  Navigator.of(context).pop();
+                  if (selected != null) {
+                    _addToLibrary(selected);
+                  }
+                },
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _getStatusDisplayName(LibraryStatus status) {
+    switch (status) {
+      case LibraryStatus.planToWatch:
+        return 'Plan to Watch';
+      case LibraryStatus.currentlyWatching:
+        return 'Currently Watching';
+      case LibraryStatus.completed:
+        return 'Completed';
+      case LibraryStatus.onHold:
+        return 'On Hold';
+      case LibraryStatus.dropped:
+        return 'Dropped';
+      case LibraryStatus.wantToWatch:
+        return 'Want to Watch';
+      case LibraryStatus.watched:
+        return 'Watched';
+      case LibraryStatus.watching:
+        return 'Watching';
+      case LibraryStatus.finished:
+        return 'Finished';
+    }
+  }
+
+  Future<void> _addToLibrary(LibraryStatus status) async {
+    if (_isLibraryActionInProgress) return;
+
+    setState(() => _isLibraryActionInProgress = true);
+
+    try {
+      final mediaType = widget.isMovie ? MediaType.movie : MediaType.tvShow;
+      final mediaId = widget.tmdbData['id'].toString();
+      final title = widget.isMovie
+          ? (_fullDetails?['title'] as String?) ??
+                (widget.tmdbData['title'] as String?) ??
+                'Unknown'
+          : (_fullDetails?['name'] as String?) ??
+                (widget.tmdbData['name'] as String?) ??
+                'Unknown';
+      final posterPath = widget.isMovie
+          ? (_fullDetails?['poster_path'] as String?) ??
+                (widget.tmdbData['poster_path'] as String?)
+          : (_fullDetails?['poster_path'] as String?) ??
+                (widget.tmdbData['poster_path'] as String?);
+      final coverImage = posterPath != null
+          ? TmdbService.getPosterUrl(posterPath)
+          : '';
+      final releaseDateString = widget.isMovie
+          ? (_fullDetails?['release_date'] as String?) ??
+                widget.tmdbData['release_date'] as String?
+          : (_fullDetails?['first_air_date'] as String?) ??
+                widget.tmdbData['first_air_date'] as String?;
+
+      final normalizedId = LibraryItemEntity.generateNormalizedId(
+        title,
+        mediaType,
+        _extractYear(releaseDateString),
+      );
+
+      final libraryItem = LibraryItemEntity(
+        id: _buildLibraryItemId(),
+        mediaId: mediaId,
+        userService: TrackingService.local,
+        media: MediaEntity(
+          id: mediaId,
+          title: title,
+          coverImage: coverImage,
+          type: mediaType,
+          genres: [],
+          status: MediaStatus.ongoing,
+          sourceId: 'tmdb',
+          sourceName: 'TMDB',
+        ),
+        mediaType: mediaType,
+        normalizedId: normalizedId,
+        sourceId: 'tmdb',
+        sourceName: 'TMDB',
+        status: status,
+        addedAt: DateTime.now(),
+        lastUpdated: DateTime.now(),
+      );
+
+      final result = await _addToLibraryUseCase.call(
+        AddToLibraryParams(item: libraryItem),
+      );
+
+      if (!mounted) return;
+
+      result.fold(
+        (failure) {
+          setState(() => _isLibraryActionInProgress = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to add to library: ${failure.message}'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        },
+        (_) {
+          setState(() {
+            _libraryItem = libraryItem;
+            _libraryStatus = status;
+            _isLibraryActionInProgress = false;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Added to library: ${_getStatusDisplayName(status)}',
+              ),
+              backgroundColor: Colors.green,
+            ),
+          );
+        },
+      );
+    } catch (e) {
+      Logger.error('Failed to add to library: $e', tag: 'TmdbDetailsScreen');
+      if (mounted) {
+        setState(() => _isLibraryActionInProgress = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to add to library'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   /// Show dialog with detailed provider attribution information

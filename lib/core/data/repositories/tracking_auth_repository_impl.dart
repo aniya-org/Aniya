@@ -306,7 +306,8 @@ class TrackingAuthRepositoryImpl implements TrackingAuthRepository {
         expiresAt = null;
         break;
       case TrackingService.jikan:
-        // Jikan doesn't use authentication
+      case TrackingService.local:
+        // Jikan and local don't use authentication
         expiresAt = null;
         break;
     }

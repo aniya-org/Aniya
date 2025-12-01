@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:dartotsu_extension_bridge/CloudStream/CloudStreamExtensions.dart';
+import 'package:dartotsu_extension_bridge/CloudStream/desktop/cloudstream_desktop_channel_handler.dart';
 import 'package:dartotsu_extension_bridge/ExtensionManager.dart';
 import 'package:dartotsu_extension_bridge/Models/Source.dart';
 import 'package:dartotsu_extension_bridge/Extensions/Extensions.dart' as bridge;
@@ -51,6 +52,21 @@ class ExtensionsController extends GetxController {
   final RxnString updatingSourceId = RxnString();
   final RxnString operationMessage = RxnString();
 
+  /// CloudStream desktop capabilities (null on Android or if not initialized).
+  final Rxn<Map<String, dynamic>> cloudStreamCapabilities = Rxn();
+
+  /// Whether CloudStream can execute JS plugins on desktop.
+  bool get canExecuteJsPlugins =>
+      cloudStreamCapabilities.value?['canExecuteJs'] == true;
+
+  /// Whether CloudStream can execute DEX plugins on desktop.
+  bool get canExecuteDexPlugins =>
+      cloudStreamCapabilities.value?['canExecuteDex'] == true;
+
+  /// Whether CloudStream is fully functional (can execute plugins).
+  bool get isCloudStreamFunctional =>
+      Platform.isAndroid || canExecuteJsPlugins || canExecuteDexPlugins;
+
   final RxString _activeAnimeRepo = ''.obs;
   final RxString _activeMangaRepo = ''.obs;
   final RxString _activeNovelRepo = ''.obs;
@@ -90,11 +106,22 @@ class ExtensionsController extends GetxController {
       _groupInstallStatuses;
 
   Future<void> _reloadCloudStreamPlugins() async {
-    if (!GetPlatform.isAndroid) return;
+    // CloudStream is supported on Android, Linux, and Windows
+    if (!GetPlatform.isAndroid &&
+        !GetPlatform.isLinux &&
+        !GetPlatform.isWindows) {
+      return;
+    }
     const channel = MethodChannel('cloudstreamExtensionBridge');
     try {
       await channel.invokeMethod('initializePlugins');
-      await channel.invokeMethod('cloudstream:reloadPlugins');
+      // cloudstream:reloadPlugins may not be implemented on desktop
+      try {
+        await channel.invokeMethod('cloudstream:reloadPlugins');
+      } catch (e) {
+        // Ignore - desktop may not support this method
+        Logger.debug('cloudstream:reloadPlugins not available: $e');
+      }
       final manager = ExtensionType.cloudstream.getManager();
       if (manager is CloudStreamExtensions) {
         for (final type in _cloudStreamItemTypes) {
@@ -103,8 +130,45 @@ class ExtensionsController extends GetxController {
         await manager.refreshInstalledLists();
         await _sortAllExtensions();
       }
+      // Update capabilities after reload
+      await _fetchCloudStreamCapabilities();
     } catch (e) {
       Logger.warning('Failed to reload CloudStream plugins: $e');
+    }
+  }
+
+  /// Fetch CloudStream desktop capabilities.
+  Future<void> _fetchCloudStreamCapabilities() async {
+    if (Platform.isAndroid) {
+      // On Android, CloudStream is fully functional via native bridge
+      cloudStreamCapabilities.value = {
+        'platform': 'android',
+        'isInitialized': true,
+        'canExecuteJs': false, // Not applicable on Android
+        'canExecuteDex': true, // Native DEX execution
+        'canUseExtractors': true,
+      };
+      return;
+    }
+
+    if (!Platform.isLinux && !Platform.isWindows) {
+      cloudStreamCapabilities.value = null;
+      return;
+    }
+
+    // On desktop, get capabilities from the desktop bridge
+    final handler = CloudStreamDesktopChannelHandler.instance;
+    if (handler.isSetup) {
+      cloudStreamCapabilities.value = handler.bridge.getCapabilities();
+    } else {
+      cloudStreamCapabilities.value = {
+        'platform': Platform.operatingSystem,
+        'isInitialized': false,
+        'canExecuteJs': false,
+        'canExecuteDex': false,
+        'canUseExtractors': false,
+        'error': 'Desktop bridge not initialized',
+      };
     }
   }
 
@@ -117,6 +181,7 @@ class ExtensionsController extends GetxController {
     _restoreRepoSettings();
     _initializeExtensions();
     _ensureDefaultRepos();
+    _fetchCloudStreamCapabilities();
   }
 
   Future<void> applyCloudStreamRepoUrlForAllTypes(String repoUrl) async {

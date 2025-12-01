@@ -10,3 +10,4 @@ export 'library_item_entity.dart';
 export 'user_entity.dart';
 export 'video_source_entity.dart';
 export 'download_entity.dart';
+export 'watch_history_entry.dart';

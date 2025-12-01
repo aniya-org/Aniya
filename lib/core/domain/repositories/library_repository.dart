@@ -14,6 +14,20 @@ abstract class LibraryRepository {
     LibraryStatus? status,
   );
 
+  /// Get a single library item by media ID
+  ///
+  /// [mediaId] - The unique identifier of the media
+  ///
+  /// Returns the library item entity or a failure
+  Future<Either<Failure, LibraryItemEntity>> getLibraryItem(String mediaId);
+
+  /// Check if a media item is in the library
+  ///
+  /// [mediaId] - The unique identifier of the media
+  ///
+  /// Returns true if the item is in the library, false otherwise
+  Future<Either<Failure, bool>> isInLibrary(String mediaId);
+
   /// Add a media item to the library
   ///
   /// [item] - The library item to add

@@ -30,6 +30,8 @@ enum LibraryStatus {
         return _toSimklString(mediaType);
       case TrackingService.jikan:
         return _toMalString(mediaType); // Jikan uses MAL-compatible strings
+      case TrackingService.local:
+        return name; // Local storage uses enum name directly
     }
   }
 
@@ -124,6 +126,8 @@ class UserScore {
         return rawScore; // Simkl expects 1-10
       case TrackingService.jikan:
         return rawScore; // Jikan uses same as MAL
+      case TrackingService.local:
+        return rawScore; // Local uses same format
     }
   }
 }
@@ -197,6 +201,14 @@ class WatchProgress {
             'num_read_volumes': currentVolume ?? 0,
           };
         }
+
+      case TrackingService.local:
+        // Local storage uses simple format
+        return {
+          if (currentEpisode != null) 'currentEpisode': currentEpisode,
+          if (currentChapter != null) 'currentChapter': currentChapter,
+          if (currentVolume != null) 'currentVolume': currentVolume,
+        };
     }
   }
 
@@ -243,6 +255,18 @@ class LibraryItemEntity extends Equatable {
   final TrackingService userService; // Which service this belongs to
   final MediaEntity? media; // Full media entity (optional for performance)
 
+  /// Media type for filtering (anime, manga, movie, etc.)
+  final MediaType? mediaType;
+
+  /// Normalized ID for cross-source matching
+  final String? normalizedId;
+
+  /// Source extension ID that provided this content
+  final String? sourceId;
+
+  /// Source extension name for display
+  final String? sourceName;
+
   final LibraryStatus status;
   final UserScore? score;
   final WatchProgress? progress;
@@ -257,11 +281,25 @@ class LibraryItemEntity extends Equatable {
   /// Convenience getter for current chapter from progress
   int? get currentChapter => progress?.currentChapter;
 
+  /// Get the effective media type (from mediaType field or media entity)
+  MediaType get effectiveMediaType =>
+      mediaType ?? media?.type ?? MediaType.anime;
+
+  /// Returns true if this is a video-based library item
+  bool get isVideoType => effectiveMediaType.isVideoType;
+
+  /// Returns true if this is a reading-based library item
+  bool get isReadingType => effectiveMediaType.isReadingType;
+
   const LibraryItemEntity({
     required this.id,
     required this.mediaId,
     required this.userService,
     this.media,
+    this.mediaType,
+    this.normalizedId,
+    this.sourceId,
+    this.sourceName,
     required this.status,
     this.score,
     this.progress,
@@ -270,12 +308,33 @@ class LibraryItemEntity extends Equatable {
     this.lastUpdated,
   });
 
+  /// Generate a normalized ID for cross-source matching
+  static String generateNormalizedId(
+    String title,
+    MediaType type, [
+    int? year,
+  ]) {
+    // Normalize title: lowercase, remove special characters, trim
+    final normalized = title
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^\w\s]'), '')
+        .replaceAll(RegExp(r'\s+'), '_')
+        .trim();
+
+    final yearSuffix = year != null ? '_$year' : '';
+    return '${type.name}_$normalized$yearSuffix';
+  }
+
   @override
   List<Object?> get props => [
     id,
     mediaId,
     userService,
     media,
+    mediaType,
+    normalizedId,
+    sourceId,
+    sourceName,
     status,
     score,
     progress,
@@ -290,6 +349,10 @@ class LibraryItemEntity extends Equatable {
     String? mediaId,
     TrackingService? userService,
     MediaEntity? media,
+    MediaType? mediaType,
+    String? normalizedId,
+    String? sourceId,
+    String? sourceName,
     LibraryStatus? status,
     UserScore? score,
     WatchProgress? progress,
@@ -302,6 +365,10 @@ class LibraryItemEntity extends Equatable {
       mediaId: mediaId ?? this.mediaId,
       userService: userService ?? this.userService,
       media: media ?? this.media,
+      mediaType: mediaType ?? this.mediaType,
+      normalizedId: normalizedId ?? this.normalizedId,
+      sourceId: sourceId ?? this.sourceId,
+      sourceName: sourceName ?? this.sourceName,
       status: status ?? this.status,
       score: score ?? this.score,
       progress: progress ?? this.progress,

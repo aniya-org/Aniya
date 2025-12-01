@@ -52,6 +52,29 @@ class MediaModel extends MediaEntity {
     );
   }
 
+  factory MediaModel.fromEntity(MediaEntity entity) {
+    if (entity is MediaModel) {
+      return entity;
+    }
+
+    return MediaModel(
+      id: entity.id,
+      title: entity.title,
+      coverImage: entity.coverImage,
+      bannerImage: entity.bannerImage,
+      description: entity.description,
+      type: entity.type,
+      rating: entity.rating,
+      genres: entity.genres,
+      status: entity.status,
+      totalEpisodes: entity.totalEpisodes,
+      totalChapters: entity.totalChapters,
+      startDate: entity.startDate,
+      sourceId: entity.sourceId,
+      sourceName: entity.sourceName,
+    );
+  }
+
   Map<String, dynamic> toJson() {
     return {
       'id': id,

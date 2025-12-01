@@ -44,7 +44,8 @@ class TrackingAuthService {
       case TrackingService.simkl:
         return _authenticateSimkl();
       case TrackingService.jikan:
-        return true; // Jikan doesn't require authentication
+      case TrackingService.local:
+        return true; // Jikan and local don't require authentication
     }
   }
 
@@ -364,6 +365,7 @@ class TrackingAuthService {
         await _secureStorage.delete(key: 'simkl_token');
         break;
       case TrackingService.jikan:
+      case TrackingService.local:
         // No auth to logout from
         break;
     }

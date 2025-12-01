@@ -282,6 +282,14 @@ class SimklExternalDataSourceImpl {
         return 'movie';
       case MediaType.tvShow:
         return 'tv';
+      case MediaType.cartoon:
+        return 'tv'; // Cartoons map to TV on Simkl
+      case MediaType.documentary:
+        return 'tv'; // Documentaries map to TV on Simkl
+      case MediaType.livestream:
+        return 'tv'; // Livestreams map to TV on Simkl
+      case MediaType.nsfw:
+        return 'anime'; // NSFW typically maps to anime
     }
   }
 

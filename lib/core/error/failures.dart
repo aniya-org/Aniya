@@ -58,6 +58,11 @@ class CacheFailure extends Failure {
   const CacheFailure(super.message) : super(code: 'CACHE_ERROR');
 }
 
+/// Not found failures
+class NotFoundFailure extends Failure {
+  const NotFoundFailure(super.message) : super(code: 'NOT_FOUND');
+}
+
 /// Unknown failures
 class UnknownFailure extends Failure {
   const UnknownFailure(super.message) : super(code: 'UNKNOWN_ERROR');

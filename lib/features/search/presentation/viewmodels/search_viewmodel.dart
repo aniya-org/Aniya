@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import '../../../../core/domain/entities/media_entity.dart';
 import '../../../../core/domain/usecases/search_media_usecase.dart';
+import '../../../../core/domain/repositories/media_repository.dart';
 import '../../../../core/utils/error_message_mapper.dart';
 import '../../../../core/utils/logger.dart';
 
@@ -17,6 +19,8 @@ class SearchViewModel extends ChangeNotifier {
   bool _isLoading = false;
   String? _error;
   Timer? _debounceTimer;
+  final LinkedHashMap<String, SourceResultGroup> _sourceGroups =
+      LinkedHashMap();
 
   List<MediaEntity> get searchResults => _searchResults;
   String get query => _query;
@@ -24,6 +28,10 @@ class SearchViewModel extends ChangeNotifier {
   String? get sourceFilter => _sourceFilter;
   bool get isLoading => _isLoading;
   String? get error => _error;
+  List<SourceResultGroup> get sourceGroups => _sourceGroups.values.toList();
+  bool get hasResults =>
+      _sourceGroups.values.any((group) => group.items.isNotEmpty);
+  bool get hasActiveSources => _sourceGroups.isNotEmpty;
 
   // Debounce duration for search queries
   static const Duration _debounceDuration = Duration(milliseconds: 500);
@@ -62,86 +70,57 @@ class SearchViewModel extends ChangeNotifier {
     );
 
     try {
-      // If no type filter is set, search all types
-      if (_typeFilter == null) {
-        List<MediaEntity> allResults = [];
+      _resetSourceGroups();
 
-        // Search across all media types
-        for (final type in MediaType.values) {
-          Logger.debug(
-            'Searching type: $type with sourceId: $_sourceFilter',
-            tag: 'SearchViewModel',
-          );
+      final typesToSearch = _typeFilter != null
+          ? <MediaType>[_typeFilter!]
+          : _computeTypesForCurrentSource();
 
-          final result = await searchMedia(
-            SearchMediaParams(
-              query: _query,
-              type: type,
-              sourceId: _sourceFilter, // Pass sourceId even when no type filter
-            ),
-          );
+      final aggregatedResults = <MediaEntity>[];
 
-          result.fold(
-            (failure) {
-              final errorMsg = ErrorMessageMapper.mapFailureToMessage(failure);
-              Logger.error(
-                'Failed to search for type: $type - $errorMsg',
-                tag: 'SearchViewModel',
-                error: failure,
-              );
-              // Don't set _error here for "all types" search, just log it
-              // Only set error if ALL types fail
-            },
-            (results) {
-              Logger.debug(
-                'Found ${results.length} results for type: $type',
-                tag: 'SearchViewModel',
-              );
-              allResults.addAll(results);
-            },
-          );
-        }
-
-        _searchResults = allResults;
-        Logger.info(
-          'Search completed: ${_searchResults.length} total results',
-          tag: 'SearchViewModel',
-        );
-      } else {
-        // Search with specific type filter
+      for (final type in typesToSearch) {
         Logger.debug(
-          'Searching with type filter: $_typeFilter, sourceId: $_sourceFilter',
+          'Searching type: $type with sourceId: $_sourceFilter',
           tag: 'SearchViewModel',
         );
 
         final result = await searchMedia(
           SearchMediaParams(
             query: _query,
-            type: _typeFilter!,
+            type: type,
             sourceId: _sourceFilter,
+            onSourceProgress: _handleSourceProgress,
           ),
         );
 
-        result.fold(
+        final handled = result.fold(
           (failure) {
-            _error = ErrorMessageMapper.mapFailureToMessage(failure);
+            final errorMsg = ErrorMessageMapper.mapFailureToMessage(failure);
             Logger.error(
-              'Failed to search with type filter $_typeFilter and source $_sourceFilter: $_error',
+              'Failed to search for type: $type - $errorMsg',
               tag: 'SearchViewModel',
               error: failure,
             );
-            _searchResults = []; // Clear results on error
+            return <MediaEntity>[];
           },
           (results) {
-            _searchResults = results;
-            _error = null; // Clear any previous errors
-            Logger.info(
-              'Search completed: ${_searchResults.length} results',
+            Logger.debug(
+              'Found ${results.length} results for type: $type',
               tag: 'SearchViewModel',
             );
+            return results;
           },
         );
+
+        aggregatedResults.addAll(handled);
       }
+
+      _searchResults = aggregatedResults;
+      _error = null;
+      Logger.info(
+        'Search completed: ${_searchResults.length} total results (types searched: ${typesToSearch.length})',
+        tag: 'SearchViewModel',
+      );
     } catch (e, stackTrace) {
       _error = 'An unexpected error occurred. Please try again.';
       Logger.error(
@@ -182,7 +161,80 @@ class SearchViewModel extends ChangeNotifier {
     _error = null;
     _isLoading = false;
     _debounceTimer?.cancel();
+    _sourceGroups.clear();
     notifyListeners();
+  }
+
+  void _resetSourceGroups() {
+    _sourceGroups.clear();
+    _searchResults = [];
+  }
+
+  void _handleSourceProgress(SourceSearchProgress progress) {
+    final existing = _sourceGroups[progress.sourceId];
+    List<MediaEntity> mergedItems;
+
+    if (progress.isLoading || progress.results.isEmpty) {
+      mergedItems = progress.isLoading ? const [] : (existing?.items ?? []);
+    } else {
+      final currentItems = List<MediaEntity>.from(existing?.items ?? []);
+      final seen = currentItems
+          .map((item) => '${item.sourceId}:${item.id}')
+          .toSet();
+      for (final item in progress.results) {
+        final key = '${item.sourceId}:${item.id}';
+        if (seen.add(key)) {
+          currentItems.add(item);
+        }
+      }
+      mergedItems = currentItems;
+    }
+
+    final updated = SourceResultGroup(
+      sourceId: progress.sourceId,
+      displayName: progress.sourceName,
+      items: mergedItems,
+      isLoading: progress.isLoading,
+      hasError: progress.hasError,
+      errorMessage: progress.errorMessage,
+    );
+
+    _sourceGroups[progress.sourceId] = updated;
+    _searchResults = _sourceGroups.values
+        .expand((group) => group.items)
+        .toList();
+    notifyListeners();
+  }
+
+  List<MediaType> _computeTypesForCurrentSource() {
+    if (_sourceFilter == null) {
+      return MediaType.values;
+    }
+
+    final supported = _getSupportedTypesForSource(_sourceFilter!);
+    return supported.isEmpty ? MediaType.values : supported;
+  }
+
+  List<MediaType> _getSupportedTypesForSource(String sourceId) {
+    switch (sourceId.toLowerCase()) {
+      case 'tmdb':
+        return const [MediaType.movie, MediaType.tvShow];
+      case 'anilist':
+      case 'jikan':
+      case 'mal':
+      case 'myanimelist':
+      case 'kitsu':
+        return const [MediaType.anime, MediaType.manga, MediaType.novel];
+      case 'simkl':
+        return const [
+          MediaType.anime,
+          MediaType.manga,
+          MediaType.movie,
+          MediaType.tvShow,
+        ];
+      default:
+        return MediaType.values;
+    }
   }
 
   @override
@@ -190,4 +242,22 @@ class SearchViewModel extends ChangeNotifier {
     _debounceTimer?.cancel();
     super.dispose();
   }
+}
+
+class SourceResultGroup {
+  final String sourceId;
+  final String displayName;
+  final List<MediaEntity> items;
+  final bool isLoading;
+  final bool hasError;
+  final String? errorMessage;
+
+  const SourceResultGroup({
+    required this.sourceId,
+    required this.displayName,
+    required this.items,
+    required this.isLoading,
+    required this.hasError,
+    this.errorMessage,
+  });
 }

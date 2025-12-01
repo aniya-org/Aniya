@@ -450,6 +450,9 @@ class ExternalRemoteDataSource {
         tag: 'ExternalRemoteDataSource',
       );
 
+      final normalizedPerPage = _normalizePerPage(sourceId, perPage);
+      final normalizedPage = page <= 0 ? 1 : page;
+
       final result = await dataSource.searchMedia(
         query,
         type,
@@ -461,8 +464,8 @@ class ExternalRemoteDataSource {
         minScore: minScore,
         maxScore: maxScore,
         sort: sort,
-        page: page,
-        perPage: perPage,
+        page: normalizedPage,
+        perPage: normalizedPerPage,
       );
 
       Logger.info(
@@ -950,5 +953,22 @@ class ExternalRemoteDataSource {
       },
       {'id': 'kitsu', 'name': 'Kitsu', 'description': 'Anime and Manga'},
     ];
+  }
+
+  int _normalizePerPage(String sourceId, int requested) {
+    final lower = sourceId.toLowerCase();
+    final clamped = requested <= 0 ? 1 : requested;
+    switch (lower) {
+      case 'tmdb':
+        return clamped.clamp(1, 20);
+      case 'jikan':
+      case 'mal':
+      case 'myanimelist':
+        return clamped.clamp(1, 25);
+      case 'kitsu':
+        return clamped.clamp(1, 20);
+      default:
+        return clamped;
+    }
   }
 }

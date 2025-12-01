@@ -141,6 +141,7 @@ class TrackingAuthPromptDialog extends StatelessWidget {
       case TrackingService.simkl:
         return 'Simkl';
       case TrackingService.jikan:
+      case TrackingService.local:
         return 'Jikan';
     }
   }
@@ -154,6 +155,7 @@ class TrackingAuthPromptDialog extends StatelessWidget {
       case TrackingService.simkl:
         return const Color(0xFF0B0F10); // Simkl dark
       case TrackingService.jikan:
+      case TrackingService.local:
         return const Color(0xFF2E51A2); // Same as MAL
     }
   }
@@ -167,6 +169,7 @@ class TrackingAuthPromptDialog extends StatelessWidget {
       case TrackingService.simkl:
         return Icons.movie_outlined;
       case TrackingService.jikan:
+      case TrackingService.local:
         return Icons.api;
     }
   }
@@ -180,6 +183,7 @@ class TrackingAuthPromptDialog extends StatelessWidget {
       case TrackingService.simkl:
         return 'Connect your Simkl account to track your watching history across all your devices.';
       case TrackingService.jikan:
+      case TrackingService.local:
         return 'Jikan is a public API and does not require authentication.';
     }
   }
@@ -208,6 +212,7 @@ class TrackingAuthPromptDialog extends StatelessWidget {
           'Discover new content',
         ];
       case TrackingService.jikan:
+      case TrackingService.local:
         return ['Access MyAnimeList data without an account'];
     }
   }
@@ -292,6 +297,7 @@ class TrackingAuthRequiredBanner extends StatelessWidget {
       case TrackingService.simkl:
         return 'Simkl';
       case TrackingService.jikan:
+      case TrackingService.local:
         return 'Jikan';
     }
   }

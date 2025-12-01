@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 import 'package:octo_image/octo_image.dart';
 import 'package:aniya/core/domain/entities/entities.dart';
@@ -101,6 +103,9 @@ class ExtensionCard extends StatelessWidget {
                         ),
                         // NSFW indicator (Requirement 8.4)
                         if (extension.isNsfw) _buildNsfwIndicator(context),
+                        // Desktop executability indicator (DEX-only warning)
+                        if (_shouldShowDesktopWarning())
+                          _buildDesktopWarningIndicator(context),
                         // Update available indicator
                         if (extension.hasUpdate)
                           Container(
@@ -190,6 +195,67 @@ class ExtensionCard extends StatelessWidget {
               _buildActionButton(context),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  /// Whether to show the desktop warning indicator.
+  ///
+  /// Shows warning for CloudStream extensions on desktop that are DEX-only
+  /// (isExecutableOnDesktop == false) and are installed.
+  bool _shouldShowDesktopWarning() {
+    // Only show on desktop platforms
+    if (!Platform.isLinux && !Platform.isWindows) return false;
+
+    // Only for CloudStream extensions
+    if (extension.type != ExtensionType.cloudstream) return false;
+
+    // Only for installed extensions
+    if (!extension.isInstalled) return false;
+
+    // Show warning if explicitly marked as not executable on desktop
+    // (null means unknown, so we don't show warning for that)
+    return extension.isExecutableOnDesktop == false;
+  }
+
+  /// Builds the desktop warning indicator for DEX-only plugins
+  Widget _buildDesktopWarningIndicator(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return Tooltip(
+      message:
+          'This plugin requires Android to run.\n'
+          'It contains only DEX bytecode (no JS code).',
+      child: Container(
+        margin: const EdgeInsets.only(left: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: colorScheme.secondaryContainer,
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(
+            color: colorScheme.secondary.withValues(alpha: 0.3),
+            width: 1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.desktop_access_disabled,
+              size: 12,
+              color: colorScheme.onSecondaryContainer,
+            ),
+            const SizedBox(width: 2),
+            Text(
+              'DEX',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: colorScheme.onSecondaryContainer,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
         ),
       ),
     );

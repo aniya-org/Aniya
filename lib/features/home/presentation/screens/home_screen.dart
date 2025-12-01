@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../../core/domain/entities/entities.dart';
+import '../../../../core/domain/usecases/get_media_details_usecase.dart';
 import '../../../../core/services/responsive_layout_manager.dart';
 import '../../../../core/widgets/widgets.dart';
 import '../../../../core/widgets/source_selector.dart';
@@ -126,12 +127,32 @@ class _HomeScreenState extends State<HomeScreen> with HomeScreenTmdbMethods {
                         ),
                       ),
 
-                    // Continue Watching Section
+                    // Continue Watching Section (from library)
                     if (viewModel.continueWatching.isNotEmpty) ...[
                       _buildSectionHeader(context, 'Continue Watching'),
                       _buildContinueWatchingSection(
                         context,
                         viewModel,
+                        screenType,
+                      ),
+                    ],
+
+                    // Continue Watching Section (from watch history)
+                    if (viewModel.continueWatchingHistory.isNotEmpty) ...[
+                      _buildSectionHeader(context, 'Recently Watched'),
+                      _buildWatchHistorySection(
+                        context,
+                        viewModel.continueWatchingHistory,
+                        screenType,
+                      ),
+                    ],
+
+                    // Continue Reading Section (from watch history)
+                    if (viewModel.continueReadingHistory.isNotEmpty) ...[
+                      _buildSectionHeader(context, 'Continue Reading'),
+                      _buildWatchHistorySection(
+                        context,
+                        viewModel.continueReadingHistory,
                         screenType,
                       ),
                     ],
@@ -345,6 +366,197 @@ class _HomeScreenState extends State<HomeScreen> with HomeScreenTmdbMethods {
   void _navigateToMediaDetails(BuildContext context, MediaEntity media) {
     // Navigation will be implemented when MediaDetailsScreen is created
     Navigator.pushNamed(context, '/media-details', arguments: media);
+  }
+
+  void _navigateToMediaDetailsFromHistory(WatchHistoryEntry entry) async {
+    try {
+      // Fetch media details using the mediaId and sourceId from the entry
+      final result = await GetIt.instance<GetMediaDetailsUseCase>()(
+        GetMediaDetailsParams(id: entry.mediaId, sourceId: entry.sourceId),
+      );
+
+      result.fold(
+        (failure) {
+          // If fetching fails, show error snackbar
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Unable to load media details: ${failure.message}'),
+            ),
+          );
+        },
+        (mediaEntity) {
+          // Navigate to media details screen
+          Navigator.pushNamed(
+            context,
+            '/media-details',
+            arguments: mediaEntity,
+          );
+        },
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error loading media: $e')));
+    }
+  }
+
+  Widget _buildWatchHistorySection(
+    BuildContext context,
+    List<WatchHistoryEntry> entries,
+    ScreenType screenType,
+  ) {
+    final padding = ResponsiveLayoutManager.getPadding(
+      MediaQuery.of(context).size.width,
+    );
+    final itemWidth = screenType == ScreenType.mobile ? 140.0 : 180.0;
+
+    return SliverToBoxAdapter(
+      child: SizedBox(
+        height: screenType == ScreenType.mobile ? 220 : 260,
+        child: ListView.builder(
+          scrollDirection: Axis.horizontal,
+          padding: EdgeInsets.symmetric(horizontal: padding.left),
+          itemCount: entries.length,
+          itemBuilder: (context, index) {
+            final entry = entries[index];
+            return Container(
+              width: itemWidth,
+              margin: const EdgeInsets.only(right: 12),
+              child: _buildWatchHistoryCard(context, entry),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWatchHistoryCard(BuildContext context, WatchHistoryEntry entry) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () {
+          // Navigate to media details screen
+          _navigateToMediaDetailsFromHistory(entry);
+        },
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Cover image with progress overlay
+            Expanded(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  // Cover image
+                  if (entry.coverImage != null)
+                    Image.network(
+                      entry.coverImage!,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) => Container(
+                        color: colorScheme.surfaceContainerHighest,
+                        child: Icon(
+                          entry.isVideoEntry ? Icons.movie : Icons.menu_book,
+                          size: 48,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    )
+                  else
+                    Container(
+                      color: colorScheme.surfaceContainerHighest,
+                      child: Icon(
+                        entry.isVideoEntry ? Icons.movie : Icons.menu_book,
+                        size: 48,
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+
+                  // Progress bar at bottom
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: LinearProgressIndicator(
+                      value: entry.progressPercentage,
+                      backgroundColor: Colors.black54,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        colorScheme.primary,
+                      ),
+                      minHeight: 4,
+                    ),
+                  ),
+
+                  // Resume button overlay
+                  Positioned(
+                    bottom: 8,
+                    right: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: colorScheme.primaryContainer,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            entry.isVideoEntry
+                                ? Icons.play_arrow
+                                : Icons.menu_book,
+                            size: 14,
+                            color: colorScheme.onPrimaryContainer,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Resume',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: colorScheme.onPrimaryContainer,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // Title and progress info
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    entry.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    entry.progressDisplayString,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildSkeletonScreen(BuildContext context, ScreenType screenType) {

@@ -14,6 +14,7 @@ import '../../../../core/domain/usecases/extract_video_url_usecase.dart';
 import '../../../../core/domain/usecases/save_playback_position_usecase.dart';
 import '../../../../core/domain/usecases/get_playback_position_usecase.dart';
 import '../../../../core/domain/usecases/update_progress_usecase.dart';
+import '../../../../core/services/watch_history_controller.dart';
 import '../viewmodels/video_player_viewmodel.dart';
 
 /// Video player screen for playing episodes
@@ -80,6 +81,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   late final SavePlaybackPositionUseCase _savePlaybackPositionUseCase;
   late final GetPlaybackPositionUseCase _getPlaybackPositionUseCase;
   late final UpdateProgressUseCase _updateProgressUseCase;
+  WatchHistoryController? _watchHistoryController;
 
   bool _isInitialized = false;
   bool _isLoadingPlayer = true;
@@ -119,6 +121,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     _savePlaybackPositionUseCase = sl<SavePlaybackPositionUseCase>();
     _getPlaybackPositionUseCase = sl<GetPlaybackPositionUseCase>();
     _updateProgressUseCase = sl<UpdateProgressUseCase>();
+
+    // Initialize WatchHistoryController if available
+    if (sl.isRegistered<WatchHistoryController>()) {
+      _watchHistoryController = sl<WatchHistoryController>();
+    }
 
     _viewModel = VideoPlayerViewModel(
       getVideoSources: sl<GetVideoSourcesUseCase>(),
@@ -277,9 +284,39 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           );
         },
       );
+
+      // Also update watch history if available
+      await _updateWatchHistory(position);
     } catch (e) {
       debugPrint('Error saving progress: $e');
     }
+  }
+
+  /// Update watch history with current playback progress
+  Future<void> _updateWatchHistory(Duration position) async {
+    if (_watchHistoryController == null) return;
+    if (!widget.isDirectSourceMode) return; // Need full media info
+
+    final media = widget.media!;
+    final episode = widget.episode!;
+    final source = widget.source!;
+
+    await _watchHistoryController!.updateVideoProgress(
+      mediaId: media.id,
+      mediaType: media.type,
+      title: media.title,
+      coverImage: media.coverImage,
+      sourceId: source.id,
+      sourceName: source.name,
+      playbackPositionMs: position.inMilliseconds,
+      totalDurationMs: _currentDuration.inMilliseconds > 0
+          ? _currentDuration.inMilliseconds
+          : null,
+      episodeNumber: episode.number,
+      episodeId: episode.id,
+      episodeTitle: episode.title,
+      normalizedId: null, // MediaEntity doesn't have normalizedId yet
+    );
   }
 
   Future<void> _markEpisodeComplete() async {

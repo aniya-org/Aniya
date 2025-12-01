@@ -5,6 +5,7 @@ import '../../domain/entities/media_entity.dart';
 import '../../domain/entities/episode_entity.dart';
 import '../../domain/entities/chapter_entity.dart';
 import '../../domain/entities/search_result_entity.dart';
+import '../../domain/entities/extension_entity.dart' as domain_ext;
 import '../../domain/repositories/media_repository.dart';
 import '../../error/failures.dart';
 import '../../error/exceptions.dart';
@@ -35,6 +36,7 @@ class MediaRepositoryImpl implements MediaRepository {
     String query,
     MediaType type, {
     String? sourceId,
+    SourceProgressCallback? onSourceProgress,
   }) async {
     try {
       Logger.info(
@@ -49,6 +51,17 @@ class MediaRepositoryImpl implements MediaRepository {
           tag: 'MediaRepositoryImpl',
         );
 
+        _emitSourceProgress(
+          onSourceProgress,
+          SourceSearchProgress(
+            sourceId: sourceId,
+            sourceName: _formatSourceName(sourceId),
+            isLoading: true,
+            hasError: false,
+            results: const [],
+          ),
+        );
+
         final result = await externalDataSource.searchMediaAdvanced(
           query,
           sourceId,
@@ -60,6 +73,17 @@ class MediaRepositoryImpl implements MediaRepository {
         Logger.info(
           'External search completed: ${result.items.length} results',
           tag: 'MediaRepositoryImpl',
+        );
+
+        _emitSourceProgress(
+          onSourceProgress,
+          SourceSearchProgress(
+            sourceId: sourceId,
+            sourceName: _formatSourceName(sourceId),
+            isLoading: false,
+            hasError: false,
+            results: result.items,
+          ),
         );
 
         return Right(result.items);
@@ -80,18 +104,59 @@ class MediaRepositoryImpl implements MediaRepository {
           // Search in each installed extension
           for (final extension in extensions) {
             try {
-              final results = await remoteDataSource.searchMedia(
-                query,
-                extension.id,
+              final bridgeItemType = _mapDomainItemTypeToBridgeItemType(
+                extension.itemType,
               );
-              installedExtensions.addAll(results.map((m) => m.toEntity()));
+
+              _emitSourceProgress(
+                onSourceProgress,
+                SourceSearchProgress(
+                  sourceId: extension.id,
+                  sourceName: extension.name,
+                  isLoading: true,
+                  hasError: false,
+                  results: const [],
+                ),
+              );
+
+              final results = await extensionDataSource.searchMedia(
+                query: query,
+                extensionId: extension.id,
+                extensionType: extensionType,
+                itemType: bridgeItemType,
+                page: 1,
+              );
+
+              final entities = results.map((m) => m.toEntity()).toList();
+              installedExtensions.addAll(entities);
+
+              _emitSourceProgress(
+                onSourceProgress,
+                SourceSearchProgress(
+                  sourceId: extension.id,
+                  sourceName: extension.name,
+                  isLoading: false,
+                  hasError: false,
+                  results: entities,
+                ),
+              );
 
               // Stop if we've reached the max page size limit
               if (installedExtensions.length >= AppConstants.maxPageSize) {
                 break;
               }
             } catch (e) {
-              // Continue with other extensions if one fails
+              _emitSourceProgress(
+                onSourceProgress,
+                SourceSearchProgress(
+                  sourceId: extension.id,
+                  sourceName: extension.name,
+                  isLoading: false,
+                  hasError: true,
+                  errorMessage: e.toString(),
+                  results: const [],
+                ),
+              );
               continue;
             }
           }
@@ -101,7 +166,10 @@ class MediaRepositoryImpl implements MediaRepository {
             break;
           }
         } catch (e) {
-          // Continue with other extension types if one fails
+          Logger.warning(
+            'Extension type $extensionType search failed: $e',
+            tag: 'MediaRepositoryImpl',
+          );
           continue;
         }
       }
@@ -703,6 +771,64 @@ class MediaRepositoryImpl implements MediaRepository {
         return ItemType.movie;
       case MediaType.tvShow:
         return ItemType.tvShow;
+      case MediaType.cartoon:
+        return ItemType.cartoon;
+      case MediaType.documentary:
+        return ItemType.documentary;
+      case MediaType.livestream:
+        return ItemType.livestream;
+      case MediaType.nsfw:
+        return ItemType.anime; // NSFW content typically uses anime type
+    }
+  }
+
+  ItemType _mapDomainItemTypeToBridgeItemType(domain_ext.ItemType itemType) {
+    switch (itemType) {
+      case domain_ext.ItemType.anime:
+        return ItemType.anime;
+      case domain_ext.ItemType.manga:
+        return ItemType.manga;
+      case domain_ext.ItemType.novel:
+        return ItemType.novel;
+      case domain_ext.ItemType.movie:
+        return ItemType.movie;
+      case domain_ext.ItemType.tvShow:
+        return ItemType.tvShow;
+      case domain_ext.ItemType.cartoon:
+        return ItemType.cartoon;
+      case domain_ext.ItemType.documentary:
+        return ItemType.documentary;
+      case domain_ext.ItemType.livestream:
+        return ItemType.livestream;
+      case domain_ext.ItemType.nsfw:
+        return ItemType.nsfw;
+    }
+  }
+
+  void _emitSourceProgress(
+    SourceProgressCallback? callback,
+    SourceSearchProgress progress,
+  ) {
+    if (callback != null) {
+      callback(progress);
+    }
+  }
+
+  String _formatSourceName(String sourceId) {
+    switch (sourceId.toLowerCase()) {
+      case 'tmdb':
+        return 'TMDB';
+      case 'anilist':
+        return 'AniList';
+      case 'jikan':
+      case 'mal':
+        return 'MyAnimeList';
+      case 'kitsu':
+        return 'Kitsu';
+      case 'simkl':
+        return 'Simkl';
+      default:
+        return sourceId.toUpperCase();
     }
   }
 }

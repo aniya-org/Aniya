@@ -6,9 +6,12 @@ import '../../../../core/widgets/widgets.dart';
 import '../../../../core/widgets/app_settings_menu.dart';
 import '../../../../core/navigation/navigation_controller.dart';
 import '../../../../core/navigation/app_navigation.dart';
+import '../../../details/presentation/screens/anime_manga_details_screen.dart';
+import '../../../details/presentation/screens/tmdb_details_screen.dart';
 import '../viewmodels/library_viewmodel.dart';
 
 /// Screen for displaying user's library with filtering and swipe actions
+/// Supports filtering by media type (All, Anime, Manga, Movie, TV, etc.)
 class LibraryScreen extends StatefulWidget {
   const LibraryScreen({super.key});
 
@@ -16,14 +19,47 @@ class LibraryScreen extends StatefulWidget {
   State<LibraryScreen> createState() => _LibraryScreenState();
 }
 
-class _LibraryScreenState extends State<LibraryScreen> {
+class _LibraryScreenState extends State<LibraryScreen>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+
+  // Media type tabs - null means "All"
+  static const List<MediaType?> _mediaTypeTabs = [
+    null, // All
+    MediaType.anime,
+    MediaType.manga,
+    MediaType.novel,
+    MediaType.movie,
+    MediaType.tvShow,
+    MediaType.cartoon,
+    MediaType.documentary,
+    MediaType.livestream,
+  ];
+
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: _mediaTypeTabs.length, vsync: this);
+    _tabController.addListener(_onTabChanged);
+
     // Load library when screen initializes
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<LibraryViewModel>().loadLibrary();
     });
+  }
+
+  @override
+  void dispose() {
+    _tabController.removeListener(_onTabChanged);
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  void _onTabChanged() {
+    if (!_tabController.indexIsChanging) {
+      final selectedType = _mediaTypeTabs[_tabController.index];
+      context.read<LibraryViewModel>().filterByMediaType(selectedType);
+    }
   }
 
   @override
@@ -44,19 +80,44 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 );
               }
 
-              return CustomScrollView(
-                slivers: [
-                  // App Bar
+              return NestedScrollView(
+                headerSliverBuilder: (context, innerBoxIsScrolled) => [
+                  // App Bar with Tab Bar
                   SliverAppBar(
                     title: const Text('Library'),
                     floating: true,
+                    pinned: true,
+                    forceElevated: innerBoxIsScrolled,
                     actions: [
-                      // Filter button
+                      // Sort button
+                      PopupMenuButton<LibrarySortOption>(
+                        icon: const Icon(Icons.sort),
+                        tooltip: 'Sort by',
+                        onSelected: (option) => viewModel.sortBy(option),
+                        itemBuilder: (context) =>
+                            LibrarySortOption.values.map((option) {
+                              return PopupMenuItem(
+                                value: option,
+                                child: Row(
+                                  children: [
+                                    if (viewModel.sortOption == option)
+                                      const Icon(Icons.check, size: 20),
+                                    if (viewModel.sortOption == option)
+                                      const SizedBox(width: 8),
+                                    Text(option.displayName),
+                                  ],
+                                ),
+                              );
+                            }).toList(),
+                      ),
+
+                      // Filter button for status
                       PopupMenuButton<LibraryStatus?>(
                         icon: Badge(
                           isLabelVisible: viewModel.filterStatus != null,
                           child: const Icon(Icons.filter_list),
                         ),
+                        tooltip: 'Filter by status',
                         onSelected: (status) =>
                             viewModel.filterByStatus(status),
                         itemBuilder: (context) => [
@@ -68,7 +129,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                   const Icon(Icons.check, size: 20),
                                 if (viewModel.filterStatus == null)
                                   const SizedBox(width: 8),
-                                const Text('All'),
+                                const Text('All Statuses'),
                               ],
                             ),
                           ),
@@ -106,54 +167,185 @@ class _LibraryScreenState extends State<LibraryScreen> {
                         },
                       ),
                     ],
-                  ),
-
-                  // Error message if any
-                  if (viewModel.error != null &&
-                      viewModel.libraryItems.isNotEmpty)
-                    SliverToBoxAdapter(
-                      child: ErrorMessage(message: viewModel.error!),
-                    ),
-
-                  // Library Items by Category
-                  if (viewModel.libraryItems.isNotEmpty)
-                    _buildLibraryContent(context, viewModel, screenType),
-
-                  // Empty state
-                  if (viewModel.libraryItems.isEmpty && !viewModel.isLoading)
-                    SliverFillRemaining(
-                      child: Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.library_books_outlined,
-                              size: 64,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurfaceVariant,
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              'Your library is empty',
-                              style: Theme.of(context).textTheme.titleLarge,
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              'Add content to start building your collection',
-                              style: Theme.of(context).textTheme.bodyMedium
-                                  ?.copyWith(
+                    bottom: TabBar(
+                      controller: _tabController,
+                      isScrollable: true,
+                      tabAlignment: TabAlignment.start,
+                      tabs: _mediaTypeTabs.map((type) {
+                        final count = type == null
+                            ? viewModel.totalCount
+                            : viewModel.getCountForType(type);
+                        return Tab(
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (type != null) ...[
+                                Icon(_getMediaTypeIcon(type), size: 18),
+                                const SizedBox(width: 6),
+                              ],
+                              Text(type?.displayName ?? 'All'),
+                              if (count > 0) ...[
+                                const SizedBox(width: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
                                     color: Theme.of(
                                       context,
-                                    ).colorScheme.onSurfaceVariant,
+                                    ).colorScheme.primaryContainer,
+                                    borderRadius: BorderRadius.circular(10),
                                   ),
-                              textAlign: TextAlign.center,
+                                  child: Text(
+                                    count.toString(),
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onPrimaryContainer,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ],
+                body: CustomScrollView(
+                  slivers: [
+                    // Quick Filter Chips
+                    SliverToBoxAdapter(
+                      child: Builder(
+                        builder: (context) {
+                          final padding = ResponsiveLayoutManager.getPadding(
+                            MediaQuery.of(context).size.width,
+                          );
+                          return Padding(
+                            padding: EdgeInsets.fromLTRB(
+                              padding.left,
+                              12,
+                              padding.right,
+                              8,
                             ),
-                          ],
-                        ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Active filters summary
+                                if (viewModel.filterStatus != null ||
+                                    viewModel.sortOption !=
+                                        LibrarySortOption.dateAddedNewest)
+                                  Row(
+                                    children: [
+                                      Text(
+                                        'Active filters:',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(
+                                              color: Theme.of(
+                                                context,
+                                              ).colorScheme.onSurfaceVariant,
+                                            ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      if (viewModel.filterStatus != null)
+                                        Chip(
+                                          label: Text(
+                                            _getStatusLabel(
+                                              viewModel.filterStatus!,
+                                            ),
+                                          ),
+                                          onDeleted: () =>
+                                              viewModel.filterByStatus(null),
+                                          deleteIcon: const Icon(
+                                            Icons.close,
+                                            size: 16,
+                                          ),
+                                          materialTapTargetSize:
+                                              MaterialTapTargetSize.shrinkWrap,
+                                          visualDensity: VisualDensity.compact,
+                                        ),
+                                      if (viewModel.filterStatus != null &&
+                                          viewModel.sortOption !=
+                                              LibrarySortOption.dateAddedNewest)
+                                        const SizedBox(width: 8),
+                                      if (viewModel.sortOption !=
+                                          LibrarySortOption.dateAddedNewest)
+                                        Chip(
+                                          label: Text(
+                                            viewModel.sortOption.displayName,
+                                          ),
+                                          onDeleted: () => viewModel.sortBy(
+                                            LibrarySortOption.dateAddedNewest,
+                                          ),
+                                          deleteIcon: const Icon(
+                                            Icons.close,
+                                            size: 16,
+                                          ),
+                                          materialTapTargetSize:
+                                              MaterialTapTargetSize.shrinkWrap,
+                                          visualDensity: VisualDensity.compact,
+                                        ),
+                                    ],
+                                  ),
+                              ],
+                            ),
+                          );
+                        },
                       ),
                     ),
-                ],
+                    // Error message if any
+                    if (viewModel.error != null &&
+                        viewModel.libraryItems.isNotEmpty)
+                      SliverToBoxAdapter(
+                        child: ErrorMessage(message: viewModel.error!),
+                      ),
+
+                    // Library Items by Category
+                    if (viewModel.libraryItems.isNotEmpty)
+                      ..._buildLibrarySections(context, viewModel),
+
+                    // Empty state
+                    if (viewModel.libraryItems.isEmpty && !viewModel.isLoading)
+                      SliverFillRemaining(
+                        child: Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.library_books_outlined,
+                                size: 64,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
+                              const SizedBox(height: 16),
+                              Text(
+                                'Your library is empty',
+                                style: Theme.of(context).textTheme.titleLarge,
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'Add content to start building your collection',
+                                style: Theme.of(context).textTheme.bodyMedium
+                                    ?.copyWith(
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onSurfaceVariant,
+                                    ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               );
             },
           ),
@@ -162,15 +354,40 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
   }
 
-  Widget _buildLibraryContent(
+  IconData _getMediaTypeIcon(MediaType type) {
+    switch (type) {
+      case MediaType.anime:
+        return Icons.play_circle_outline;
+      case MediaType.manga:
+        return Icons.menu_book;
+      case MediaType.novel:
+        return Icons.auto_stories;
+      case MediaType.movie:
+        return Icons.movie;
+      case MediaType.tvShow:
+        return Icons.tv;
+      case MediaType.cartoon:
+        return Icons.animation;
+      case MediaType.documentary:
+        return Icons.video_library;
+      case MediaType.livestream:
+        return Icons.live_tv;
+      case MediaType.nsfw:
+        return Icons.eighteen_up_rating;
+    }
+  }
+
+  List<Widget> _buildLibrarySections(
     BuildContext context,
     LibraryViewModel viewModel,
-    ScreenType screenType,
   ) {
-    // Group items by status
     final groupedItems = <LibraryStatus, List<LibraryItemEntity>>{};
     for (final item in viewModel.libraryItems) {
       groupedItems.putIfAbsent(item.status, () => []).add(item);
+    }
+
+    if (groupedItems.isEmpty) {
+      return const [];
     }
 
     final padding = ResponsiveLayoutManager.getPadding(
@@ -180,72 +397,67 @@ class _LibraryScreenState extends State<LibraryScreen> {
       MediaQuery.of(context).size.width,
     );
 
-    // Build sections for each status
-    return SliverList(
-      delegate: SliverChildBuilderDelegate((context, index) {
-        final statuses = groupedItems.keys.toList();
-        if (index >= statuses.length) return null;
+    final slivers = <Widget>[];
+    for (final status in groupedItems.keys) {
+      final items = groupedItems[status]!;
 
-        final status = statuses[index];
-        final items = groupedItems[status]!;
-
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Section Header
-            Padding(
-              padding: EdgeInsets.fromLTRB(padding.left, 24, padding.right, 12),
-              child: Row(
-                children: [
-                  Text(
-                    _getStatusLabel(status),
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+      slivers.add(
+        SliverPadding(
+          padding: EdgeInsets.fromLTRB(padding.left, 24, padding.right, 12),
+          sliver: SliverToBoxAdapter(
+            child: Row(
+              children: [
+                Text(
+                  _getStatusLabel(status),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primaryContainer,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    items.length.toString(),
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onPrimaryContainer,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.primaryContainer,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      items.length.toString(),
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onPrimaryContainer,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
+          ),
+        ),
+      );
 
-            // Items Grid
-            GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              padding: EdgeInsets.symmetric(horizontal: padding.left),
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: columnCount,
-                childAspectRatio: 0.7,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-              ),
-              itemCount: items.length,
-              itemBuilder: (context, itemIndex) {
-                final item = items[itemIndex];
-                return _buildLibraryItem(context, item, viewModel);
-              },
+      slivers.add(
+        SliverPadding(
+          padding: EdgeInsets.symmetric(horizontal: padding.left),
+          sliver: SliverGrid(
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: columnCount,
+              childAspectRatio: 0.7,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
+              mainAxisExtent: 300,
             ),
-          ],
-        );
-      }, childCount: groupedItems.length),
-    );
+            delegate: SliverChildBuilderDelegate((context, index) {
+              final item = items[index];
+              return _buildLibraryItem(context, item, viewModel);
+            }, childCount: items.length),
+          ),
+        ),
+      );
+    }
+
+    return slivers;
   }
 
   Widget _buildLibraryItem(
@@ -300,6 +512,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
         onLongPress: () => _showQuickActions(context, item, viewModel),
         child: MediaCard(
           media: item.media!,
+          libraryStatus: item.status,
           onTap: () => _navigateToMediaDetails(context, item.media!),
         ),
       ),
@@ -367,24 +580,73 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   void _navigateToMediaDetails(BuildContext context, MediaEntity media) {
-    Navigator.pushNamed(context, '/media-details', arguments: media);
+    final sourceId = media.sourceId.toLowerCase();
+
+    if (sourceId == 'tmdb') {
+      final tmdbData = _buildTmdbSeedData(media);
+      final isMovie = media.type == MediaType.movie;
+
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) =>
+              TmdbDetailsScreen(tmdbData: tmdbData, isMovie: isMovie),
+        ),
+      );
+      return;
+    }
+
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => AnimeMangaDetailsScreen(media: media)),
+    );
+  }
+
+  Map<String, dynamic> _buildTmdbSeedData(MediaEntity media) {
+    final id = int.tryParse(media.id);
+    final date = media.startDate?.toIso8601String().split('T').first ?? '';
+
+    return {
+      'id': id ?? media.id,
+      'title': media.title,
+      'name': media.title,
+      'poster_path': _extractTmdbRelativePath(media.coverImage),
+      'backdrop_path': _extractTmdbRelativePath(media.bannerImage),
+      'overview': media.description,
+      'release_date': media.type == MediaType.movie ? date : null,
+      'first_air_date': media.type == MediaType.tvShow ? date : null,
+    };
+  }
+
+  String? _extractTmdbRelativePath(String? url) {
+    if (url == null || url.isEmpty) return null;
+    const base = 'https://image.tmdb.org/t/p/';
+    final index = url.indexOf(base);
+    if (index == -1) return null;
+    final path = url.substring(index + base.length);
+    final slashIndex = path.indexOf('/');
+    if (slashIndex == -1) return '/$path';
+    return path.substring(slashIndex).isEmpty
+        ? null
+        : path.substring(slashIndex);
   }
 
   String _getStatusLabel(LibraryStatus status) {
     switch (status) {
       case LibraryStatus.currentlyWatching:
+        return "Currently Watching";
       case LibraryStatus.watching:
         return 'Watching';
       case LibraryStatus.completed:
-      case LibraryStatus.finished:
         return 'Completed';
+      case LibraryStatus.finished:
+        return 'Finished';
       case LibraryStatus.onHold:
         return 'On Hold';
       case LibraryStatus.dropped:
         return 'Dropped';
       case LibraryStatus.planToWatch:
+        return "Plan to Watch";
       case LibraryStatus.wantToWatch:
-        return 'Plan to Watch';
+        return 'Want to Watch';
       case LibraryStatus.watched:
         return 'Watched';
     }
@@ -408,6 +670,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
               childAspectRatio: 0.7,
               crossAxisSpacing: 12,
               mainAxisSpacing: 12,
+              mainAxisExtent: 300,
             ),
             delegate: SliverChildBuilderDelegate(
               (context, index) => const MediaSkeletonCard(),

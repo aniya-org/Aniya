@@ -745,6 +745,14 @@ class AnilistExternalDataSourceImpl {
         return 'ANIME'; // AniList treats movies as anime
       case MediaType.tvShow:
         return 'ANIME'; // AniList treats TV shows as anime
+      case MediaType.cartoon:
+        return 'ANIME'; // AniList treats cartoons as anime
+      case MediaType.documentary:
+        return 'ANIME'; // AniList doesn't have documentary type
+      case MediaType.livestream:
+        return 'ANIME'; // AniList doesn't have livestream type
+      case MediaType.nsfw:
+        return 'ANIME'; // NSFW content typically uses anime type
     }
   }
 

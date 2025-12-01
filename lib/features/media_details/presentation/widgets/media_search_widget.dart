@@ -346,6 +346,14 @@ class _MediaSearchWidgetState extends State<MediaSearchWidget> {
         return 'Movie';
       case MediaType.tvShow:
         return 'TV Show';
+      case MediaType.cartoon:
+        return 'Cartoon';
+      case MediaType.documentary:
+        return 'Documentary';
+      case MediaType.livestream:
+        return 'Livestream';
+      case MediaType.nsfw:
+        return 'NSFW';
     }
   }
 }

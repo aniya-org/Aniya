@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import '../data/models/deep_link_models.dart';
 import '../data/models/repository_config_model.dart';
 import '../domain/entities/extension_entity.dart';
 import '../utils/logger.dart';
+import '../utils/platform_utils.dart';
 import 'deep_link_handler.dart';
 
 /// Service that manages deep link listening and processing.
@@ -22,8 +24,9 @@ import 'deep_link_handler.dart';
 class DeepLinkService {
   static const String _tag = 'DeepLinkService';
 
-  final AppLinks _appLinks;
+  final AppLinks? _appLinks;
   final DeepLinkHandler _deepLinkHandler;
+  final bool _useDesktopArgumentLinks;
 
   StreamSubscription<Uri>? _linkSubscription;
 
@@ -43,7 +46,11 @@ class DeepLinkService {
     this.onDeepLinkProcessed,
     this.onDeepLinkError,
     this.onSaveRepository,
-  }) : _appLinks = appLinks ?? AppLinks(),
+  }) : _useDesktopArgumentLinks =
+           PlatformUtils.isWindows || PlatformUtils.isLinux,
+       _appLinks = (PlatformUtils.isWindows || PlatformUtils.isLinux)
+           ? null
+           : (appLinks ?? AppLinks()),
        _deepLinkHandler =
            deepLinkHandler ??
            DeepLinkHandler(onSaveRepository: onSaveRepository);
@@ -54,27 +61,16 @@ class DeepLinkService {
   Future<void> initialize() async {
     Logger.info('Initializing deep link service...', tag: _tag);
 
+    if (_useDesktopArgumentLinks) {
+      await _initializeDesktopLinks();
+    }
+
+    if (_appLinks == null) {
+      return;
+    }
+
     try {
-      // Check for initial link (app opened via deep link)
-      final initialUri = await _appLinks.getInitialLink();
-      if (initialUri != null) {
-        Logger.info('Initial deep link received: $initialUri', tag: _tag);
-        await _handleDeepLink(initialUri);
-      }
-
-      // Listen for incoming links while app is running
-      _linkSubscription = _appLinks.uriLinkStream.listen(
-        (Uri uri) async {
-          Logger.info('Deep link received: $uri', tag: _tag);
-          await _handleDeepLink(uri);
-        },
-        onError: (error) {
-          Logger.error('Error receiving deep link', tag: _tag, error: error);
-          onDeepLinkError?.call('Failed to receive deep link: $error');
-        },
-      );
-
-      Logger.info('Deep link service initialized successfully', tag: _tag);
+      await _initializeAppLinks();
     } catch (e, stackTrace) {
       Logger.error(
         'Failed to initialize deep link service',
@@ -85,12 +81,94 @@ class DeepLinkService {
     }
   }
 
+  Future<void> _initializeAppLinks() async {
+    final appLinks = _appLinks;
+    if (appLinks == null) {
+      return;
+    }
+
+    // Check for initial link (app opened via deep link)
+    final initialUri = await appLinks.getInitialLink();
+    if (initialUri != null) {
+      Logger.info('Initial deep link received: $initialUri', tag: _tag);
+      await _handleDeepLink(initialUri);
+    }
+
+    // Listen for incoming links while app is running
+    _linkSubscription = appLinks.uriLinkStream.listen(
+      (Uri uri) async {
+        Logger.info('Deep link received: $uri', tag: _tag);
+        await _handleDeepLink(uri);
+      },
+      onError: (error) {
+        Logger.error('Error receiving deep link', tag: _tag, error: error);
+        onDeepLinkError?.call('Failed to receive deep link: $error');
+      },
+    );
+
+    Logger.info('Deep link service initialized successfully', tag: _tag);
+  }
+
+  Future<void> _initializeDesktopLinks() async {
+    try {
+      final uris = _extractDesktopDeepLinkUris();
+      if (uris.isEmpty) {
+        Logger.info('No desktop deep link arguments detected', tag: _tag);
+        return;
+      }
+
+      for (final uri in uris) {
+        Logger.info('Desktop deep link received: $uri', tag: _tag);
+        await _handleDeepLink(uri);
+      }
+    } catch (e, stackTrace) {
+      Logger.error(
+        'Failed to initialize desktop deep link handling',
+        tag: _tag,
+        error: e,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  List<Uri> _extractDesktopDeepLinkUris() {
+    final args = Platform.executableArguments;
+    if (args.isEmpty) {
+      return const [];
+    }
+
+    final uris = <Uri>[];
+    for (final rawArg in args) {
+      final normalized = _normalizeArgument(rawArg);
+      final uri = Uri.tryParse(normalized);
+      if (uri == null) continue;
+      if (!isSupportedScheme(uri)) continue;
+      uris.add(uri);
+    }
+    return uris;
+  }
+
+  String _normalizeArgument(String value) {
+    var trimmed = value.trim();
+    if (trimmed.isEmpty) {
+      return trimmed;
+    }
+
+    // Remove matching surrounding quotes (single or double)
+    if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+        (trimmed.startsWith('\'') && trimmed.endsWith('\''))) {
+      if (trimmed.length >= 2) {
+        trimmed = trimmed.substring(1, trimmed.length - 1);
+      }
+    }
+
+    return trimmed;
+  }
+
   /// Handles an incoming deep link URI.
   Future<void> _handleDeepLink(Uri uri) async {
     try {
-      // Create a handler with the save callback
-      final handler = DeepLinkHandler(onSaveRepository: onSaveRepository);
-      final result = await handler.handleDeepLink(uri);
+      final result = await _deepLinkHandler.handleDeepLink(uri);
 
       if (result.success) {
         Logger.info(
@@ -123,7 +201,7 @@ class DeepLinkService {
   ///
   /// This can be used to test deep link handling or process links from other sources.
   Future<DeepLinkResult> processDeepLink(Uri uri) async {
-    return await _deepLinkHandler.handleDeepLink(uri);
+    return _deepLinkHandler.handleDeepLink(uri);
   }
 
   /// Checks if a URI is a supported deep link scheme.
