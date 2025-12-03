@@ -15,6 +15,8 @@ import '../../../../core/domain/usecases/save_playback_position_usecase.dart';
 import '../../../../core/domain/usecases/get_playback_position_usecase.dart';
 import '../../../../core/domain/usecases/update_progress_usecase.dart';
 import '../../../../core/services/watch_history_controller.dart';
+import '../../../../core/domain/entities/watch_history_entry.dart';
+import '../../../../core/services/hardware_acceleration_configurator.dart';
 import '../viewmodels/video_player_viewmodel.dart';
 
 /// Video player screen for playing episodes
@@ -33,6 +35,9 @@ class VideoPlayerScreen extends StatefulWidget {
   final int? episodeNumber;
   final String? episodeTitle;
 
+  /// Whether to resume from saved position
+  final bool resumeFromSavedPosition;
+
   final MediaEntity? media;
   final EpisodeEntity? episode;
   final SourceEntity? source;
@@ -41,6 +46,7 @@ class VideoPlayerScreen extends StatefulWidget {
   /// Legacy constructor used by screens that only know the media/source IDs.
   const VideoPlayerScreen({
     super.key,
+    this.resumeFromSavedPosition = true,
     required this.episodeId,
     required this.sourceId,
     required this.itemId,
@@ -53,6 +59,7 @@ class VideoPlayerScreen extends StatefulWidget {
 
   /// Constructor used when a concrete SourceEntity has already been selected.
   const VideoPlayerScreen.fromSourceSelection({
+    this.resumeFromSavedPosition = true,
     super.key,
     required MediaEntity media,
     required EpisodeEntity episode,
@@ -95,6 +102,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   Duration _currentDuration = Duration.zero;
   double _seekValue = 0.0;
   Duration? _savedPosition;
+  Duration? _pendingResumePosition;
   Timer? _hideControlsTimer;
   final List<StreamSubscription> _subscriptions = [];
 
@@ -114,6 +122,23 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   String get _resolvedEpisodeTitle =>
       widget.isDirectSourceMode ? widget.episode!.title : widget.episodeTitle!;
+
+  String? get _resolvedSourceProviderId {
+    if (widget.isDirectSourceMode) {
+      return widget.source?.id ??
+          widget.source?.providerId ??
+          widget.episode?.sourceProvider ??
+          widget.sourceId;
+    }
+    return widget.sourceId;
+  }
+
+  MediaType get _resolvedMediaType {
+    if (widget.isDirectSourceMode && widget.media != null) {
+      return widget.media!.type;
+    }
+    return widget.media?.type ?? MediaType.anime;
+  }
 
   @override
   void initState() {
@@ -147,10 +172,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   Future<void> _initializePlayer() async {
     _player = Player();
-    _videoController = VideoController(_player);
-
-    // Load saved playback position
-    await _loadSavedPosition();
+    final videoControllerConfig =
+        await HardwareAccelerationConfigurator.getVideoControllerConfig();
+    _videoController = VideoController(
+      _player,
+      configuration: videoControllerConfig,
+    );
+    // Load saved playback position if requested
+    if (widget.resumeFromSavedPosition) {
+      await _loadSavedPosition();
+      await _maybePromptResumePlayback();
+    }
 
     // Set up position listener for auto-save
     // Save progress every 10 seconds during playback
@@ -234,6 +266,29 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     }
   }
 
+  Future<void> _applyPendingResumeSeek() async {
+    final target = _pendingResumePosition;
+    if (target == null || target.inMilliseconds <= 0) return;
+    try {
+      debugPrint(
+        'Applying queued resume seek to ${target.inSeconds}s before play',
+      );
+      debugPrint(
+        'Current player state before seek: isPlaying=${_player.state.playing}, position=${_player.state.position}',
+      );
+      await _player.seek(target);
+      debugPrint(
+        'Player state after seek: isPlaying=${_player.state.playing}, position=${_player.state.position}',
+      );
+    } catch (e) {
+      debugPrint('Failed to apply queued resume seek: $e');
+      rethrow;
+    } finally {
+      _pendingResumePosition = null;
+      _savedPosition = null;
+    }
+  }
+
   Future<void> _loadSavedPosition() async {
     try {
       final result = await _getPlaybackPositionUseCase(
@@ -261,11 +316,118 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       // Error loading position - start from beginning
       debugPrint('Error loading saved position: $e');
       _savedPosition = null;
+      _pendingResumePosition = null;
     }
+
+    if (_savedPosition == null) {
+      final fallback = await _loadSavedPositionFromHistory();
+      if (fallback != null) {
+        _savedPosition = fallback;
+        debugPrint(
+          'Loaded saved position from watch history: ${fallback.inSeconds}s',
+        );
+      }
+    }
+  }
+
+  Future<Duration?> _loadSavedPositionFromHistory() async {
+    if (_watchHistoryController == null) return null;
+    final sourceProviderId = _resolvedSourceProviderId;
+    if (sourceProviderId == null || sourceProviderId.isEmpty) return null;
+
+    try {
+      // First try to get exact match with current source provider
+      final entry = await _watchHistoryController!.getEntryForMedia(
+        _resolvedItemId,
+        sourceProviderId,
+        _resolvedMediaType,
+      );
+
+      final positionMs = entry?.playbackPositionMs;
+      if (positionMs != null && positionMs > 0) {
+        debugPrint('Found saved position from watch history: ${positionMs}ms');
+        return Duration(milliseconds: positionMs);
+      }
+
+      // If no exact match, try to find any entry for this media
+      // This handles cases where source provider ID has changed
+      // or when resuming from history with a different source
+      debugPrint(
+        'No exact match found, trying to find any entry for media $_resolvedItemId',
+      );
+
+      // Get all entries for this media type and look for our media ID
+      final allEntries = _watchHistoryController!.getEntriesForType(
+        _resolvedMediaType,
+      );
+      WatchHistoryEntry? matchingEntry;
+      try {
+        matchingEntry = allEntries.firstWhere(
+          (e) => e.mediaId == _resolvedItemId,
+        );
+      } catch (e) {
+        // No matching entry found
+        matchingEntry = null;
+      }
+
+      final fallbackPositionMs = matchingEntry?.playbackPositionMs;
+      if (fallbackPositionMs != null && fallbackPositionMs > 0) {
+        debugPrint(
+          'Found fallback position from watch history: ${fallbackPositionMs}ms',
+        );
+        return Duration(milliseconds: fallbackPositionMs);
+      }
+    } catch (e) {
+      debugPrint('Error loading watch history position: $e');
+    }
+    return null;
+  }
+
+  Future<void> _maybePromptResumePlayback() async {
+    if (!mounted) return;
+    if (_savedPosition == null) return;
+    if (_savedPosition!.inSeconds <= 0) return;
+
+    final shouldResume = await _showResumePlaybackDialog();
+    if (!mounted) return;
+    setState(() {
+      if (!shouldResume) {
+        _savedPosition = null;
+        _pendingResumePosition = null;
+      } else {
+        _pendingResumePosition = _savedPosition;
+        debugPrint(
+          'Resume dialog accepted – queued seek to ${_pendingResumePosition!.inSeconds}s',
+        );
+      }
+    });
+  }
+
+  Future<bool> _showResumePlaybackDialog() async {
+    final positionLabel = _formatDuration(_savedPosition!);
+    return await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Resume playback?'),
+            content: Text('Continue from $positionLabel or start over?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('Start Over'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child: const Text('Resume'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
   }
 
   Future<void> _saveProgress(Duration position) async {
     try {
+      // Try to save to library repository
       final result = await _savePlaybackPositionUseCase(
         SavePlaybackPositionParams(
           itemId: _resolvedItemId,
@@ -276,16 +438,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
       result.fold(
         (failure) {
-          debugPrint('Failed to save progress: ${failure.message}');
+          debugPrint('Failed to save progress to library: ${failure.message}');
         },
         (_) {
           debugPrint(
-            'Progress saved: ${position.inSeconds}s for episode $_resolvedEpisodeId',
+            'Progress saved to library: ${position.inSeconds}s for episode $_resolvedEpisodeId',
           );
         },
       );
 
-      // Also update watch history if available
+      // Always update watch history if available (this works regardless of library status)
       await _updateWatchHistory(position);
     } catch (e) {
       debugPrint('Error saving progress: $e');
@@ -819,18 +981,34 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     if (url == null) return;
 
     try {
+      debugPrint('Opening video URL: $url');
       await _player.open(
         Media(url, httpHeaders: _selectedSource?.headers ?? {}),
+        play: false,
       );
 
       if (_isDisposed) return;
 
-      if (_savedPosition != null && _savedPosition!.inSeconds > 0) {
-        await _player.seek(_savedPosition!);
-      }
+      debugPrint(
+        'Video opened, player state: isPlaying=${_player.state.playing}, position=${_player.state.position}',
+      );
+
+      // Wait a moment for the media to be properly loaded before seeking
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      if (_isDisposed) return;
+
+      await _applyPendingResumeSeek();
+      if (_isDisposed) return;
+
+      debugPrint(
+        'Final player state before play: isPlaying=${_player.state.playing}, position=${_player.state.position}',
+      );
 
       if (_isDisposed) return;
       await _player.play();
+
+      debugPrint('Video started playing');
     } catch (e) {
       if (mounted && !_isDisposed) {
         ScaffoldMessenger.of(

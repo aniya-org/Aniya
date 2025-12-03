@@ -4,6 +4,8 @@ import '../../../../core/domain/usecases/save_reading_position_usecase.dart';
 import '../../../../core/domain/usecases/get_reading_position_usecase.dart';
 import '../../../../core/utils/error_message_mapper.dart';
 import '../../../../core/utils/logger.dart';
+import '../../../../core/domain/entities/media_entity.dart';
+import '../../../../core/services/watch_history_controller.dart';
 
 /// ViewModel for manga reader screen
 ///
@@ -41,6 +43,9 @@ class MangaReaderViewModel extends ChangeNotifier {
     required String chapterId,
     required String sourceId,
     required String itemId,
+    bool resumeFromSavedPage = true,
+    WatchHistoryController? watchHistoryController,
+    MediaEntity? media,
   }) async {
     _isLoading = true;
     _error = null;
@@ -66,24 +71,67 @@ class MangaReaderViewModel extends ChangeNotifier {
         (pageUrls) async {
           _pages = pageUrls;
 
-          // Try to restore saved reading position
-          final positionResult = await getReadingPosition(
-            GetReadingPositionParams(itemId: itemId, chapterId: chapterId),
-          );
+          // Try to restore saved reading position if requested
+          if (resumeFromSavedPage) {
+            debugPrint(
+              'DEBUG: MangaReaderViewModel attempting to load saved position',
+            );
 
-          positionResult.fold(
-            (failure) {
-              // No saved position, start from beginning
-              _currentPage = 0;
-              Logger.info(
-                'No saved reading position found',
-                tag: 'MangaReaderViewModel',
-              );
-            },
-            (savedPage) {
-              _currentPage = savedPage.clamp(0, _pages.length - 1);
-            },
-          );
+            // First try watch history if available (doesn't require library membership)
+            if (watchHistoryController != null && media != null) {
+              try {
+                final entry = await watchHistoryController.getEntryForMedia(
+                  media.id,
+                  sourceId,
+                  media.type,
+                );
+
+                final savedPage = entry?.pageNumber;
+                if (savedPage != null && savedPage > 0) {
+                  _currentPage = savedPage.clamp(0, _pages.length - 1);
+                  debugPrint(
+                    'DEBUG: MangaReaderViewModel loaded saved page from watch history: $savedPage, clamped to: $_currentPage',
+                  );
+                  _isLoading = false;
+                  notifyListeners();
+                  return; // Return early if found in watch history
+                }
+              } catch (e) {
+                debugPrint('Error loading watch history position: $e');
+              }
+            }
+
+            // Fall back to library repository
+            final positionResult = await getReadingPosition(
+              GetReadingPositionParams(itemId: itemId, chapterId: chapterId),
+            );
+
+            positionResult.fold(
+              (failure) {
+                // No saved position, start from beginning
+                _currentPage = 0;
+                Logger.info(
+                  'No saved reading position found in library',
+                  tag: 'MangaReaderViewModel',
+                );
+                debugPrint(
+                  'DEBUG: MangaReaderViewModel no saved position found in library',
+                );
+              },
+              (savedPage) {
+                _currentPage = savedPage.clamp(0, _pages.length - 1);
+                debugPrint(
+                  'DEBUG: MangaReaderViewModel loaded saved page from library: $savedPage, clamped to: $_currentPage',
+                );
+              },
+            );
+          } else {
+            // Start from beginning
+            _currentPage = 0;
+            debugPrint(
+              'DEBUG: MangaReaderViewModel resumeFromSavedPage is false, starting from page 0',
+            );
+          }
 
           _isLoading = false;
           notifyListeners();

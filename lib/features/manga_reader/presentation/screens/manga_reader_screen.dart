@@ -36,7 +36,10 @@ class MangaReaderScreen extends StatefulWidget {
     required this.itemId,
     this.media,
     this.source,
+    this.resumeFromSavedPage = true,
   });
+
+  final bool resumeFromSavedPage;
 
   @override
   State<MangaReaderScreen> createState() => _MangaReaderScreenState();
@@ -49,6 +52,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
   WatchHistoryController? _watchHistoryController;
   bool _showControls = true;
   bool _isInitialized = false;
+  bool _shouldResumeFromSavedPage = false;
 
   @override
   void initState() {
@@ -73,6 +77,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
 
     _pageController = PageController();
     _scrollController = ScrollController();
+    _scrollController.addListener(_handleVerticalScroll);
     _initializeReader();
   }
 
@@ -81,6 +86,9 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
       chapterId: widget.chapter.id,
       sourceId: widget.sourceId,
       itemId: widget.itemId,
+      resumeFromSavedPage: widget.resumeFromSavedPage,
+      watchHistoryController: _watchHistoryController,
+      media: widget.media,
     );
 
     if (mounted && !_viewModel.isLoading && _viewModel.error == null) {
@@ -88,18 +96,46 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
         _isInitialized = true;
       });
 
-      // Jump to saved page in horizontal mode
-      if (!_viewModel.isVerticalMode && _viewModel.currentPage > 0) {
-        _pageController.jumpToPage(_viewModel.currentPage);
-      }
+      _applySavedPagePosition();
+
+      // Initialize history with first page
+      _updateWatchHistory(0);
+
+      // Add a small delay to ensure UI is fully rendered before showing dialog
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        Future.delayed(const Duration(milliseconds: 100), () {
+          if (mounted) {
+            _maybePromptResumeReading();
+          }
+        });
+      });
     }
   }
 
   @override
   void dispose() {
+    _scrollController.removeListener(_handleVerticalScroll);
     _pageController.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  void _handleVerticalScroll() {
+    if (!_viewModel.isVerticalMode || _viewModel.pages.isEmpty) return;
+
+    // Calculate current page based on scroll position
+    final maxScroll = _scrollController.position.maxScrollExtent;
+    final currentScroll = _scrollController.position.pixels;
+    final progress = maxScroll > 0 ? currentScroll / maxScroll : 0.0;
+    final currentPage = (progress * (_viewModel.pages.length - 1))
+        .round()
+        .clamp(0, _viewModel.pages.length - 1);
+
+    // Update history if page changed
+    if (currentPage != _viewModel.currentPage) {
+      _viewModel.setCurrentPage(currentPage, widget.itemId, widget.chapter.id);
+      _updateWatchHistory(currentPage);
+    }
   }
 
   void _toggleControls() {
@@ -116,13 +152,31 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
     if (!_viewModel.isVerticalMode) {
       // Switching to horizontal mode
       _pageController = PageController(initialPage: _viewModel.currentPage);
+      if (_shouldResumeFromSavedPage && _viewModel.currentPage > 0) {
+        _pageController.jumpToPage(_viewModel.currentPage);
+      }
     }
   }
 
   /// Update watch history with current reading progress
   Future<void> _updateWatchHistory(int pageNumber) async {
-    if (_watchHistoryController == null) return;
-    if (widget.media == null || widget.source == null) return;
+    debugPrint(
+      'DEBUG: MangaReader _updateWatchHistory called with pageNumber: $pageNumber',
+    );
+    debugPrint(
+      'DEBUG: _watchHistoryController=${_watchHistoryController != null}',
+    );
+    debugPrint('DEBUG: widget.media=${widget.media != null}');
+    debugPrint('DEBUG: widget.source=${widget.source != null}');
+
+    if (_watchHistoryController == null) {
+      debugPrint('DEBUG: WatchHistoryController is null, returning');
+      return;
+    }
+    if (widget.media == null || widget.source == null) {
+      debugPrint('DEBUG: media or source is null, returning');
+      return;
+    }
 
     await _watchHistoryController!.updateReadingProgress(
       mediaId: widget.media!.id,
@@ -138,6 +192,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
       chapterTitle: widget.chapter.title,
       normalizedId: null, // MediaEntity doesn't have normalizedId yet
     );
+    debugPrint('DEBUG: MangaReader watch history update completed');
   }
 
   @override
@@ -232,6 +287,142 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
           ? _buildBottomControls()
           : null,
     );
+  }
+
+  Future<void> _maybePromptResumeReading() async {
+    debugPrint('DEBUG: _maybePromptResumeReading called');
+    debugPrint('DEBUG: resumeFromSavedPage=${widget.resumeFromSavedPage}');
+    debugPrint('DEBUG: savedPage=${_viewModel.currentPage}');
+
+    if (!widget.resumeFromSavedPage) {
+      debugPrint('DEBUG: resumeFromSavedPage is false, returning');
+      _shouldResumeFromSavedPage = false;
+      return;
+    }
+
+    // Check both library and watch history for saved position
+    bool hasSavedPosition = _viewModel.currentPage > 0;
+
+    if (!hasSavedPosition &&
+        _watchHistoryController != null &&
+        widget.media != null) {
+      try {
+        final entry = await _watchHistoryController!.getEntryForMedia(
+          widget.media!.id,
+          widget.source!.id,
+          widget.media!.type,
+        );
+        hasSavedPosition = entry?.pageNumber != null && entry!.pageNumber! > 0;
+        if (hasSavedPosition) {
+          debugPrint(
+            'DEBUG: Found saved position in watch history: page ${entry.pageNumber}',
+          );
+          // Update the view model with the position from watch history
+          await _viewModel.setCurrentPage(
+            entry.pageNumber!,
+            widget.itemId,
+            widget.chapter.id,
+          );
+        }
+      } catch (e) {
+        debugPrint('Error checking watch history: $e');
+      }
+    }
+
+    if (!hasSavedPosition) {
+      debugPrint('DEBUG: No saved position found, no prompt needed');
+      _shouldResumeFromSavedPage = false;
+      return;
+    }
+
+    if (!mounted) {
+      debugPrint('DEBUG: Not mounted, returning');
+      return;
+    }
+
+    debugPrint('DEBUG: Showing resume dialog');
+    final shouldResume = await _showResumeReadingDialog(
+      _viewModel.currentPage,
+      _viewModel.pages.length,
+    );
+    debugPrint('DEBUG: shouldResume=$shouldResume');
+
+    if (!mounted) {
+      debugPrint('DEBUG: Not mounted after dialog, returning');
+      return;
+    }
+
+    if (!shouldResume) {
+      debugPrint('DEBUG: User chose to start over');
+      await _viewModel.setCurrentPage(0, widget.itemId, widget.chapter.id);
+      _shouldResumeFromSavedPage = false;
+      if (_viewModel.isVerticalMode) {
+        if (_scrollController.hasClients) {
+          _scrollController.jumpTo(0);
+        } else {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (_scrollController.hasClients) {
+              _scrollController.jumpTo(0);
+            }
+          });
+        }
+      } else {
+        _pageController.jumpToPage(0);
+      }
+    } else {
+      debugPrint('DEBUG: User chose to resume');
+      _shouldResumeFromSavedPage = true;
+    }
+  }
+
+  Future<bool> _showResumeReadingDialog(int pageIndex, int totalPages) async {
+    final pageLabel = pageIndex + 1;
+    return await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Resume reading?'),
+            content: Text(
+              'Continue from page $pageLabel of $totalPages or start over?',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('Start Over'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child: const Text('Resume'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
+  void _applySavedPagePosition() {
+    if (!_shouldResumeFromSavedPage) return;
+    final savedPage = _viewModel.currentPage;
+    if (savedPage <= 0) return;
+
+    if (_viewModel.isVerticalMode) {
+      _jumpToVerticalPage(savedPage);
+    } else {
+      _pageController.jumpToPage(savedPage);
+    }
+  }
+
+  void _jumpToVerticalPage(int pageIndex) {
+    if (!_scrollController.hasClients) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _jumpToVerticalPage(pageIndex),
+      );
+      return;
+    }
+    final totalPages = _viewModel.pages.length;
+    if (totalPages <= 1) return;
+    final ratio = (pageIndex / (totalPages - 1)).clamp(0.0, 1.0);
+    final targetOffset = _scrollController.position.maxScrollExtent * ratio;
+    _scrollController.jumpTo(targetOffset);
   }
 
   Widget _buildVerticalReader() {
@@ -353,6 +544,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
                           widget.itemId,
                           widget.chapter.id,
                         );
+                        _updateWatchHistory(_viewModel.currentPage);
                       } else {
                         _pageController.previousPage(
                           duration: const Duration(milliseconds: 300),
@@ -403,6 +595,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
                   ? () {
                       if (_viewModel.isVerticalMode) {
                         _viewModel.nextPage(widget.itemId, widget.chapter.id);
+                        _updateWatchHistory(_viewModel.currentPage);
                       } else {
                         _pageController.nextPage(
                           duration: const Duration(milliseconds: 300),

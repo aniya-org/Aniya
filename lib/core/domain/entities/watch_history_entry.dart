@@ -160,7 +160,12 @@ class WatchHistoryEntry extends Equatable {
     } else if (isReadingEntry) {
       if (chapterNumber != null) {
         if (pageNumber != null && totalPages != null) {
+          // For manga/novels with fixed page counts
           return 'Chapter $chapterNumber • Page $pageNumber/$totalPages';
+        } else if (pageNumber != null) {
+          // For novels with scroll progress (no totalPages)
+          final progress = (progressPercentage * 100).toInt();
+          return 'Chapter $chapterNumber • $progress%';
         }
         return 'Chapter $chapterNumber';
       }

@@ -32,8 +32,13 @@ import '../../../video_player/presentation/screens/video_player_screen.dart';
 /// Details screen for Anime and Manga from external sources
 class AnimeMangaDetailsScreen extends StatefulWidget {
   final MediaEntity media;
+  final String? initialSourceOverride;
 
-  const AnimeMangaDetailsScreen({required this.media, super.key});
+  const AnimeMangaDetailsScreen({
+    required this.media,
+    this.initialSourceOverride,
+    super.key,
+  });
 
   @override
   State<AnimeMangaDetailsScreen> createState() =>
@@ -209,9 +214,12 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
   Future<void> _fetchFullDetails() async {
     try {
       // First, get primary details
+      final primarySourceId =
+          widget.initialSourceOverride ?? widget.media.sourceId;
+
       final primaryDetails = await _dataSource.getMediaDetails(
         widget.media.id,
-        widget.media.sourceId,
+        primarySourceId,
         widget.media.type,
       );
 
@@ -219,7 +227,7 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
       final matches = await _matcher.findMatches(
         title: widget.media.title,
         type: widget.media.type,
-        primarySourceId: widget.media.sourceId,
+        primarySourceId: primarySourceId,
         englishTitle: primaryDetails.englishTitle,
         romajiTitle: primaryDetails.romajiTitle,
         year: primaryDetails.startDate?.year,
@@ -328,42 +336,47 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
         'Aggregated episodes count: $aggregatedCount for ${widget.media.title}',
       );
 
-      // Store all episodes
+      // Try to group episodes by season, otherwise use page-based pagination
+      final seasonGroups = _groupEpisodesBySeason(aggregatedEpisodes);
+      final seasonNames = seasonGroups != null && seasonGroups.isNotEmpty
+          ? _getSeasonNames(aggregatedEpisodes)
+          : null;
+
+      var groupedEpisodeCount = 0;
+      if (seasonGroups != null && seasonGroups.isNotEmpty) {
+        for (final group in seasonGroups.values) {
+          groupedEpisodeCount += group.length;
+        }
+      }
+
+      final hasCompleteSeasonData =
+          seasonGroups != null &&
+          seasonGroups.isNotEmpty &&
+          groupedEpisodeCount >= (aggregatedEpisodes.length * 0.9);
+
       if (mounted) {
         setState(() {
           _allEpisodes = aggregatedEpisodes;
           _isLoadingEpisodes = false;
-        });
-      }
 
-      // Try to group episodes by season, otherwise use page-based pagination
-      final seasonGroups = _groupEpisodesBySeason(aggregatedEpisodes);
-      if (seasonGroups != null && seasonGroups.isNotEmpty) {
-        // Get season names from TMDB if available
-        final seasonNames = _getSeasonNames(aggregatedEpisodes);
-
-        // Use season-based pagination
-        if (mounted) {
-          setState(() {
+          if (hasCompleteSeasonData) {
             _episodesBySeason = seasonGroups;
             _seasons = seasonGroups.keys.toList()..sort();
-            _selectedSeason = _seasons!.first;
-            _episodes = seasonGroups[_selectedSeason] ?? [];
+            final firstSeason = _seasons!.first;
+            _selectedSeason = firstSeason;
+            _episodes = List<EpisodeEntity>.from(
+              seasonGroups[_selectedSeason] ?? const [],
+            );
             _seasonNames = seasonNames;
-          });
-        }
-      } else {
-        // Use page-based pagination (50 episodes per page)
-        if (mounted) {
-          setState(() {
+          } else {
             _episodesBySeason = null;
             _seasons = null;
             _selectedSeason = null;
             _seasonNames = null;
             _currentPage = 1;
             _updateEpisodesForCurrentPage();
-          });
-        }
+          }
+        });
       }
     } catch (e) {
       Logger.error('Error fetching episodes', error: e);
@@ -1837,8 +1850,9 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
   /// Requirements: 1.1
   void _showEpisodeSourceSelection(
     BuildContext context,
-    EpisodeEntity episode,
-  ) {
+    EpisodeEntity episode, [
+    bool resumeFromSavedPosition = true,
+  ]) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1854,6 +1868,7 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
               episode,
               selection.source,
               selection.allSources,
+              resumeFromSavedPosition: resumeFromSavedPosition,
             );
           },
         );
@@ -1867,8 +1882,9 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
     BuildContext context,
     EpisodeEntity episode,
     SourceEntity source,
-    List<SourceEntity> allSources,
-  ) {
+    List<SourceEntity> allSources, {
+    bool resumeFromSavedPosition = true,
+  }) {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => VideoPlayerScreen.fromSourceSelection(
@@ -1876,6 +1892,7 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
           episode: episode,
           source: source,
           allSources: allSources,
+          resumeFromSavedPosition: resumeFromSavedPosition,
         ),
       ),
     );
@@ -1885,8 +1902,9 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
   /// Requirements: 1.2
   void _showChapterSourceSelection(
     BuildContext context,
-    ChapterEntity chapter,
-  ) {
+    ChapterEntity chapter, [
+    bool resumeFromSavedPosition = true,
+  ]) {
     // Create an EpisodeEntity from the chapter for the selection sheet
     final episodeFromChapter = EpisodeEntity(
       id: chapter.id,
@@ -1907,7 +1925,12 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
           episode: episodeFromChapter,
           isChapter: true,
           onSourceSelected: (selection) {
-            _navigateToMangaReader(context, chapter, selection);
+            _navigateToMangaReader(
+              context,
+              chapter,
+              selection,
+              resumeFromSavedPosition,
+            );
           },
         );
       },
@@ -2064,8 +2087,9 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
   void _navigateToMangaReader(
     BuildContext context,
     ChapterEntity chapter,
-    SourceSelectionResult selection,
-  ) {
+    SourceSelectionResult selection, [
+    bool resumeFromSavedPosition = true,
+  ]) {
     final source = selection.source;
     final providerChapter = chapter.copyWith(
       id: source.sourceLink,
@@ -2083,6 +2107,7 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
             allChapters: _chapters,
             source: source,
             sourceSelection: selection,
+            resumeFromSavedPosition: resumeFromSavedPosition,
           ),
         ),
       );
@@ -2094,6 +2119,8 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
             chapter: providerChapter,
             sourceId: source.providerId,
             itemId: widget.media.id,
+            media: widget.media,
+            source: source,
           ),
         ),
       );
@@ -2335,8 +2362,11 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
       } else if (mediaType == MediaType.anime) {
         // For anime, check if we have watch history
         if (watchHistory != null && watchHistory.episodeNumber != null) {
-          // Continue from last watched episode
-          await _continueFromEpisode(watchHistory.episodeNumber!);
+          // Show confirmation dialog before continuing
+          final shouldResume = await _showResumeConfirmationDialog(
+            watchHistory,
+          );
+          await _continueFromEpisode(watchHistory.episodeNumber!, shouldResume);
         } else {
           // Play first episode
           await _playFirstEpisode();
@@ -2344,8 +2374,14 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
       } else {
         // For manga/novel, check if we have reading history
         if (watchHistory != null && watchHistory.chapterNumber != null) {
-          // Continue from last read chapter
-          await _continueFromChapter(watchHistory.chapterNumber!.toDouble());
+          // Show confirmation dialog before continuing
+          final shouldResume = await _showResumeConfirmationDialog(
+            watchHistory,
+          );
+          await _continueFromChapter(
+            watchHistory.chapterNumber!.toDouble(),
+            shouldResume,
+          );
         } else {
           // Read first chapter
           await _readFirstChapter();
@@ -2367,12 +2403,15 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
     }
   }
 
-  Future<void> _continueFromEpisode(int episodeNumber) async {
+  Future<void> _continueFromEpisode(
+    int episodeNumber,
+    bool shouldResume,
+  ) async {
     final episode = _episodes.firstWhere(
       (e) => e.number == episodeNumber,
       orElse: () => _episodes.first,
     );
-    _showEpisodeSourceSelection(context, episode);
+    _showEpisodeSourceSelection(context, episode, shouldResume);
   }
 
   Future<void> _playFirstEpisode() async {
@@ -2381,17 +2420,114 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
     }
   }
 
-  Future<void> _continueFromChapter(double chapterNumber) async {
+  Future<void> _continueFromChapter(
+    double chapterNumber,
+    bool shouldResume,
+  ) async {
     final chapter = _chapters.firstWhere(
       (c) => c.number == chapterNumber,
       orElse: () => _chapters.first,
     );
-    _showChapterSourceSelection(context, chapter);
+    _showChapterSourceSelection(context, chapter, shouldResume);
   }
 
   Future<void> _readFirstChapter() async {
     if (_chapters.isNotEmpty) {
       _showChapterSourceSelection(context, _chapters.first);
+    }
+  }
+
+  /// Shows a confirmation dialog asking whether to resume from saved position or start over
+  Future<bool> _showResumeConfirmationDialog(WatchHistoryEntry entry) async {
+    // Check if there's meaningful progress to resume from
+    final hasProgress = _hasMeaningfulProgress(entry);
+
+    if (!hasProgress) {
+      // No meaningful progress, just start over
+      return false;
+    }
+
+    String resumeText;
+    String mediaTypeText;
+
+    if (entry.mediaType.isVideoType) {
+      // Video content (anime, movie, etc.)
+      final position = entry.playbackPositionMs ?? 0;
+      final duration = entry.totalDurationMs ?? 0;
+      final remainingMs = duration - position;
+      final remainingMinutes = (remainingMs / 60000).round();
+
+      resumeText = remainingMinutes > 0
+          ? 'Resume from ${remainingMinutes}m remaining?'
+          : 'Resume from saved position?';
+      mediaTypeText =
+          entry.episodeTitle ?? 'Episode ${entry.episodeNumber ?? 1}';
+    } else {
+      // Reading content (manga, novel)
+      if (entry.pageNumber != null && entry.totalPages != null) {
+        final remainingPages = entry.totalPages! - entry.pageNumber!;
+        resumeText =
+            'Resume from page ${entry.pageNumber! + 1} ($remainingPages pages left)?';
+      } else if (entry.chapterNumber != null) {
+        resumeText = 'Resume from chapter ${entry.chapterNumber! + 1}?';
+      } else {
+        resumeText = 'Resume from saved position?';
+      }
+      mediaTypeText =
+          entry.chapterTitle ?? 'Chapter ${entry.chapterNumber ?? 1}';
+    }
+
+    return await showDialog<bool>(
+          context: context,
+          builder: (BuildContext context) {
+            return AlertDialog(
+              title: Text('Resume "${entry.title}"?'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(mediaTypeText),
+                  const SizedBox(height: 8),
+                  Text(resumeText),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('Start over'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: const Text('Resume'),
+                ),
+              ],
+            );
+          },
+        ) ??
+        false; // Default to false if dialog is dismissed
+  }
+
+  /// Checks if entry has meaningful progress worth resuming from
+  bool _hasMeaningfulProgress(WatchHistoryEntry entry) {
+    if (entry.mediaType.isVideoType) {
+      // For video content, consider progress meaningful if more than 30 seconds watched
+      // and not in the last 30 seconds (to avoid resuming near the end)
+      final position = entry.playbackPositionMs ?? 0;
+      final duration = entry.totalDurationMs ?? 0;
+
+      return position > 30000 && // More than 30 seconds watched
+          duration > 60000 && // At least 1 minute total
+          (duration - position) > 30000; // More than 30 seconds remaining
+    } else {
+      // For reading content, consider progress meaningful if not on first page/chapter
+      if (entry.pageNumber != null && entry.totalPages != null) {
+        return entry.pageNumber! > 0 &&
+            entry.pageNumber! < entry.totalPages! - 1;
+      }
+      if (entry.chapterNumber != null) {
+        return entry.chapterNumber! > 0;
+      }
+      return false;
     }
   }
 }

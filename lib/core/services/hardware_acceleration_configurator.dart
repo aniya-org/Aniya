@@ -228,7 +228,7 @@ class HardwareAccelerationConfigurator {
         }
       }
     } catch (e) {
-      print('GPU detection failed: $e');
+      Logger.debug('GPU detection failed: $e', tag: 'HardwareConfig');
     }
 
     return GpuVendor.unknown;
@@ -385,35 +385,38 @@ class HardwareAccelerationConfigurator {
   ) {
     switch (profile.os) {
       case 'linux':
-        switch (profile.gpuVendor) {
-          case GpuVendor.nvidia:
-            return const HardwareAccelerationConfig(
-              mode: HardwareAccelerationMode.platformPreset,
-              hwdec: 'auto-safe',
-              gpuApi: 'opengl',
-              enableHardwareAcceleration:
-                  false, // Force software on NVIDIA Linux for stability
-            );
-          case GpuVendor.amd:
-            return const HardwareAccelerationConfig(
-              mode: HardwareAccelerationMode.software, // Force software for AMD Linux to prevent crashes
-              hwdec: 'no',
-              enableHardwareAcceleration: false,
-            );
-          case GpuVendor.intel:
-            return const HardwareAccelerationConfig(
-              mode: HardwareAccelerationMode.platformPreset,
-              hwdec: 'vaapi',
-              gpuApi: 'opengl',
-              enableHardwareAcceleration: true,
-            );
-          default:
-            return const HardwareAccelerationConfig(
-              mode: HardwareAccelerationMode.platformPreset,
-              hwdec: 'auto-safe',
-              enableHardwareAcceleration: false, // Conservative fallback for unknown
-            );
-        }
+        if (profile.isWayland) {
+          switch (profile.gpuVendor) {
+            case GpuVendor.nvidia:
+              return const HardwareAccelerationConfig(
+                mode: HardwareAccelerationMode.platformPreset,
+                hwdec: 'auto-safe',
+                gpuApi: 'opengl',
+                enableHardwareAcceleration:
+                    false, // Force software on NVIDIA Linux for stability
+              );
+            case GpuVendor.amd:
+              return const HardwareAccelerationConfig(
+                mode: HardwareAccelerationMode
+                    .software, // Force software for AMD Linux to prevent crashes
+                hwdec: 'no',
+                enableHardwareAcceleration: false,
+              );
+            case GpuVendor.intel:
+              return const HardwareAccelerationConfig(
+                mode: HardwareAccelerationMode.platformPreset,
+                hwdec: 'vaapi',
+                gpuApi: 'opengl',
+                enableHardwareAcceleration: true,
+              );
+            default:
+              return const HardwareAccelerationConfig(
+                mode: HardwareAccelerationMode.platformPreset,
+                hwdec: 'auto-safe',
+                enableHardwareAcceleration:
+                    false, // Conservative fallback for unknown
+              );
+          }
         } else {
           // X11 configurations
           switch (profile.gpuVendor) {

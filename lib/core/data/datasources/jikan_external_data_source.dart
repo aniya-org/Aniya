@@ -905,7 +905,7 @@ class JikanExternalDataSourceImpl {
       bool hasNextPage = true;
       int totalPages = 1;
       int consecutiveErrors = 0;
-      const maxConsecutiveErrors = 3;
+      const maxConsecutiveErrors = 5;
 
       while (hasNextPage) {
         try {
@@ -954,52 +954,42 @@ class JikanExternalDataSourceImpl {
           }
         } catch (e) {
           consecutiveErrors++;
-          final isRateLimit = e.toString().contains('429');
+          final isRateLimit = _isRateLimitError(e);
 
           Logger.warning(
             'Jikan episode page $page failed for anime $id: $e (consecutive errors: $consecutiveErrors, episodes so far: ${episodesList.length})',
           );
 
           if (isRateLimit) {
-            // If we have episodes already, return them instead of failing completely
-            if (episodesList.isNotEmpty) {
-              Logger.info(
-                'Jikan rate limited but have ${episodesList.length} episodes. Returning partial results.',
-              );
-              hasNextPage = false; // Stop pagination, return what we have
-              break;
-            }
-            // If no episodes yet, wait longer and retry
-            if (consecutiveErrors < maxConsecutiveErrors) {
-              final waitTime = Duration(milliseconds: 2000 * consecutiveErrors);
-              Logger.info(
-                'Waiting ${waitTime.inSeconds}s before retrying due to rate limit...',
-              );
-              await Future.delayed(waitTime);
-              continue; // Retry the same page
-            } else {
-              // Too many consecutive rate limit errors, return empty
-              Logger.warning(
-                'Jikan rate limited $consecutiveErrors times with no episodes. Giving up.',
-              );
-              hasNextPage = false;
-              break;
-            }
-          } else {
-            // For other errors or too many consecutive errors, stop pagination
             if (consecutiveErrors >= maxConsecutiveErrors) {
               Logger.warning(
-                'Jikan episodes endpoint failed $consecutiveErrors times for anime $id: $e. '
-                'Returning ${episodesList.length} episodes fetched so far.',
+                'Jikan rate limited $consecutiveErrors times while fetching episodes for anime $id. '
+                'Returning ${episodesList.length} episodes gathered so far.',
               );
               hasNextPage = false;
-              break; // Return partial results instead of empty list
+              break;
             }
 
-            // For non-rate-limit errors, wait a bit and retry
-            await Future.delayed(const Duration(milliseconds: 1000));
-            continue; // Retry the same page
+            final waitTime = _calculateRateLimitDelay(e, consecutiveErrors);
+            Logger.info(
+              'Rate limited when fetching page $page for anime $id. Waiting ${waitTime.inSeconds}s before retrying...',
+            );
+            await Future.delayed(waitTime);
+            continue; // Retry current page after waiting
           }
+
+          if (consecutiveErrors >= maxConsecutiveErrors) {
+            Logger.warning(
+              'Jikan episodes endpoint failed $consecutiveErrors times for anime $id: $e. '
+              'Returning ${episodesList.length} episodes fetched so far.',
+            );
+            hasNextPage = false;
+            break;
+          }
+
+          // For non-rate-limit errors below the threshold, wait briefly then retry same page
+          await Future.delayed(const Duration(milliseconds: 1000));
+          continue;
         }
       }
 
@@ -1111,6 +1101,28 @@ class JikanExternalDataSourceImpl {
       // But the pagination loop should have already returned partial results if it had any
       return [];
     }
+  }
+
+  bool _isRateLimitError(Object error) {
+    if (error is DioException) {
+      return error.response?.statusCode == 429;
+    }
+    return error.toString().contains('429');
+  }
+
+  Duration _calculateRateLimitDelay(Object error, int attempt) {
+    if (error is DioException) {
+      final retryAfterHeader = error.response?.headers.value('Retry-After');
+      if (retryAfterHeader != null) {
+        final retrySeconds = int.tryParse(retryAfterHeader);
+        if (retrySeconds != null && retrySeconds > 0) {
+          return Duration(seconds: retrySeconds);
+        }
+      }
+    }
+
+    final clampedAttempt = attempt.clamp(1, 5);
+    return Duration(seconds: clampedAttempt * 2);
   }
 
   /// Get chapters for a manga

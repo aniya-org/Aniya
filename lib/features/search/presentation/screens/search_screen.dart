@@ -52,9 +52,9 @@ class _SearchScreenState extends State<SearchScreen> {
               final padding = ResponsiveLayoutManager.getPadding(
                 MediaQuery.of(context).size.width,
               );
-              final columnCount = ResponsiveLayoutManager.getGridColumns(
-                MediaQuery.of(context).size.width,
-              );
+              // final columnCount = ResponsiveLayoutManager.getGridColumns(
+              //   MediaQuery.of(context).size.width,
+              // );
 
               return CustomScrollView(
                 slivers: [
@@ -575,7 +575,7 @@ class _SearchScreenState extends State<SearchScreen> {
       'release_date': media.type == MediaType.movie ? releaseDate : null,
       'first_air_date': media.type == MediaType.tvShow ? releaseDate : null,
       'genres': media.genres.map((g) => {'name': g}).toList(),
-      'status': media.status?.name,
+      'status': media.status.name,
     };
   }
 

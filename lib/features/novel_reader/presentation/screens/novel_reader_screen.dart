@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -6,7 +8,10 @@ import '../../../../core/domain/entities/media_entity.dart';
 import '../../../../core/domain/entities/source_entity.dart';
 import '../../../../core/domain/usecases/get_chapters_usecase.dart';
 import '../../../../core/domain/usecases/get_novel_chapter_content_usecase.dart';
+import '../../../../core/domain/usecases/get_reading_position_usecase.dart';
+import '../../../../core/domain/usecases/save_reading_position_usecase.dart';
 import '../../../../core/di/injection_container.dart';
+import '../../../../core/services/watch_history_controller.dart';
 import '../../../../core/error/failures.dart';
 import '../../../../core/utils/error_message_mapper.dart';
 import '../../../../core/utils/logger.dart';
@@ -37,7 +42,10 @@ class NovelReaderScreen extends StatefulWidget {
     this.chapterContent,
     this.source,
     this.sourceSelection,
+    this.resumeFromSavedPosition = true,
   });
+
+  final bool resumeFromSavedPosition;
 
   @override
   State<NovelReaderScreen> createState() => _NovelReaderScreenState();
@@ -45,6 +53,7 @@ class NovelReaderScreen extends StatefulWidget {
 
 class _NovelReaderScreenState extends State<NovelReaderScreen> {
   final ScrollController _scrollController = ScrollController();
+  static const double _scrollUnitExtent = 200.0;
   bool _showControls = true;
   double _fontSize = 16.0;
   bool _isDarkMode = true;
@@ -63,6 +72,13 @@ class _NovelReaderScreenState extends State<NovelReaderScreen> {
   bool _isLoadingExtensionChapters = false;
   late final GetNovelChapterContentUseCase _getChapterContent;
   late final GetChaptersUseCase _getChapters;
+  late final SaveReadingPositionUseCase _saveReadingPosition;
+  late final GetReadingPositionUseCase _getReadingPosition;
+  WatchHistoryController? _watchHistoryController;
+  int? _savedReadingUnits;
+  bool _resumePromptShown = false;
+  Timer? _savePositionDebounce;
+  int? _lastSavedUnits;
 
   // Available font sizes
   static const List<double> _fontSizes = [12, 14, 16, 18, 20, 22, 24];
@@ -80,6 +96,16 @@ class _NovelReaderScreenState extends State<NovelReaderScreen> {
     } catch (_) {
       _getChapters = GetChaptersUseCase(sl());
     }
+    try {
+      _saveReadingPosition = sl<SaveReadingPositionUseCase>();
+    } catch (_) {
+      _saveReadingPosition = SaveReadingPositionUseCase(sl());
+    }
+    try {
+      _getReadingPosition = sl<GetReadingPositionUseCase>();
+    } catch (_) {
+      _getReadingPosition = GetReadingPositionUseCase(sl());
+    }
     _selectedSourceId =
         widget.source?.providerId ?? widget.chapter.sourceProvider;
     _currentChapter = widget.chapter.copyWith(
@@ -87,6 +113,14 @@ class _NovelReaderScreenState extends State<NovelReaderScreen> {
     );
     _sourceSelection = widget.sourceSelection;
     _currentChapterIndex = _findChapterIndex(widget.chapter);
+    _scrollController.addListener(_handleScrollPosition);
+    debugPrint('DEBUG: Scroll controller listener added');
+
+    // Initialize WatchHistoryController if available
+    if (sl.isRegistered<WatchHistoryController>()) {
+      _watchHistoryController = sl<WatchHistoryController>();
+    }
+
     _loadChapterContent();
     _loadExtensionChaptersIfNeeded();
     // Hide system UI for immersive reading
@@ -95,6 +129,11 @@ class _NovelReaderScreenState extends State<NovelReaderScreen> {
 
   @override
   void dispose() {
+    _savePositionDebounce?.cancel();
+    _scrollController.removeListener(_handleScrollPosition);
+    if (_scrollController.hasClients) {
+      _persistReadingPosition(_scrollController.position.pixels);
+    }
     _scrollController.dispose();
     // Restore system UI
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
@@ -182,6 +221,15 @@ class _NovelReaderScreenState extends State<NovelReaderScreen> {
 
     try {
       final currentChapter = _activeChapter;
+      debugPrint(
+        'DEBUG: About to load saved reading position for chapter: ${currentChapter.id}',
+      );
+      await _loadSavedReadingPosition(currentChapter);
+      debugPrint(
+        'DEBUG: Finished loading saved reading position, _savedReadingUnits: $_savedReadingUnits',
+      );
+      _resumePromptShown = false;
+
       // If content was passed directly for the initial chapter, use it once
       if (useInitialChapterContent &&
           !_initialContentConsumed &&
@@ -225,6 +273,8 @@ class _NovelReaderScreenState extends State<NovelReaderScreen> {
             _content = _normalizeContent(content);
             _isLoading = false;
           });
+          _scheduleResumePrompt();
+          debugPrint('DEBUG: Content loaded, resume prompt scheduled');
         },
       );
     } catch (e, stackTrace) {
@@ -241,6 +291,7 @@ class _NovelReaderScreenState extends State<NovelReaderScreen> {
         }
         _isLoading = false;
       });
+      _savedReadingUnits = null;
     }
   }
 
@@ -374,6 +425,278 @@ class _NovelReaderScreenState extends State<NovelReaderScreen> {
       );
     }
     _loadChapterContent(useInitialChapterContent: false);
+  }
+
+  void _handleScrollPosition() {
+    if (_content == null || !_scrollController.hasClients) return;
+
+    // Cancel previous timer to avoid multiple simultaneous calls
+    _savePositionDebounce?.cancel();
+
+    // Only save position if it has changed significantly (to reduce excessive calls)
+    final currentOffset = _scrollController.position.pixels;
+    final currentUnits = _scrollOffsetToUnits(currentOffset);
+
+    // Only proceed if position changed by at least 1 unit or if this is the first call
+    if (_lastSavedUnits == null ||
+        (currentUnits - _lastSavedUnits!).abs() >= 1) {
+      debugPrint(
+        'DEBUG: _handleScrollPosition called - position changed significantly',
+      );
+      _savePositionDebounce = Timer(const Duration(milliseconds: 600), () {
+        debugPrint(
+          'DEBUG: Persisting reading position at offset: $currentOffset',
+        );
+        _persistReadingPosition(currentOffset);
+        _lastSavedUnits = currentUnits;
+      });
+    }
+  }
+
+  Future<void> _loadSavedReadingPosition(ChapterEntity chapter) async {
+    if (!widget.resumeFromSavedPosition) {
+      _savedReadingUnits = null;
+      return;
+    }
+
+    // First try watch history (doesn't require library membership)
+    if (_watchHistoryController != null) {
+      try {
+        final entry = await _watchHistoryController!.getEntryForMedia(
+          widget.media.id,
+          widget.source?.id ?? _selectedSourceId ?? '',
+          widget.media.type,
+        );
+
+        final positionMs = entry?.playbackPositionMs;
+        if (positionMs != null && positionMs > 0) {
+          // Convert milliseconds back to reading units
+          _savedReadingUnits = (positionMs / (_scrollUnitExtent * 1000))
+              .round();
+          Logger.info(
+            'Loaded saved position from watch history: $_savedReadingUnits units (${(positionMs / 1000).round()}ms)',
+            tag: 'NovelReaderScreen',
+          );
+          return; // Return early if found in watch history
+        }
+      } catch (e) {
+        Logger.error(
+          'Error loading watch history position: $e',
+          tag: 'NovelReaderScreen',
+        );
+      }
+    }
+
+    // Fall back to library repository only if watch history didn't work
+    try {
+      final result = await _getReadingPosition(
+        GetReadingPositionParams(
+          itemId: widget.media.id,
+          chapterId: chapter.id,
+        ),
+      );
+
+      result.fold((failure) {
+        Logger.error(
+          'Failed to load reading position from library: ${failure.message}',
+          tag: 'NovelReaderScreen',
+        );
+      }, (page) => _savedReadingUnits = page > 0 ? page : null);
+    } catch (e) {
+      Logger.error(
+        'Unexpected error loading reading position',
+        tag: 'NovelReaderScreen',
+        error: e,
+      );
+    }
+  }
+
+  void _scheduleResumePrompt() {
+    debugPrint('DEBUG: _scheduleResumePrompt called');
+    debugPrint(
+      'DEBUG: resumeFromSavedPosition=${widget.resumeFromSavedPosition}',
+    );
+    debugPrint('DEBUG: _savedReadingUnits=$_savedReadingUnits');
+
+    if (!widget.resumeFromSavedPosition) {
+      debugPrint('DEBUG: resumeFromSavedPosition is false, returning');
+      return;
+    }
+    if (_savedReadingUnits == null) {
+      debugPrint('DEBUG: _savedReadingUnits is null, returning');
+      return;
+    }
+    if (_resumePromptShown) {
+      debugPrint('DEBUG: _resumePromptShown is true, returning');
+      return;
+    }
+
+    _resumePromptShown = true;
+    debugPrint('DEBUG: Setting _resumePromptShown to true, scheduling prompt');
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      debugPrint(
+        'DEBUG: In post frame callback, scheduling resume prompt with delay',
+      );
+      // Add a small delay to ensure UI is fully rendered
+      Future.delayed(const Duration(milliseconds: 100), () {
+        if (mounted) {
+          debugPrint(
+            'DEBUG: In delayed callback, calling _promptResumeIfNeeded',
+          );
+          _promptResumeIfNeeded();
+        }
+      });
+    });
+  }
+
+  Future<void> _promptResumeIfNeeded() async {
+    debugPrint('DEBUG: _promptResumeIfNeeded called');
+    debugPrint('DEBUG: mounted=$mounted');
+    debugPrint('DEBUG: _savedReadingUnits=$_savedReadingUnits');
+
+    if (!mounted) {
+      debugPrint('DEBUG: Not mounted, returning');
+      return;
+    }
+    if (_savedReadingUnits == null) {
+      debugPrint('DEBUG: _savedReadingUnits is null, returning');
+      return;
+    }
+
+    final shouldResume = await _showResumeDialog();
+    debugPrint('DEBUG: shouldResume=$shouldResume');
+
+    if (!mounted) {
+      debugPrint('DEBUG: Not mounted after dialog, returning');
+      return;
+    }
+
+    if (shouldResume) {
+      debugPrint('DEBUG: Jumping to saved offset ${_savedReadingUnits}');
+      _jumpToSavedOffset(_savedReadingUnits!);
+    } else {
+      debugPrint('DEBUG: Starting from beginning');
+      _persistReadingPosition(0);
+    }
+
+    _savedReadingUnits = null;
+    debugPrint('DEBUG: _promptResumeIfNeeded completed');
+  }
+
+  Future<bool> _showResumeDialog() async {
+    debugPrint('DEBUG: _showResumeDialog called');
+    // Calculate scroll percentage if we have scroll controller info
+    String resumeInfo = 'Continue where you left off?';
+    if (_scrollController.hasClients) {
+      final maxScroll = _scrollController.position.maxScrollExtent;
+      final savedOffset = _savedReadingUnits! * _scrollUnitExtent;
+      if (maxScroll > 0) {
+        final percentage = (savedOffset / maxScroll * 100).clamp(0.0, 100.0);
+        resumeInfo =
+            'Continue from ${percentage.toStringAsFixed(1)}% of chapter?';
+      }
+    }
+
+    debugPrint('DEBUG: Showing resume dialog with info: $resumeInfo');
+    return await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Resume reading?'),
+            content: Text(resumeInfo),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('Start Over'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child: const Text('Resume'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
+  void _jumpToSavedOffset(int units) {
+    final targetOffset = units * _scrollUnitExtent;
+    if (!_scrollController.hasClients) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _jumpToSavedOffset(units),
+      );
+      return;
+    }
+
+    final maxOffset = _scrollController.position.maxScrollExtent;
+    _scrollController.jumpTo(targetOffset.clamp(0.0, maxOffset));
+  }
+
+  Future<void> _persistReadingPosition(double offset) async {
+    debugPrint('DEBUG: _persistReadingPosition called with offset: $offset');
+    debugPrint(
+      'DEBUG: resumeFromSavedPosition=${widget.resumeFromSavedPosition}',
+    );
+
+    if (!widget.resumeFromSavedPosition) return;
+    final units = _scrollOffsetToUnits(offset);
+    debugPrint('DEBUG: Converting offset $offset to units: $units');
+
+    try {
+      await _saveReadingPosition(
+        SaveReadingPositionParams(
+          itemId: widget.media.id,
+          chapterId: _activeChapter.id,
+          page: units,
+        ),
+      );
+      debugPrint('DEBUG: Saved reading position successfully');
+
+      // Also update watch history
+      await _updateWatchHistory(units);
+      debugPrint('DEBUG: Updated watch history successfully');
+    } catch (e) {
+      Logger.error(
+        'Failed to save reading position',
+        tag: 'NovelReaderScreen',
+        error: e,
+      );
+    }
+  }
+
+  int _scrollOffsetToUnits(double offset) {
+    return (offset / _scrollUnitExtent).round();
+  }
+
+  /// Update watch history with current reading progress
+  Future<void> _updateWatchHistory(int readingUnits) async {
+    debugPrint(
+      'DEBUG: _updateWatchHistory called with readingUnits: $readingUnits',
+    );
+    debugPrint(
+      'DEBUG: _watchHistoryController=${_watchHistoryController != null}',
+    );
+
+    if (_watchHistoryController == null) {
+      debugPrint('DEBUG: WatchHistoryController is null, returning');
+      return;
+    }
+
+    await _watchHistoryController!.updateReadingProgress(
+      mediaId: widget.media.id,
+      mediaType: widget.media.type,
+      title: widget.media.title,
+      coverImage: widget.media.coverImage,
+      sourceId: widget.source?.id ?? _selectedSourceId ?? '',
+      sourceName: widget.source?.name ?? 'Unknown Source',
+      pageNumber: readingUnits,
+      totalPages: null, // We don't know total pages for novel content
+      chapterNumber: _activeChapter.number.toInt(),
+      chapterId: _activeChapter.id,
+      chapterTitle: _activeChapter.title,
+      normalizedId: null, // MediaEntity doesn't have normalizedId yet
+    );
+    debugPrint('DEBUG: Watch history update completed');
   }
 
   void _increaseFontSize() {

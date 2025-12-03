@@ -32,8 +32,12 @@ void main() async {
   // Initialize Flutter bindings BEFORE creating zones
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Load environment variables
-  await dotenv.load(fileName: ".env");
+  // Load environment variables (optional - .env file may not exist)
+  try {
+    await dotenv.load(fileName: ".env");
+  } catch (e) {
+    Logger.info('No .env file found, using default values', tag: 'Main');
+  }
 
   // Initialize global error handler
   ErrorHandler.initialize();

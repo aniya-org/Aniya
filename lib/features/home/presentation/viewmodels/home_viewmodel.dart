@@ -148,7 +148,7 @@ class HomeViewModel extends ChangeNotifier {
           tag: 'HomeViewModel',
           error: failure,
         ),
-        (entries) => _continueWatchingHistory = entries,
+        (entries) => _continueWatchingHistory = _dedupeHistoryEntries(entries),
       );
 
       // Load Continue Reading (manga/novels)
@@ -161,7 +161,7 @@ class HomeViewModel extends ChangeNotifier {
           tag: 'HomeViewModel',
           error: failure,
         ),
-        (entries) => _continueReadingHistory = entries,
+        (entries) => _continueReadingHistory = _dedupeHistoryEntries(entries),
       );
 
       Logger.info(
@@ -176,5 +176,35 @@ class HomeViewModel extends ChangeNotifier {
         stackTrace: stackTrace,
       );
     }
+  }
+
+  List<WatchHistoryEntry> _dedupeHistoryEntries(
+    List<WatchHistoryEntry> entries,
+  ) {
+    if (entries.length <= 1) return entries;
+
+    final deduped = <WatchHistoryEntry>[];
+    final seenKeys = <String>{};
+    final sorted = [...entries]
+      ..sort((a, b) => b.lastPlayedAt.compareTo(a.lastPlayedAt));
+
+    for (final entry in sorted) {
+      final key = _historyKey(entry);
+      if (seenKeys.add(key)) {
+        deduped.add(entry);
+      }
+    }
+
+    return deduped;
+  }
+
+  String _historyKey(WatchHistoryEntry entry) {
+    if (entry.episodeNumber != null) {
+      return '${entry.mediaId}_episode_${entry.episodeNumber}';
+    }
+    if (entry.chapterNumber != null) {
+      return '${entry.mediaId}_chapter_${entry.chapterNumber}';
+    }
+    return entry.normalizedId ?? entry.id;
   }
 }

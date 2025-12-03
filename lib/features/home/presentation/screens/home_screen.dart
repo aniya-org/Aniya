@@ -1,16 +1,25 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import '../../../../core/domain/entities/entities.dart';
-import '../../../../core/domain/usecases/get_media_details_usecase.dart';
-import '../../../../core/services/responsive_layout_manager.dart';
-import '../../../../core/widgets/widgets.dart';
-import '../../../../core/widgets/source_selector.dart';
-import '../../../../core/widgets/app_settings_menu.dart';
 import 'package:get_it/get_it.dart';
+import 'package:provider/provider.dart';
+
+import '../../../../core/domain/entities/entities.dart';
+import '../../../../core/domain/entities/episode_entity.dart';
+import '../../../../core/navigation/app_navigation.dart';
+import '../../../../core/navigation/navigation_controller.dart';
+import '../../../../core/services/responsive_layout_manager.dart';
+import '../../../../core/services/watch_history_controller.dart';
+import '../../../../core/widgets/app_settings_menu.dart';
+import '../../../../core/widgets/source_selector.dart';
+import '../../../../core/widgets/widgets.dart';
+import '../../../details/presentation/screens/anime_manga_details_screen.dart';
+import '../../../details/presentation/screens/tmdb_details_screen.dart';
+import '../../../media_details/presentation/models/source_selection_result.dart';
+import '../../../media_details/presentation/screens/episode_source_selection_sheet.dart';
+import '../../../manga_reader/presentation/screens/manga_reader_screen.dart';
+import '../../../novel_reader/presentation/screens/novel_reader_screen.dart';
 import '../../../search/presentation/screens/search_screen.dart';
 import '../../../search/presentation/viewmodels/search_viewmodel.dart';
-import '../../../../core/navigation/navigation_controller.dart';
-import '../../../../core/navigation/app_navigation.dart';
+import '../../../video_player/presentation/screens/video_player_screen.dart';
 import '../viewmodels/home_viewmodel.dart';
 
 import 'home_screen_tmdb_methods.dart';
@@ -25,10 +34,24 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> with HomeScreenTmdbMethods {
   String _selectedSource = 'tmdb';
+  WatchHistoryController? _watchHistoryController;
+  static const Set<String> _supportedExternalSources = {
+    'tmdb',
+    'anilist',
+    'simkl',
+    'jikan',
+    'kitsu',
+    'mal',
+    'myanimelist',
+  };
 
   @override
   void initState() {
     super.initState();
+    if (GetIt.instance.isRegistered<WatchHistoryController>()) {
+      _watchHistoryController = GetIt.instance<WatchHistoryController>();
+    }
+
     // Load home data when screen initializes
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<HomeViewModel>().loadHomeData();
@@ -274,6 +297,236 @@ class _HomeScreenState extends State<HomeScreen> with HomeScreenTmdbMethods {
     );
   }
 
+  Future<void> _resumeHistoryEntry(WatchHistoryEntry entry) async {
+    if (!entry.isVideoEntry && !entry.isReadingEntry) {
+      await _navigateToMediaDetailsFromHistory(entry);
+      return;
+    }
+
+    final media = _buildMediaFromEntry(entry);
+    if (!mounted) return;
+
+    final episode = _buildEpisodeFromEntry(entry);
+    if (episode == null) {
+      await _navigateToMediaDetailsFromHistory(entry);
+      return;
+    }
+
+    final isChapter = entry.isReadingEntry;
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (ctx) {
+        return EpisodeSourceSelectionSheet(
+          media: media,
+          episode: episode,
+          isChapter: isChapter,
+          onSourceSelected: (selection) {
+            _handleHistorySourceSelection(
+              entry: entry,
+              media: media,
+              selection: selection,
+            );
+          },
+        );
+      },
+    );
+  }
+
+  MediaEntity _buildMediaFromEntry(
+    WatchHistoryEntry entry, {
+    String? sourceOverride,
+  }) {
+    final normalizedOverride = sourceOverride;
+    final normalizedSourceId = normalizedOverride ?? entry.sourceId;
+    final normalizedSourceName = _displayNameForSource(
+      normalizedOverride,
+      entry.sourceName,
+    );
+
+    return MediaEntity(
+      id: entry.mediaId,
+      title: entry.title,
+      coverImage: entry.coverImage,
+      bannerImage: entry.coverImage,
+      description: null,
+      type: entry.mediaType,
+      rating: null,
+      genres: const [],
+      status: MediaStatus.ongoing,
+      totalEpisodes: entry.episodeNumber,
+      totalChapters: entry.chapterNumber,
+      startDate: null,
+      sourceId: normalizedSourceId,
+      sourceName: normalizedSourceName,
+      sourceType: entry.mediaType,
+    );
+  }
+
+  String _displayNameForSource(String? overrideId, String fallback) {
+    if (overrideId == null) return fallback;
+    switch (overrideId) {
+      case 'tmdb':
+        return 'TMDB';
+      case 'anilist':
+        return 'AniList';
+      case 'jikan':
+        return 'Jikan';
+      case 'kitsu':
+        return 'Kitsu';
+      case 'simkl':
+        return 'Simkl';
+      case 'mal':
+      case 'myanimelist':
+        return 'MyAnimeList';
+      default:
+        return fallback;
+    }
+  }
+
+  EpisodeEntity? _buildEpisodeFromEntry(WatchHistoryEntry entry) {
+    if (entry.isVideoEntry) {
+      return EpisodeEntity(
+        id: entry.episodeId ?? '${entry.mediaId}_${entry.episodeNumber ?? 1}',
+        mediaId: entry.mediaId,
+        title: entry.episodeTitle ?? entry.title,
+        number: entry.episodeNumber ?? 1,
+        thumbnail: entry.coverImage,
+        sourceProvider: entry.sourceId,
+      );
+    }
+
+    if (entry.isReadingEntry) {
+      final chapterId =
+          entry.chapterId ?? '${entry.mediaId}_${entry.chapterNumber ?? 0}';
+      return EpisodeEntity(
+        id: chapterId,
+        mediaId: entry.mediaId,
+        title: entry.chapterTitle ?? entry.title,
+        number: entry.chapterNumber ?? 0,
+        thumbnail: entry.coverImage,
+        sourceProvider: entry.sourceId,
+      );
+    }
+    return null;
+  }
+
+  ChapterEntity _buildChapterFromEntry(WatchHistoryEntry entry) {
+    return ChapterEntity(
+      id: entry.chapterId ?? '${entry.mediaId}_${entry.chapterNumber ?? 0}',
+      mediaId: entry.mediaId,
+      title: entry.chapterTitle ?? entry.title,
+      number: (entry.chapterNumber ?? 0).toDouble(),
+      sourceProvider: entry.sourceId,
+    );
+  }
+
+  void _handleHistorySourceSelection({
+    required WatchHistoryEntry entry,
+    required MediaEntity media,
+    required SourceSelectionResult selection,
+  }) {
+    final source = selection.source;
+    // Use the original episode ID from the history entry to ensure
+    // we can match the saved playback position
+    final episode = EpisodeEntity(
+      id: entry.episodeId ?? '${entry.mediaId}_${entry.episodeNumber ?? 1}',
+      mediaId: media.id,
+      title: entry.episodeTitle ?? entry.title,
+      number: entry.isReadingEntry
+          ? entry.chapterNumber ?? 0
+          : entry.episodeNumber ?? 1,
+      thumbnail: media.coverImage,
+      sourceProvider: source.providerId,
+    );
+
+    if (entry.isVideoEntry) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => VideoPlayerScreen.fromSourceSelection(
+            media: media,
+            episode: episode,
+            source: source,
+            allSources: selection.allSources,
+            resumeFromSavedPosition: true,
+          ),
+        ),
+      );
+      return;
+    }
+
+    final chapter = _buildChapterFromEntry(entry);
+    if (media.type == MediaType.novel) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => NovelReaderScreen(
+            chapter: chapter,
+            media: media,
+            source: source,
+            sourceSelection: selection,
+          ),
+        ),
+      );
+    } else {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => MangaReaderScreen(
+            chapter: chapter,
+            sourceId: source.providerId,
+            itemId: media.id,
+            media: media,
+            source: source,
+          ),
+        ),
+      );
+    }
+  }
+
+  void _showHistoryEntryActions(WatchHistoryEntry entry) {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.info_outline),
+                title: const Text('View Details'),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  _navigateToMediaDetailsFromHistory(entry);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete_outline),
+                title: const Text('Remove from History'),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  _removeHistoryEntry(entry);
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _removeHistoryEntry(WatchHistoryEntry entry) async {
+    if (_watchHistoryController == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('History controller unavailable.')),
+      );
+      return;
+    }
+
+    await _watchHistoryController!.removeEntry(entry.id);
+    if (!mounted) return;
+    await context.read<HomeViewModel>().refresh();
+  }
+
   Widget _buildSectionHeader(BuildContext context, String title) {
     final padding = ResponsiveLayoutManager.getPadding(
       MediaQuery.of(context).size.width,
@@ -368,36 +621,80 @@ class _HomeScreenState extends State<HomeScreen> with HomeScreenTmdbMethods {
     Navigator.pushNamed(context, '/media-details', arguments: media);
   }
 
-  void _navigateToMediaDetailsFromHistory(WatchHistoryEntry entry) async {
-    try {
-      // Fetch media details using the mediaId and sourceId from the entry
-      final result = await GetIt.instance<GetMediaDetailsUseCase>()(
-        GetMediaDetailsParams(id: entry.mediaId, sourceId: entry.sourceId),
-      );
+  Future<void> _navigateToMediaDetailsFromHistory(
+    WatchHistoryEntry entry,
+  ) async {
+    if (!mounted) return;
 
-      result.fold(
-        (failure) {
-          // If fetching fails, show error snackbar
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Unable to load media details: ${failure.message}'),
-            ),
-          );
-        },
-        (mediaEntity) {
-          // Navigate to media details screen
-          Navigator.pushNamed(
-            context,
-            '/media-details',
-            arguments: mediaEntity,
-          );
-        },
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error loading media: $e')));
+    if (_shouldShowTmdbDetails(entry)) {
+      _openTmdbDetails(entry);
+      return;
     }
+
+    final overrideSourceId = _determineDetailsSourceOverride(entry);
+    final media = _buildMediaFromEntry(entry, sourceOverride: overrideSourceId);
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AnimeMangaDetailsScreen(
+          media: media,
+          initialSourceOverride: overrideSourceId,
+        ),
+      ),
+    );
+  }
+
+  bool _shouldShowTmdbDetails(WatchHistoryEntry entry) {
+    if (entry.sourceId.toLowerCase() == 'tmdb') return true;
+    return entry.mediaType == MediaType.movie ||
+        entry.mediaType == MediaType.tvShow;
+  }
+
+  void _openTmdbDetails(WatchHistoryEntry entry) {
+    final tmdbId = int.tryParse(entry.mediaId);
+    if (tmdbId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Unable to open TMDB details for this item.'),
+        ),
+      );
+      return;
+    }
+
+    final isMovie = entry.mediaType != MediaType.tvShow;
+    final tmdbData = <String, dynamic>{
+      'id': tmdbId,
+      'title': entry.title,
+      'name': entry.title,
+      'poster_path': entry.coverImage,
+      'backdrop_path': entry.coverImage,
+    };
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => TmdbDetailsScreen(tmdbData: tmdbData, isMovie: isMovie),
+      ),
+    );
+  }
+
+  String? _determineDetailsSourceOverride(WatchHistoryEntry entry) {
+    final normalized = entry.sourceId.toLowerCase();
+    if (_supportedExternalSources.contains(normalized)) {
+      if (normalized == 'mal' || normalized == 'myanimelist') {
+        return 'jikan';
+      }
+      return normalized;
+    }
+
+    if (entry.mediaType == MediaType.anime) {
+      return 'anilist';
+    }
+
+    if (entry.mediaType == MediaType.manga ||
+        entry.mediaType == MediaType.novel) {
+      return 'anilist';
+    }
+
+    return null;
   }
 
   Widget _buildWatchHistorySection(
@@ -436,10 +733,8 @@ class _HomeScreenState extends State<HomeScreen> with HomeScreenTmdbMethods {
     return Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: () {
-          // Navigate to media details screen
-          _navigateToMediaDetailsFromHistory(entry);
-        },
+        onTap: () => _resumeHistoryEntry(entry),
+        onLongPress: () => _showHistoryEntryActions(entry),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

@@ -245,6 +245,16 @@ class WatchHistoryController extends ChangeNotifier {
     int? volumeNumber,
     String? normalizedId,
   }) async {
+    print('DEBUG: WatchHistoryController.updateReadingProgress called');
+    print('DEBUG: mediaId: $mediaId');
+    print('DEBUG: mediaType: $mediaType');
+    print('DEBUG: title: $title');
+    print('DEBUG: sourceId: $sourceId');
+    print('DEBUG: pageNumber: $pageNumber');
+    print('DEBUG: totalPages: $totalPages');
+    print('DEBUG: chapterNumber: $chapterNumber');
+    print('DEBUG: chapterId: $chapterId');
+
     try {
       // Generate entry ID
       final entryId = WatchHistoryEntry.generateId(
@@ -252,6 +262,7 @@ class WatchHistoryController extends ChangeNotifier {
         mediaId,
         sourceId,
       );
+      print('DEBUG: Generated entryId: $entryId');
 
       // Check if entry exists
       final existingResult = await repository.getEntry(entryId);
@@ -265,7 +276,9 @@ class WatchHistoryController extends ChangeNotifier {
           );
         },
         (existing) async {
+          print('DEBUG: Existing entry: $existing');
           if (existing != null) {
+            print('DEBUG: Updating existing entry');
             // Update existing entry
             await repository.updateReadingProgress(
               entryId: entryId,
@@ -276,7 +289,9 @@ class WatchHistoryController extends ChangeNotifier {
               chapterTitle: chapterTitle,
               volumeNumber: volumeNumber,
             );
+            print('DEBUG: Updated existing entry');
           } else {
+            print('DEBUG: Creating new entry');
             // Create new entry
             final entry = repository.createEntry(
               mediaId: mediaId,
@@ -309,12 +324,14 @@ class WatchHistoryController extends ChangeNotifier {
             );
 
             await repository.upsertEntry(readingEntry);
+            print('DEBUG: Created and upserted new entry');
           }
         },
       );
 
       // Refresh continue reading
       await _refreshContinueReading();
+      print('DEBUG: Refreshed continue reading');
     } catch (e, stackTrace) {
       Logger.error(
         'Failed to update reading progress',
