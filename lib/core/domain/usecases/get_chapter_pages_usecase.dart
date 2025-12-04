@@ -25,6 +25,11 @@ class GetChapterPagesUseCase {
 class GetChapterPagesParams {
   final String chapterId;
   final String sourceId;
+  final String? chapterNumber; // Add chapter number parameter
 
-  GetChapterPagesParams({required this.chapterId, required this.sourceId});
+  GetChapterPagesParams({
+    required this.chapterId,
+    required this.sourceId,
+    this.chapterNumber,
+  });
 }

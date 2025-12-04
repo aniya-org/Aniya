@@ -477,6 +477,7 @@ class _HomeScreenState extends State<HomeScreen> with HomeScreenTmdbMethods {
             itemId: media.id,
             media: media,
             source: source,
+            resumeFromSavedPage: true,
           ),
         ),
       );

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:get_it/get_it.dart';
 import 'package:get/get.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -635,6 +636,7 @@ ExtensionManager? _getExtensionManager() {
     return Get.find<ExtensionManager>();
   } catch (e) {
     // ExtensionManager not yet registered - this is expected during initial setup
+    debugPrint('DEBUG: ExtensionManager not found in GetX: $e');
     return null;
   }
 }

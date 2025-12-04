@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:dartotsu_extension_bridge/ExtensionManager.dart';
 import 'package:dartotsu_extension_bridge/Extensions/Extensions.dart';
 import 'package:dartotsu_extension_bridge/Models/DMedia.dart';
@@ -10,6 +11,7 @@ import '../models/media_model.dart';
 import '../models/episode_model.dart';
 import '../models/chapter_model.dart';
 import '../../error/exceptions.dart';
+// import '../../utils/logger.dart';
 
 /// Remote data source for fetching media content from extensions
 /// Integrates with DartotsuExtensionBridge to access multiple extension types
@@ -33,7 +35,11 @@ abstract class MediaRemoteDataSource {
   Future<List<MediaModel>> getPopular(String sourceId, int page);
 
   /// Get pages for a manga chapter
-  Future<List<String>> getChapterPages(String chapterId, String sourceId);
+  Future<List<String>> getChapterPages(
+    String chapterId,
+    String sourceId, {
+    String? chapterNumber,
+  });
 
   /// Get novel chapter content (HTML/text) for a chapter
   Future<String> getNovelChapterContent(
@@ -51,6 +57,7 @@ class MediaRemoteDataSourceImpl implements MediaRemoteDataSource {
   /// Get a source by ID from the current extension manager
   Source? _getSourceById(String sourceId) {
     if (extensionManager == null) {
+      debugPrint('DEBUG: ExtensionManager is null');
       return null;
     }
 
@@ -260,8 +267,9 @@ class MediaRemoteDataSourceImpl implements MediaRemoteDataSource {
   @override
   Future<List<String>> getChapterPages(
     String chapterId,
-    String sourceId,
-  ) async {
+    String sourceId, {
+    String? chapterNumber, // Add optional chapter number parameter
+  }) async {
     try {
       final source = _getSourceById(sourceId);
       if (source == null) {

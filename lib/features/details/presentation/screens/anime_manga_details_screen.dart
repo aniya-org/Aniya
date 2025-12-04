@@ -2121,6 +2121,7 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
             itemId: widget.media.id,
             media: widget.media,
             source: source,
+            chapterNumber: chapter.number.toString(), // Pass chapter number
           ),
         ),
       );

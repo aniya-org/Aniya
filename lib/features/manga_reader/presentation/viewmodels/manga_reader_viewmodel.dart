@@ -30,7 +30,7 @@ class MangaReaderViewModel extends ChangeNotifier {
   bool _isLoading = false;
   String? _error;
   bool _isVerticalMode =
-      true; // true for vertical scroll, false for horizontal paging
+      false; // true for vertical scroll, false for horizontal paging
 
   List<String> get pages => _pages;
   int get currentPage => _currentPage;
@@ -46,6 +46,7 @@ class MangaReaderViewModel extends ChangeNotifier {
     bool resumeFromSavedPage = true,
     WatchHistoryController? watchHistoryController,
     MediaEntity? media,
+    String? chapterNumber, // Add chapter number parameter
   }) async {
     _isLoading = true;
     _error = null;
@@ -54,7 +55,11 @@ class MangaReaderViewModel extends ChangeNotifier {
     try {
       // Fetch chapter pages
       final result = await getChapterPages(
-        GetChapterPagesParams(chapterId: chapterId, sourceId: sourceId),
+        GetChapterPagesParams(
+          chapterId: chapterId,
+          sourceId: sourceId,
+          chapterNumber: chapterNumber,
+        ),
       );
 
       result.fold(
@@ -70,6 +75,15 @@ class MangaReaderViewModel extends ChangeNotifier {
         },
         (pageUrls) async {
           _pages = pageUrls;
+
+          // Debug: Log the first few page URLs to verify they're valid
+          debugPrint('DEBUG: Loaded ${_pages.length} page URLs');
+          if (_pages.isNotEmpty) {
+            debugPrint('DEBUG: First page URL: ${_pages[0]}');
+            if (_pages.length > 1) {
+              debugPrint('DEBUG: Second page URL: ${_pages[1]}');
+            }
+          }
 
           // Try to restore saved reading position if requested
           if (resumeFromSavedPage) {
@@ -92,9 +106,7 @@ class MangaReaderViewModel extends ChangeNotifier {
                   debugPrint(
                     'DEBUG: MangaReaderViewModel loaded saved page from watch history: $savedPage, clamped to: $_currentPage',
                   );
-                  _isLoading = false;
-                  notifyListeners();
-                  return; // Return early if found in watch history
+                  // Don't return early - let method continue to ensure UI state is properly updated
                 }
               } catch (e) {
                 debugPrint('Error loading watch history position: $e');
