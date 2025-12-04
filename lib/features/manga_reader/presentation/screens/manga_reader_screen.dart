@@ -530,6 +530,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
               onPressed: () {
                 debugPrint('DEBUG: Resume pressed');
                 _applySavedPagePosition();
+                _updateWatchHistory(pageIndex);
                 Navigator.of(ctx).pop(true);
               },
               child: const Text('Resume'),
