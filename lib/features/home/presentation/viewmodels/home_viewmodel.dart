@@ -8,6 +8,7 @@ import '../../../../core/domain/repositories/watch_history_repository.dart';
 import '../../../../core/services/tmdb_service.dart';
 import '../../../../core/utils/error_message_mapper.dart';
 import '../../../../core/utils/logger.dart';
+import '../helpers/continue_watching_helper.dart';
 
 class HomeViewModel extends ChangeNotifier {
   final GetTrendingMediaUseCase getTrendingMedia;
@@ -24,7 +25,8 @@ class HomeViewModel extends ChangeNotifier {
 
   final List<MediaEntity> _trendingAnime = [];
   final List<MediaEntity> _trendingManga = [];
-  List<LibraryItemEntity> _continueWatching = [];
+  List<LibraryItemEntity> _allLibraryItems = [];
+  List<ContinueWatchingItem> _continueWatchingAll = [];
   List<WatchHistoryEntry> _continueWatchingHistory = [];
   List<WatchHistoryEntry> _continueReadingHistory = [];
   List<Map> _trendingMovies = []; // TMDB movies
@@ -36,7 +38,10 @@ class HomeViewModel extends ChangeNotifier {
 
   List<MediaEntity> get trendingAnime => _trendingAnime;
   List<MediaEntity> get trendingManga => _trendingManga;
-  List<LibraryItemEntity> get continueWatching => _continueWatching;
+  @Deprecated('Use continueWatchingAll instead')
+  List<LibraryItemEntity> get continueWatching => _allLibraryItems.where((item) =>
+      item.status == LibraryStatus.watching || item.status == LibraryStatus.currentlyWatching).toList();
+  List<ContinueWatchingItem> get continueWatchingAll => _continueWatchingAll;
   List<WatchHistoryEntry> get continueWatchingHistory =>
       _continueWatchingHistory;
   List<WatchHistoryEntry> get continueReadingHistory => _continueReadingHistory;
@@ -48,10 +53,7 @@ class HomeViewModel extends ChangeNotifier {
   String? get error => _error;
 
   /// Returns true if there's any continue watching/reading content
-  bool get hasContinueContent =>
-      _continueWatching.isNotEmpty ||
-      _continueWatchingHistory.isNotEmpty ||
-      _continueReadingHistory.isNotEmpty;
+  bool get hasContinueContent => _continueWatchingAll.isNotEmpty;
 
   Future<void> loadHomeData() async {
     _isLoading = true;
@@ -59,21 +61,22 @@ class HomeViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // Load continue watching (library items with status watching)
-      final libraryResult = await getLibraryItems(
-        GetLibraryItemsParams(status: LibraryStatus.watching),
-      );
+      // Load all library items (needed for combining with history)
+      final libraryResult = await getLibraryItems(GetLibraryItemsParams());
       libraryResult.fold((failure) {
         _error = ErrorMessageMapper.mapFailureToMessage(failure);
         Logger.error(
-          'Failed to load continue watching',
+          'Failed to load library items',
           tag: 'HomeViewModel',
           error: failure,
         );
-      }, (items) => _continueWatching = items);
+      }, (items) => _allLibraryItems = items);
 
       // Load watch history (Continue Watching from history)
       await _loadWatchHistory();
+
+      // Combine history with library data
+      _combineHistoryAndLibrary();
 
       // Load TMDB content
       await _loadTmdbContent();
@@ -140,7 +143,7 @@ class HomeViewModel extends ChangeNotifier {
     try {
       // Load Continue Watching (video types)
       final watchingResult = await watchHistoryRepository!.getContinueWatching(
-        limit: 10,
+        limit: 20,
       );
       watchingResult.fold(
         (failure) => Logger.error(
@@ -153,7 +156,7 @@ class HomeViewModel extends ChangeNotifier {
 
       // Load Continue Reading (manga/novels)
       final readingResult = await watchHistoryRepository!.getContinueReading(
-        limit: 10,
+        limit: 20,
       );
       readingResult.fold(
         (failure) => Logger.error(
@@ -176,6 +179,26 @@ class HomeViewModel extends ChangeNotifier {
         stackTrace: stackTrace,
       );
     }
+  }
+
+  /// Combine watch history with library data for unified continue section
+  void _combineHistoryAndLibrary() {
+    // Combine all history entries
+    final allHistoryEntries = [
+      ..._continueWatchingHistory,
+      ..._continueReadingHistory,
+    ];
+
+    // Use helper to combine with library data
+    _continueWatchingAll = ContinueWatchingHelper.combineHistoryAndLibrary(
+      allHistoryEntries,
+      _allLibraryItems,
+    );
+
+    Logger.info(
+      'Combined continue watching items: ${_continueWatchingAll.length} total',
+      tag: 'HomeViewModel',
+    );
   }
 
   List<WatchHistoryEntry> _dedupeHistoryEntries(

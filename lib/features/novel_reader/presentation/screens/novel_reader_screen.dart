@@ -18,6 +18,10 @@ import '../../../../core/utils/logger.dart';
 import '../../../../features/media_details/presentation/widgets/empty_state_widgets.dart';
 import '../widgets/novel_markdown_renderer.dart';
 import '../../../media_details/presentation/models/source_selection_result.dart';
+import '../../../../core/widgets/tracking_dialog.dart';
+import '../../../../core/services/tracking/anilist_tracking_service.dart';
+import '../../../../core/services/tracking/mal_tracking_service.dart';
+import '../../../../core/services/tracking/simkl_tracking_service.dart';
 
 /// Novel reader screen for reading light novel chapters
 ///
@@ -75,6 +79,11 @@ class _NovelReaderScreenState extends State<NovelReaderScreen> {
   late final SaveReadingPositionUseCase _saveReadingPosition;
   late final GetReadingPositionUseCase _getReadingPosition;
   WatchHistoryController? _watchHistoryController;
+
+  // Tracking services
+  late final AniListTrackingService _aniListService;
+  late final MyAnimeListTrackingService _malService;
+  late final SimklTrackingService _simklService;
   int? _savedReadingUnits;
   bool _resumePromptShown = false;
   Timer? _savePositionDebounce;
@@ -106,6 +115,11 @@ class _NovelReaderScreenState extends State<NovelReaderScreen> {
     } catch (_) {
       _getReadingPosition = GetReadingPositionUseCase(sl());
     }
+    // Initialize tracking services
+    _aniListService = AniListTrackingService();
+    _malService = MyAnimeListTrackingService();
+    _simklService = SimklTrackingService();
+
     _selectedSourceId =
         widget.source?.providerId ?? widget.chapter.sourceProvider;
     _currentChapter = widget.chapter.copyWith(
@@ -847,6 +861,13 @@ class _NovelReaderScreenState extends State<NovelReaderScreen> {
                             ),
                             onPressed: _toggleTheme,
                           ),
+                          IconButton(
+                            icon: Icon(
+                              Icons.track_changes,
+                              color: controlsColor,
+                            ),
+                            onPressed: _showTrackingDialog,
+                          ),
                         ],
                       ),
                     ),
@@ -978,6 +999,16 @@ class _NovelReaderScreenState extends State<NovelReaderScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  void _showTrackingDialog() {
+    showTrackingDialog(
+      context,
+      widget.media,
+      currentChapter: _currentChapterIndex,
+      progress: _savedReadingUnits != null ? _savedReadingUnits! / 100.0 : null,
+      availableServices: [_aniListService, _malService, _simklService],
     );
   }
 }

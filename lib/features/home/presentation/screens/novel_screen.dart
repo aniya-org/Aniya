@@ -4,6 +4,7 @@ import '../../../../core/domain/entities/entities.dart';
 import '../../../../core/services/responsive_layout_manager.dart';
 import 'package:get_it/get_it.dart';
 import '../../../../core/widgets/widgets.dart';
+import '../../../../core/widgets/poster_card.dart';
 import '../../../../core/widgets/source_selector.dart';
 import '../../../../core/widgets/app_settings_menu.dart';
 import '../../../search/presentation/screens/search_screen.dart';
@@ -230,7 +231,7 @@ class _NovelScreenState extends State<NovelScreen> {
                         ),
                         delegate: SliverChildBuilderDelegate((context, index) {
                           final media = viewModel.mediaList[index];
-                          return MediaCard(
+                          return PosterCard(
                             media: media,
                             onTap: () =>
                                 _navigateToMediaDetails(context, media),

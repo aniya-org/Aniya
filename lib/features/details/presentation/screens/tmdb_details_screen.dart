@@ -22,6 +22,10 @@ import '../../../../core/widgets/provider_badge.dart';
 import '../../../../core/widgets/provider_attribution_dialog.dart';
 import '../../../media_details/presentation/screens/episode_source_selection_sheet.dart';
 import '../../../video_player/presentation/screens/video_player_screen.dart';
+import '../../../../core/widgets/tracking_dialog.dart';
+import '../../../../core/services/tracking/anilist_tracking_service.dart';
+import '../../../../core/services/tracking/mal_tracking_service.dart';
+import '../../../../core/services/tracking/simkl_tracking_service.dart';
 
 /// Details screen for TMDB movies and TV shows
 class TmdbDetailsScreen extends StatefulWidget {
@@ -50,6 +54,11 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
   late final LibraryRepository _libraryRepository;
   late final WatchHistoryController _watchHistoryController;
   late TabController _tabController;
+
+  // Tracking services
+  late final AniListTrackingService _aniListService;
+  late final MyAnimeListTrackingService _malService;
+  late final SimklTrackingService _simklService;
 
   Map? _fullDetails;
   bool _isLoading = true;
@@ -81,6 +90,12 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
     _removeFromLibraryUseCase = sl<RemoveFromLibraryUseCase>();
     _libraryRepository = sl<LibraryRepository>();
     _watchHistoryController = sl<WatchHistoryController>();
+
+    // Initialize tracking services
+    _aniListService = AniListTrackingService();
+    _malService = MyAnimeListTrackingService();
+    _simklService = SimklTrackingService();
+
     // 3 tabs for TV Shows (Overview, Episodes, More Info), 2 for Movies
     _tabController = TabController(length: widget.isMovie ? 2 : 3, vsync: this);
     _fetchFullDetails();
@@ -933,6 +948,15 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
                           ),
                         ),
                       ],
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: _showTrackingDialog,
+                        icon: const Icon(Icons.track_changes),
+                        label: const Text('Track Progress'),
+                      ),
                     ),
                     // Provider attribution badges
                     if (_contributingProviders.isNotEmpty &&
@@ -2357,6 +2381,35 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
         );
       }
     }
+  }
+
+  void _showTrackingDialog() {
+    // Create a MediaEntity from TMDB data for tracking
+    final media = MediaEntity(
+      id: widget.tmdbData['id'].toString(),
+      title: widget.isMovie
+          ? (_fullDetails?['title'] as String?) ??
+                (widget.tmdbData['title'] as String?) ??
+                'Unknown'
+          : (_fullDetails?['name'] as String?) ??
+                (widget.tmdbData['name'] as String?) ??
+                'Unknown',
+      coverImage:
+          _fullDetails?['poster_path'] as String? ??
+          widget.tmdbData['poster_path'] as String? ??
+          '',
+      type: widget.isMovie ? MediaType.movie : MediaType.tvShow,
+      genres: [],
+      status: MediaStatus.ongoing,
+      sourceId: 'tmdb',
+      sourceName: 'TMDB',
+    );
+
+    showTrackingDialog(
+      context,
+      media,
+      availableServices: [_aniListService, _malService, _simklService],
+    );
   }
 
   /// Show dialog with detailed provider attribution information

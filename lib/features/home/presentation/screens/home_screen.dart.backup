@@ -149,9 +149,10 @@ class _HomeScreenState extends State<HomeScreen> with HomeScreenTmdbMethods {
                                       value: GetIt.instance<SearchViewModel>(),
                                       child: const SearchScreen(),
                                     ),
-                              ),
-                            );
-                          },
+              ),
+            ),
+          );
+        },
                         ),
                         AppSettingsMenu(
                           onSettings: () {
@@ -722,8 +723,7 @@ class _HomeScreenState extends State<HomeScreen> with HomeScreenTmdbMethods {
                 message: 'Tap to resume • Long press for options',
                 child: InkWell(
                   onTap: () => _resumeHistoryEntry(item.historyEntry),
-                  onLongPress: () =>
-                      _showHistoryEntryActions(item.historyEntry),
+                  onLongPress: () => _showHistoryEntryActions(item.historyEntry),
                   borderRadius: BorderRadius.circular(12),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(12),
@@ -765,9 +765,7 @@ class _HomeScreenState extends State<HomeScreen> with HomeScreenTmdbMethods {
                               vertical: 4,
                             ),
                             decoration: BoxDecoration(
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.primaryContainer,
+                              color: Theme.of(context).colorScheme.primaryContainer,
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: Text(
@@ -776,13 +774,10 @@ class _HomeScreenState extends State<HomeScreen> with HomeScreenTmdbMethods {
                                 item.isVideo,
                                 item.isReading,
                               ),
-                              style: Theme.of(context).textTheme.labelSmall
-                                  ?.copyWith(
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.onPrimaryContainer,
-                                    fontWeight: FontWeight.bold,
-                                  ),
+                              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                                color: Theme.of(context).colorScheme.onPrimaryContainer,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                           ),
                         ),
@@ -798,22 +793,17 @@ class _HomeScreenState extends State<HomeScreen> with HomeScreenTmdbMethods {
                                 vertical: 3,
                               ),
                               decoration: BoxDecoration(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.secondaryContainer,
+                                color: Theme.of(context).colorScheme.secondaryContainer,
                                 borderRadius: BorderRadius.circular(6),
                               ),
                               child: Text(
                                 ContinueWatchingHelper.getLibraryStatusLabel(
                                   item.libraryStatus,
                                 )!,
-                                style: Theme.of(context).textTheme.labelSmall
-                                    ?.copyWith(
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.onSecondaryContainer,
-                                      fontSize: 10,
-                                    ),
+                                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                                  color: Theme.of(context).colorScheme.onSecondaryContainer,
+                                  fontSize: 10,
+                                ),
                               ),
                             ),
                           ),
@@ -837,18 +827,14 @@ class _HomeScreenState extends State<HomeScreen> with HomeScreenTmdbMethods {
                         ),
 
                         // Progress indicator (for video)
-                        if (item.isVideo &&
-                            item.progress != null &&
-                            item.progress! > 0)
+                        if (item.isVideo && item.progress != null && item.progress! > 0)
                           Positioned(
                             bottom: 60,
                             left: 8,
                             right: 8,
                             child: LinearProgressIndicator(
                               value: item.progress! / 100,
-                              backgroundColor: Colors.white.withValues(
-                                alpha: 0.3,
-                              ),
+                              backgroundColor: Colors.white.withValues(alpha: 0.3),
                               valueColor: AlwaysStoppedAnimation<Color>(
                                 Theme.of(context).colorScheme.primary,
                               ),
@@ -869,23 +855,19 @@ class _HomeScreenState extends State<HomeScreen> with HomeScreenTmdbMethods {
                                   item.title,
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
-                                  style: Theme.of(context).textTheme.bodySmall
-                                      ?.copyWith(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w600,
-                                      ),
+                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
                                 const SizedBox(height: 2),
                                 Text(
                                   ContinueWatchingHelper.getProgressText(item),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: Theme.of(context).textTheme.bodySmall
-                                      ?.copyWith(
-                                        color: Colors.white.withValues(
-                                          alpha: 0.9,
-                                        ),
-                                      ),
+                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: Colors.white.withValues(alpha: 0.9),
+                                  ),
                                 ),
                               ],
                             ),

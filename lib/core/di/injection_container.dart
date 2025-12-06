@@ -15,6 +15,9 @@ import '../domain/services/lazy_extension_loader.dart';
 import '../services/data_migration_service.dart';
 import '../services/tracking_auth_service.dart';
 import '../services/extension_discovery_service.dart';
+import '../services/tracking/anilist_auth.dart';
+import '../services/tracking/mal_auth.dart';
+import '../services/tracking/simkl_auth.dart';
 import '../services/permission_service.dart';
 import '../services/tmdb_service.dart';
 import '../services/cloudstream_service.dart';
@@ -53,6 +56,8 @@ import '../data/datasources/watch_history_local_data_source.dart';
 import '../domain/repositories/watch_history_repository.dart';
 import '../data/repositories/watch_history_repository_impl.dart';
 import '../services/watch_history_controller.dart';
+import '../services/library_history_sync_service.dart';
+import '../services/download_service.dart';
 import '../domain/usecases/get_trending_media_usecase.dart';
 import '../domain/usecases/get_popular_media_usecase.dart';
 import '../domain/usecases/get_library_items_usecase.dart';
@@ -124,6 +129,10 @@ Future<void> initializeDependencies() async {
   // Open and register themeData box (used for extension repo preferences)
   final themeDataBox = await Hive.openBox('themeData');
   sl.registerSingleton<Box>(themeDataBox, instanceName: 'themeDataBox');
+
+  // Open and register auth box (used for tracking service authentication)
+  final authBox = await Hive.openBox('auth');
+  sl.registerSingleton<Box>(authBox, instanceName: 'authBox');
 
   // Initialize GetX ExtensionsController (port of AnymeX SourceController)
   final extensionsController = ExtensionsController(themeBox: themeDataBox);
@@ -256,12 +265,7 @@ Future<void> initializeDependencies() async {
         TrackingAuthRepositoryImpl(secureStorage: const FlutterSecureStorage()),
   );
 
-  sl.registerLazySingleton<TrackingAuthService>(
-    () => TrackingAuthService(
-      const FlutterSecureStorage(),
-      sl<TrackingAuthRepository>(),
-    ),
-  );
+  sl.registerLazySingleton<TrackingAuthService>(() => TrackingAuthService());
 
   // Register MalExternalDataSource for MAL API fallback
   sl.registerLazySingleton<MalExternalDataSourceImpl>(
@@ -352,6 +356,19 @@ Future<void> initializeDependencies() async {
   // Register WatchHistoryController
   sl.registerLazySingleton<WatchHistoryController>(
     () => WatchHistoryController(repository: sl<WatchHistoryRepository>()),
+  );
+
+  // Register LibraryHistorySyncService
+  sl.registerLazySingleton<LibraryHistorySyncService>(
+    () => LibraryHistorySyncService(
+      libraryRepository: sl<LibraryRepository>(),
+      watchHistoryRepository: sl<WatchHistoryRepository>(),
+    ),
+  );
+
+  // Register Download Service
+  sl.registerLazySingleton<DownloadService>(
+    () => DownloadService(repository: sl<DownloadRepository>()),
   );
 
   // RepositoryRepository requires RepositoryLocalDataSource
@@ -509,6 +526,33 @@ Future<void> initializeDependencies() async {
   sl.registerLazySingleton<AuthenticateTrackingServiceUseCase>(
     () => AuthenticateTrackingServiceUseCase(sl<TrackingRepository>()),
   );
+
+  // Register AnilistAuth controller for AniList authentication
+  final anilistAuth = AnilistAuth();
+  if (!Get.isRegistered<AnilistAuth>()) {
+    Get.put<AnilistAuth>(anilistAuth, permanent: true);
+  }
+  if (!sl.isRegistered<AnilistAuth>()) {
+    sl.registerSingleton<AnilistAuth>(anilistAuth);
+  }
+
+  // Register MalAuth controller for MyAnimeList authentication
+  final malAuth = MalAuth();
+  if (!Get.isRegistered<MalAuth>()) {
+    Get.put<MalAuth>(malAuth, permanent: true);
+  }
+  if (!sl.isRegistered<MalAuth>()) {
+    sl.registerSingleton<MalAuth>(malAuth);
+  }
+
+  // Register SimklAuth controller for Simkl authentication
+  final simklAuth = SimklAuth();
+  if (!Get.isRegistered<SimklAuth>()) {
+    Get.put<SimklAuth>(simklAuth, permanent: true);
+  }
+  if (!sl.isRegistered<SimklAuth>()) {
+    sl.registerSingleton<SimklAuth>(simklAuth);
+  }
 
   // Register AuthViewModel for managing authentication state
   sl.registerLazySingleton<AuthViewModel>(

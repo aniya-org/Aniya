@@ -13,6 +13,9 @@ import '../../../../core/domain/usecases/add_to_library_usecase.dart';
 import '../../../../core/domain/usecases/remove_from_library_usecase.dart';
 import '../../../../core/services/watch_history_controller.dart';
 import '../../../../core/enums/tracking_service.dart';
+import '../../../../core/services/tracking/anilist_tracking_service.dart';
+import '../../../../core/services/tracking/mal_tracking_service.dart';
+import '../../../../core/services/tracking/simkl_tracking_service.dart';
 import '../../../../core/error/exceptions.dart';
 import '../../../../core/error/failures.dart';
 import '../../../../core/utils/logger.dart';
@@ -21,6 +24,7 @@ import '../../../../core/utils/data_aggregator.dart';
 import '../../../../core/utils/provider_cache.dart';
 import '../../../../core/widgets/provider_attribution_dialog.dart';
 import '../../../../core/widgets/provider_badge.dart';
+import '../../../../core/widgets/tracking_dialog.dart';
 import '../../../auth/presentation/viewmodels/auth_viewmodel.dart';
 import '../../../manga_reader/presentation/screens/manga_reader_screen.dart';
 import '../../../novel_reader/presentation/screens/novel_reader_screen.dart';
@@ -57,6 +61,11 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
   late final LibraryRepository _libraryRepository;
   late final WatchHistoryController _watchHistoryController;
   late TabController _tabController;
+
+  // Tracking services
+  late final AniListTrackingService _aniListService;
+  late final MyAnimeListTrackingService _malService;
+  late final SimklTrackingService _simklService;
 
   MediaDetailsEntity? _fullDetails;
   bool _isLoading = true;
@@ -100,6 +109,17 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
     _removeFromLibraryUseCase = sl<RemoveFromLibraryUseCase>();
     _libraryRepository = sl<LibraryRepository>();
     _watchHistoryController = sl<WatchHistoryController>();
+
+    // Initialize tracking services
+    _aniListService = AniListTrackingService();
+    _malService = MyAnimeListTrackingService();
+    _simklService = SimklTrackingService();
+
+    // Initialize auth tokens
+    _aniListService.initialize();
+    _malService.initialize();
+    _simklService.initialize();
+
     // 3 tabs for Anime/Manga (Overview, Episodes/Chapters, More Info)
     final isAnime = widget.media.type == MediaType.anime;
     _tabController = TabController(length: 3, vsync: this);
@@ -477,6 +497,14 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
     }
   }
 
+  void _showTrackingDialog() {
+    showTrackingDialog(
+      context,
+      widget.media,
+      availableServices: [_aniListService, _malService, _simklService],
+    );
+  }
+
   String _trackingServiceLabel(TrackingService service) {
     switch (service) {
       case TrackingService.anilist:
@@ -720,6 +748,15 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
                           ),
                         ),
                       ],
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: _showTrackingDialog,
+                        icon: const Icon(Icons.track_changes),
+                        label: const Text('Track Progress'),
+                      ),
                     ),
                     if (_contributingProviders.isNotEmpty) ...[
                       const SizedBox(height: 12),

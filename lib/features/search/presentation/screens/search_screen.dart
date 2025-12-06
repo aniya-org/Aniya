@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../../../core/domain/entities/entities.dart';
 import '../../../../core/services/responsive_layout_manager.dart';
 import '../../../../core/widgets/widgets.dart';
+import '../../../../core/widgets/poster_card.dart';
 import '../../../../core/widgets/source_selector.dart';
 import '../../../../core/widgets/app_settings_menu.dart';
 import '../../../../core/navigation/navigation_controller.dart';
@@ -648,12 +649,11 @@ class SourceSection extends StatelessWidget {
                   scrollDirection: Axis.horizontal,
                   itemBuilder: (context, index) {
                     final media = group.items[index];
-                    return SizedBox(
+                    return PosterCard(
+                      media: media,
                       width: 190,
-                      child: MediaCard(
-                        media: media,
-                        onTap: () => onMediaTap(media),
-                      ),
+                      height: 280,
+                      onTap: () => onMediaTap(media),
                     );
                   },
                   separatorBuilder: (_, __) => const SizedBox(width: 12),

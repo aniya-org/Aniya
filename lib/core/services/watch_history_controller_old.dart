@@ -6,8 +6,6 @@ import '../utils/logger.dart';
 
 /// Controller for managing watch history across all media types
 /// Provides filtered views for Continue Watching, Continue Reading, and per-type sections
-///
-/// This is an improved version that uses proper logging instead of debug prints
 class WatchHistoryController extends ChangeNotifier {
   final WatchHistoryRepository repository;
 
@@ -45,23 +43,14 @@ class WatchHistoryController extends ChangeNotifier {
     try {
       // Load all entries
       final allResult = await repository.getAllEntries();
-      allResult.fold(
-        (failure) {
-          _error = failure.message;
-          Logger.error(
-            'Failed to load watch history',
-            tag: 'WatchHistoryController',
-            error: failure,
-          );
-        },
-        (entries) {
-          _allEntries = entries;
-          Logger.debug(
-            'Loaded ${entries.length} history entries',
-            tag: 'WatchHistoryController',
-          );
-        },
-      );
+      allResult.fold((failure) {
+        _error = failure.message;
+        Logger.error(
+          'Failed to load watch history',
+          tag: 'WatchHistoryController',
+          error: failure,
+        );
+      }, (entries) => _allEntries = entries);
 
       // Load continue watching
       final watchingResult = await repository.getContinueWatching(limit: 20);
@@ -71,13 +60,7 @@ class WatchHistoryController extends ChangeNotifier {
           tag: 'WatchHistoryController',
           error: failure,
         ),
-        (entries) {
-          _continueWatching = entries;
-          Logger.debug(
-            'Loaded ${entries.length} continue watching entries',
-            tag: 'WatchHistoryController',
-          );
-        },
+        (entries) => _continueWatching = entries,
       );
 
       // Load continue reading
@@ -88,13 +71,7 @@ class WatchHistoryController extends ChangeNotifier {
           tag: 'WatchHistoryController',
           error: failure,
         ),
-        (entries) {
-          _continueReading = entries;
-          Logger.debug(
-            'Loaded ${entries.length} continue reading entries',
-            tag: 'WatchHistoryController',
-          );
-        },
+        (entries) => _continueReading = entries,
       );
 
       // Load counts by type
@@ -127,7 +104,38 @@ class WatchHistoryController extends ChangeNotifier {
     }
   }
 
-  /// Update or create a watch history entry for video content
+  /// Load entries for a specific media type
+  Future<void> loadEntriesForType(MediaType type) async {
+    _isLoading = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      final result = await repository.getEntriesByMediaType(type);
+      result.fold((failure) {
+        _error = failure.message;
+        Logger.error(
+          'Failed to load entries for type $type',
+          tag: 'WatchHistoryController',
+          error: failure,
+        );
+      }, (entries) => _entriesByType[type] = entries);
+    } catch (e, stackTrace) {
+      _error = 'An unexpected error occurred';
+      Logger.error(
+        'Unexpected error loading entries for type',
+        tag: 'WatchHistoryController',
+        error: e,
+        stackTrace: stackTrace,
+      );
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Update video playback progress
+  /// Call this from video player when progress changes
   Future<void> updateVideoProgress({
     required String mediaId,
     required MediaType mediaType,
@@ -135,13 +143,11 @@ class WatchHistoryController extends ChangeNotifier {
     String? coverImage,
     required String sourceId,
     required String sourceName,
-    required int episodeNumber,
-    String? episodeId,
-    String? episodeTitle,
     required int playbackPositionMs,
     int? totalDurationMs,
-    String? livestreamId,
-    bool? wasLive,
+    int? episodeNumber,
+    String? episodeId,
+    String? episodeTitle,
     String? normalizedId,
   }) async {
     try {
@@ -150,11 +156,6 @@ class WatchHistoryController extends ChangeNotifier {
         mediaType,
         mediaId,
         sourceId,
-      );
-
-      Logger.debug(
-        'Updating video progress for $title (episode $episodeNumber)',
-        tag: 'WatchHistoryController',
       );
 
       // Check if entry exists
@@ -178,10 +179,6 @@ class WatchHistoryController extends ChangeNotifier {
               episodeNumber: episodeNumber,
               episodeId: episodeId,
               episodeTitle: episodeTitle,
-            );
-            Logger.debug(
-              'Updated existing video entry for $title',
-              tag: 'WatchHistoryController',
             );
           } else {
             // Create new entry
@@ -210,17 +207,11 @@ class WatchHistoryController extends ChangeNotifier {
               episodeTitle: episodeTitle,
               playbackPositionMs: playbackPositionMs,
               totalDurationMs: totalDurationMs,
-              livestreamId: livestreamId,
-              wasLive: wasLive,
               createdAt: entry.createdAt,
               lastPlayedAt: entry.lastPlayedAt,
             );
 
             await repository.upsertEntry(videoEntry);
-            Logger.debug(
-              'Created new video entry for $title',
-              tag: 'WatchHistoryController',
-            );
           }
         },
       );
@@ -237,7 +228,8 @@ class WatchHistoryController extends ChangeNotifier {
     }
   }
 
-  /// Update or create a watch history entry for reading content
+  /// Update reading progress
+  /// Call this from manga/novel reader when progress changes
   Future<void> updateReadingProgress({
     required String mediaId,
     required MediaType mediaType,
@@ -253,6 +245,16 @@ class WatchHistoryController extends ChangeNotifier {
     int? volumeNumber,
     String? normalizedId,
   }) async {
+    print('DEBUG: WatchHistoryController.updateReadingProgress called');
+    print('DEBUG: mediaId: $mediaId');
+    print('DEBUG: mediaType: $mediaType');
+    print('DEBUG: title: $title');
+    print('DEBUG: sourceId: $sourceId');
+    print('DEBUG: pageNumber: $pageNumber');
+    print('DEBUG: totalPages: $totalPages');
+    print('DEBUG: chapterNumber: $chapterNumber');
+    print('DEBUG: chapterId: $chapterId');
+
     try {
       // Generate entry ID
       final entryId = WatchHistoryEntry.generateId(
@@ -260,11 +262,7 @@ class WatchHistoryController extends ChangeNotifier {
         mediaId,
         sourceId,
       );
-
-      Logger.debug(
-        'Updating reading progress for $title (chapter $chapterNumber, page $pageNumber)',
-        tag: 'WatchHistoryController',
-      );
+      print('DEBUG: Generated entryId: $entryId');
 
       // Check if entry exists
       final existingResult = await repository.getEntry(entryId);
@@ -278,7 +276,9 @@ class WatchHistoryController extends ChangeNotifier {
           );
         },
         (existing) async {
+          print('DEBUG: Existing entry: $existing');
           if (existing != null) {
+            print('DEBUG: Updating existing entry');
             // Update existing entry
             await repository.updateReadingProgress(
               entryId: entryId,
@@ -289,11 +289,9 @@ class WatchHistoryController extends ChangeNotifier {
               chapterTitle: chapterTitle,
               volumeNumber: volumeNumber,
             );
-            Logger.debug(
-              'Updated existing reading entry for $title',
-              tag: 'WatchHistoryController',
-            );
+            print('DEBUG: Updated existing entry');
           } else {
+            print('DEBUG: Creating new entry');
             // Create new entry
             final entry = repository.createEntry(
               mediaId: mediaId,
@@ -326,16 +324,14 @@ class WatchHistoryController extends ChangeNotifier {
             );
 
             await repository.upsertEntry(readingEntry);
-            Logger.debug(
-              'Created new reading entry for $title',
-              tag: 'WatchHistoryController',
-            );
+            print('DEBUG: Created and upserted new entry');
           }
         },
       );
 
       // Refresh continue reading
       await _refreshContinueReading();
+      print('DEBUG: Refreshed continue reading');
     } catch (e, stackTrace) {
       Logger.error(
         'Failed to update reading progress',
@@ -347,33 +343,24 @@ class WatchHistoryController extends ChangeNotifier {
   }
 
   /// Mark an entry as completed
-  Future<void> markAsCompleted({
-    required String mediaId,
-    required MediaType mediaType,
-    required String sourceId,
-    String? normalizedId,
-  }) async {
+  Future<void> markCompleted(String entryId) async {
     try {
-      final entryId = WatchHistoryEntry.generateId(
-        mediaType,
-        mediaId,
-        sourceId,
+      final result = await repository.markCompleted(entryId);
+      result.fold(
+        (failure) => Logger.error(
+          'Failed to mark as completed',
+          tag: 'WatchHistoryController',
+          error: failure,
+        ),
+        (_) {
+          // Refresh lists
+          _refreshContinueWatching();
+          _refreshContinueReading();
+        },
       );
-
-      Logger.info(
-        'Marking $mediaId as completed',
-        tag: 'WatchHistoryController',
-      );
-
-      await repository.markCompleted(entryId);
-
-      // Refresh data
-      if (_allEntries.isNotEmpty) {
-        await loadAll();
-      }
     } catch (e, stackTrace) {
       Logger.error(
-        'Failed to mark entry as completed',
+        'Failed to mark as completed',
         tag: 'WatchHistoryController',
         error: e,
         stackTrace: stackTrace,
@@ -381,31 +368,27 @@ class WatchHistoryController extends ChangeNotifier {
     }
   }
 
-  /// Remove an entry from watch history
-  Future<void> removeEntry({
-    required String mediaId,
-    required MediaType mediaType,
-    required String sourceId,
-    String? normalizedId,
-  }) async {
+  /// Remove an entry from history
+  Future<void> removeEntry(String entryId) async {
     try {
-      final entryId = WatchHistoryEntry.generateId(
-        mediaType,
-        mediaId,
-        sourceId,
+      final result = await repository.removeEntry(entryId);
+      result.fold(
+        (failure) => Logger.error(
+          'Failed to remove entry',
+          tag: 'WatchHistoryController',
+          error: failure,
+        ),
+        (_) {
+          // Remove from local lists
+          _allEntries.removeWhere((e) => e.id == entryId);
+          _continueWatching.removeWhere((e) => e.id == entryId);
+          _continueReading.removeWhere((e) => e.id == entryId);
+          for (final type in _entriesByType.keys) {
+            _entriesByType[type]?.removeWhere((e) => e.id == entryId);
+          }
+          notifyListeners();
+        },
       );
-
-      Logger.info(
-        'Removing $mediaId from watch history',
-        tag: 'WatchHistoryController',
-      );
-
-      await repository.removeEntry(entryId);
-
-      // Refresh data
-      if (_allEntries.isNotEmpty) {
-        await loadAll();
-      }
     } catch (e, stackTrace) {
       Logger.error(
         'Failed to remove entry',
@@ -419,49 +402,25 @@ class WatchHistoryController extends ChangeNotifier {
   /// Clear all watch history
   Future<void> clearAll() async {
     try {
-      Logger.info('Clearing all watch history', tag: 'WatchHistoryController');
-
-      await repository.clearAll();
-
-      // Reset state
-      _allEntries = [];
-      _continueWatching = [];
-      _continueReading = [];
-      _entriesByType = {};
-      _entriesCountByType = {};
-      _error = null;
-
-      notifyListeners();
-    } catch (e, stackTrace) {
-      Logger.error(
-        'Failed to clear watch history',
-        tag: 'WatchHistoryController',
-        error: e,
-        stackTrace: stackTrace,
-      );
-    }
-  }
-
-  /// Refresh continue watching entries
-  Future<void> _refreshContinueWatching() async {
-    if (_isLoading) return;
-
-    try {
-      final result = await repository.getContinueWatching(limit: 20);
+      final result = await repository.clearAll();
       result.fold(
         (failure) => Logger.error(
-          'Failed to refresh continue watching',
+          'Failed to clear history',
           tag: 'WatchHistoryController',
           error: failure,
         ),
-        (entries) {
-          _continueWatching = entries;
+        (_) {
+          _allEntries = [];
+          _continueWatching = [];
+          _continueReading = [];
+          _entriesByType = {};
+          _entriesCountByType = {};
           notifyListeners();
         },
       );
     } catch (e, stackTrace) {
       Logger.error(
-        'Error refreshing continue watching',
+        'Failed to clear history',
         tag: 'WatchHistoryController',
         error: e,
         stackTrace: stackTrace,
@@ -469,144 +428,45 @@ class WatchHistoryController extends ChangeNotifier {
     }
   }
 
-  /// Refresh continue reading entries
-  Future<void> _refreshContinueReading() async {
-    if (_isLoading) return;
-
-    try {
-      final result = await repository.getContinueReading(limit: 20);
-      result.fold(
-        (failure) => Logger.error(
-          'Failed to refresh continue reading',
-          tag: 'WatchHistoryController',
-          error: failure,
-        ),
-        (entries) {
-          _continueReading = entries;
-          notifyListeners();
-        },
-      );
-    } catch (e, stackTrace) {
-      Logger.error(
-        'Error refreshing continue reading',
-        tag: 'WatchHistoryController',
-        error: e,
-        stackTrace: stackTrace,
-      );
-    }
-  }
-
-  /// Get playback position for a video episode
-  Future<int?> getVideoPosition({
-    required String mediaId,
-    required MediaType mediaType,
-    required String sourceId,
-    int? episodeNumber,
-  }) async {
-    try {
-      final entryId = WatchHistoryEntry.generateId(
-        mediaType,
-        mediaId,
-        sourceId,
-      );
-
-      final result = await repository.getEntry(entryId);
-      return result.fold(
-        (failure) {
-          Logger.debug(
-            'No saved position found for $mediaId',
-            tag: 'WatchHistoryController',
-          );
-          return null;
-        },
-        (entry) {
-          if (entry?.playbackPositionMs != null) {
-            Logger.debug(
-              'Found saved position for $mediaId: ${entry!.playbackPositionMs}ms',
-              tag: 'WatchHistoryController',
-            );
-          }
-          return entry?.playbackPositionMs;
-        },
-      );
-    } catch (e, stackTrace) {
-      Logger.error(
-        'Error getting video position',
-        tag: 'WatchHistoryController',
-        error: e,
-        stackTrace: stackTrace,
-      );
-      return null;
-    }
-  }
-
-  /// Get watch history entry for a specific media
+  /// Get entry for a specific media (for checking if in history)
   Future<WatchHistoryEntry?> getEntryForMedia(
     String mediaId,
     String sourceId,
-    MediaType mediaType,
+    MediaType type,
   ) async {
-    try {
-      final entryId = WatchHistoryEntry.generateId(
-        mediaType,
-        mediaId,
-        sourceId,
-      );
-
-      final result = await repository.getEntry(entryId);
-      return result.fold((failure) => null, (entry) => entry);
-    } catch (e, stackTrace) {
-      Logger.error(
-        'Error getting entry for media $mediaId',
-        tag: 'WatchHistoryController',
-        error: e,
-        stackTrace: stackTrace,
-      );
-      return null;
-    }
+    final entryId = WatchHistoryEntry.generateId(type, mediaId, sourceId);
+    final result = await repository.getEntry(entryId);
+    return result.fold((failure) => null, (entry) => entry);
   }
 
-  /// Get reading position for a chapter
-  Future<int?> getReadingPosition({
-    required String mediaId,
-    required MediaType mediaType,
-    required String sourceId,
-    int? chapterNumber,
-  }) async {
-    try {
-      final entryId = WatchHistoryEntry.generateId(
-        mediaType,
-        mediaId,
-        sourceId,
-      );
-
-      final result = await repository.getEntry(entryId);
-      return result.fold(
-        (failure) {
-          Logger.debug(
-            'No saved reading position found for $mediaId',
-            tag: 'WatchHistoryController',
-          );
-          return null;
-        },
-        (entry) {
-          if (entry?.pageNumber != null) {
-            Logger.debug(
-              'Found saved reading position for $mediaId: page ${entry!.pageNumber}',
-              tag: 'WatchHistoryController',
-            );
-          }
-          return entry?.pageNumber;
-        },
-      );
-    } catch (e, stackTrace) {
-      Logger.error(
-        'Error getting reading position',
+  // Private helpers
+  Future<void> _refreshContinueWatching() async {
+    final result = await repository.getContinueWatching(limit: 20);
+    result.fold(
+      (failure) => Logger.error(
+        'Failed to refresh continue watching',
         tag: 'WatchHistoryController',
-        error: e,
-        stackTrace: stackTrace,
-      );
-      return null;
-    }
+        error: failure,
+      ),
+      (entries) {
+        _continueWatching = entries;
+        notifyListeners();
+      },
+    );
+  }
+
+  Future<void> _refreshContinueReading() async {
+    final result = await repository.getContinueReading(limit: 20);
+    result.fold(
+      (failure) => Logger.error(
+        'Failed to refresh continue reading',
+        tag: 'WatchHistoryController',
+        error: failure,
+      ),
+      (entries) {
+        _continueReading = entries;
+        notifyListeners();
+      },
+    );
   }
 }

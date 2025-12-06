@@ -100,35 +100,50 @@ class _SettingsContentState extends State<_SettingsContent> {
     );
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Settings'), centerTitle: false),
-      body: ListView(
-        controller: _scrollController,
-        children: [
-          _buildSectionHeader(context, 'Appearance', padding),
-          _buildThemeSelector(context, viewModel, themeProvider),
-          const Divider(),
-          _buildSectionHeader(context, 'Playback', padding),
-          _buildPlaybackSettings(context, viewModel),
-          const Divider(),
-          _buildSectionHeader(context, 'Extensions', padding),
-          _buildExtensionSettings(context, viewModel),
-          const Divider(),
-          _buildSectionHeader(
-            context,
-            'Tracking & Accounts',
-            padding,
-            key: _trackingSectionKey,
+      appBar: AppBar(
+        title: const Text('Settings'),
+        centerTitle: false,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Sync tracking status',
+            onPressed: () => viewModel.syncTrackingAuthStatus(),
           ),
-          _buildTrackingSettings(
-            context,
-            viewModel,
-            highlightService: widget.highlightedService,
-          ),
-          const Divider(),
-          _buildSectionHeader(context, 'Cache Management', padding),
-          _buildCacheManagement(context, viewModel),
-          const SizedBox(height: 50),
         ],
+      ),
+      body: RefreshIndicator(
+        onRefresh: () async {
+          await viewModel.loadSettings();
+        },
+        child: ListView(
+          controller: _scrollController,
+          children: [
+            _buildSectionHeader(context, 'Appearance', padding),
+            _buildThemeSelector(context, viewModel, themeProvider),
+            const Divider(),
+            _buildSectionHeader(context, 'Playback', padding),
+            _buildPlaybackSettings(context, viewModel),
+            const Divider(),
+            _buildSectionHeader(context, 'Extensions', padding),
+            _buildExtensionSettings(context, viewModel),
+            const Divider(),
+            _buildSectionHeader(
+              context,
+              'Tracking & Accounts',
+              padding,
+              key: _trackingSectionKey,
+            ),
+            _buildTrackingSettings(
+              context,
+              viewModel,
+              highlightService: widget.highlightedService,
+            ),
+            const Divider(),
+            _buildSectionHeader(context, 'Cache Management', padding),
+            _buildCacheManagement(context, viewModel),
+            const SizedBox(height: 50),
+          ],
+        ),
       ),
     );
   }
@@ -302,6 +317,8 @@ class _SettingsContentState extends State<_SettingsContent> {
     bool isHighlighted = false,
   }) {
     final isConnected = viewModel.isTrackingServiceConnected(service);
+    final username = viewModel.getTrackingUsername(service);
+    final autoSync = viewModel.getTrackingAutoSync(service);
 
     final highlightColor = Theme.of(context).colorScheme.tertiaryContainer;
 
@@ -312,7 +329,7 @@ class _SettingsContentState extends State<_SettingsContent> {
         color: isHighlighted ? highlightColor : Colors.transparent,
         borderRadius: BorderRadius.circular(12),
       ),
-      child: ListTile(
+      child: ExpansionTile(
         leading: CircleAvatar(
           backgroundColor: isConnected
               ? Theme.of(context).colorScheme.primaryContainer
@@ -325,7 +342,11 @@ class _SettingsContentState extends State<_SettingsContent> {
           ),
         ),
         title: Text(name),
-        subtitle: Text(isConnected ? 'Connected as User' : 'Not connected'),
+        subtitle: Text(
+          isConnected
+              ? (username != null ? 'Connected as $username' : 'Connected')
+              : 'Not connected',
+        ),
         trailing: Tooltip(
           message: isHighlighted
               ? 'Connect $name to continue'
@@ -341,6 +362,31 @@ class _SettingsContentState extends State<_SettingsContent> {
             child: Text(isConnected ? 'Disconnect' : 'Connect'),
           ),
         ),
+        children: isConnected
+            ? [
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Auto-sync progress',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                      ),
+                      Switch(
+                        value: autoSync,
+                        onChanged: (value) =>
+                            viewModel.setTrackingAutoSync(service, value),
+                      ),
+                    ],
+                  ),
+                ),
+              ]
+            : [],
       ),
     );
   }

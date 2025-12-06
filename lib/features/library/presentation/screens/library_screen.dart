@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../../../core/domain/entities/entities.dart';
 import '../../../../core/services/responsive_layout_manager.dart';
 import '../../../../core/widgets/widgets.dart';
+import '../../../../core/widgets/poster_card.dart';
 import '../../../../core/widgets/app_settings_menu.dart';
 import '../../../../core/navigation/navigation_controller.dart';
 import '../../../../core/navigation/app_navigation.dart';
@@ -393,9 +394,6 @@ class _LibraryScreenState extends State<LibraryScreen>
     final padding = ResponsiveLayoutManager.getPadding(
       MediaQuery.of(context).size.width,
     );
-    final columnCount = ResponsiveLayoutManager.getGridColumns(
-      MediaQuery.of(context).size.width,
-    );
 
     final slivers = <Widget>[];
     for (final status in groupedItems.keys) {
@@ -438,20 +436,22 @@ class _LibraryScreenState extends State<LibraryScreen>
       );
 
       slivers.add(
-        SliverPadding(
-          padding: EdgeInsets.symmetric(horizontal: padding.left),
-          sliver: SliverGrid(
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: columnCount,
-              childAspectRatio: 0.7,
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
-              mainAxisExtent: 300,
+        SliverToBoxAdapter(
+          child: SizedBox(
+            height: 280, // Fixed height for horizontal scrolling
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              padding: EdgeInsets.symmetric(horizontal: padding.left),
+              itemCount: items.length,
+              itemBuilder: (context, index) {
+                final item = items[index];
+                return SizedBox(
+                  height: 210,
+                  width: 175, // Fixed width for each card
+                  child: _buildLibraryItem(context, item, viewModel),
+                );
+              },
             ),
-            delegate: SliverChildBuilderDelegate((context, index) {
-              final item = items[index];
-              return _buildLibraryItem(context, item, viewModel);
-            }, childCount: items.length),
           ),
         ),
       );
@@ -465,41 +465,81 @@ class _LibraryScreenState extends State<LibraryScreen>
     LibraryItemEntity item,
     LibraryViewModel viewModel,
   ) {
-    return Dismissible(
-      key: Key(item.id),
-      direction: DismissDirection.endToStart,
-      background: Container(
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 16),
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.error,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Icon(Icons.delete, color: Theme.of(context).colorScheme.onError),
-      ),
-      confirmDismiss: (direction) async {
-        return await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Remove from Library'),
-            content: Text(
-              'Are you sure you want to remove "${item.media?.title ?? 'Unknown Media'}" from your library?',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Cancel'),
+    return PosterCard(
+      media: item.media!,
+      libraryStatus: item.status,
+      showMoreOptionsIndicator: true,
+      onTap: () => _navigateToMediaDetails(context, item.media!),
+      onLongPress: () => _showLibraryItemActions(context, item, viewModel),
+    );
+  }
+
+  void _showLibraryItemActions(
+    BuildContext context,
+    LibraryItemEntity item,
+    LibraryViewModel viewModel,
+  ) {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.info_outline),
+                title: const Text('View Details'),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  _navigateToMediaDetails(context, item.media!);
+                },
               ),
-              FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('Remove'),
+              ListTile(
+                leading: const Icon(Icons.delete_outline, color: Colors.red),
+                title: const Text(
+                  'Remove from Library',
+                  style: TextStyle(color: Colors.red),
+                ),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  _showDeleteConfirmation(context, item, viewModel);
+                },
               ),
             ],
           ),
         );
       },
-      onDismissed: (direction) {
-        viewModel.removeItem(item.id);
+    );
+  }
+
+  Future<void> _showDeleteConfirmation(
+    BuildContext context,
+    LibraryItemEntity item,
+    LibraryViewModel viewModel,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove from Library'),
+        content: Text(
+          'Are you sure you want to remove "${item.media?.title ?? 'Unknown Media'}" from your library?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      viewModel.removeItem(item.id);
+      if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -507,76 +547,8 @@ class _LibraryScreenState extends State<LibraryScreen>
             ),
           ),
         );
-      },
-      child: GestureDetector(
-        onLongPress: () => _showQuickActions(context, item, viewModel),
-        child: MediaCard(
-          media: item.media!,
-          libraryStatus: item.status,
-          onTap: () => _navigateToMediaDetails(context, item.media!),
-        ),
-      ),
-    );
-  }
-
-  void _showQuickActions(
-    BuildContext context,
-    LibraryItemEntity item,
-    LibraryViewModel viewModel,
-  ) {
-    showModalBottomSheet(
-      context: context,
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              item.media?.title ?? 'Unknown Media',
-              style: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Change Status',
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
-            const SizedBox(height: 8),
-            ...LibraryStatus.values.map((status) {
-              return ListTile(
-                leading: Icon(
-                  item.status == status
-                      ? Icons.check_circle
-                      : Icons.circle_outlined,
-                ),
-                title: Text(_getStatusLabel(status)),
-                selected: item.status == status,
-                onTap: () {
-                  viewModel.updateStatus(item.id, status);
-                  Navigator.pop(context);
-                },
-              );
-            }),
-            const Divider(),
-            ListTile(
-              leading: const Icon(Icons.delete, color: Colors.red),
-              title: const Text(
-                'Remove from Library',
-                style: TextStyle(color: Colors.red),
-              ),
-              onTap: () {
-                Navigator.pop(context);
-                viewModel.removeItem(item.id);
-              },
-            ),
-          ],
-        ),
-      ),
-    );
+      }
+    }
   }
 
   void _navigateToMediaDetails(BuildContext context, MediaEntity media) {
@@ -653,7 +625,7 @@ class _LibraryScreenState extends State<LibraryScreen>
   }
 
   Widget _buildSkeletonScreen(BuildContext context) {
-    final columnCount = ResponsiveLayoutManager.getGridColumns(
+    final padding = ResponsiveLayoutManager.getPadding(
       MediaQuery.of(context).size.width,
     );
 
@@ -661,20 +633,54 @@ class _LibraryScreenState extends State<LibraryScreen>
       slivers: [
         // App Bar
         const SliverAppBar(title: Text('Library'), floating: true),
-        // Skeleton grid
+        // Skeleton horizontal list
         SliverPadding(
-          padding: const EdgeInsets.all(16),
-          sliver: SliverGrid(
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: columnCount,
-              childAspectRatio: 0.7,
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
-              mainAxisExtent: 300,
+          padding: EdgeInsets.fromLTRB(padding.left, 24, padding.right, 12),
+          sliver: SliverToBoxAdapter(
+            child: Row(
+              children: [
+                Text(
+                  'Loading...',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primaryContainer,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '6',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onPrimaryContainer,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
             ),
-            delegate: SliverChildBuilderDelegate(
-              (context, index) => const MediaSkeletonCard(),
-              childCount: 6,
+          ),
+        ),
+        SliverToBoxAdapter(
+          child: SizedBox(
+            height: 280,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              padding: EdgeInsets.symmetric(horizontal: padding.left),
+              itemCount: 6,
+              itemBuilder: (context, index) {
+                return Container(
+                  width: 140,
+                  margin: const EdgeInsets.only(right: 12),
+                  child: const MediaSkeletonCard(),
+                );
+              },
             ),
           ),
         ),
