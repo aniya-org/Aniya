@@ -648,7 +648,7 @@ class _MediaDetailsScreenState extends State<MediaDetailsScreen> {
       case LibraryStatus.watching:
         return 'Watching';
       case LibraryStatus.currentlyWatching:
-        return 'Currently Watching';
+        return 'Watching';
       case LibraryStatus.watched:
         return 'Watched';
       case LibraryStatus.completed:

@@ -2233,7 +2233,7 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
             ? 'Plan to Read'
             : 'Plan to Watch';
       case LibraryStatus.currentlyWatching:
-        return 'Currently Watching';
+        return 'Watching';
       case LibraryStatus.completed:
         return 'Completed';
       case LibraryStatus.onHold:

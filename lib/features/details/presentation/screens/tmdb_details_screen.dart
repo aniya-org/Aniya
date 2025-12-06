@@ -2261,7 +2261,7 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
       case LibraryStatus.planToWatch:
         return 'Plan to Watch';
       case LibraryStatus.currentlyWatching:
-        return 'Currently Watching';
+        return 'Watching';
       case LibraryStatus.completed:
         return 'Completed';
       case LibraryStatus.onHold:

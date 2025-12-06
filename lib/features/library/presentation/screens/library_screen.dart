@@ -604,7 +604,7 @@ class _LibraryScreenState extends State<LibraryScreen>
   String _getStatusLabel(LibraryStatus status) {
     switch (status) {
       case LibraryStatus.currentlyWatching:
-        return "Currently Watching";
+        return "Watching";
       case LibraryStatus.watching:
         return 'Watching';
       case LibraryStatus.completed:
