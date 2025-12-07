@@ -27,6 +27,14 @@ abstract class WatchHistoryLocalDataSource {
   /// Get entry by normalized ID (for cross-source matching)
   Future<WatchHistoryEntryModel?> getEntryByNormalizedId(String normalizedId);
 
+  /// Find consolidated entry by title, year, and type (ignoring source)
+  /// Returns the first entry matching these criteria
+  Future<WatchHistoryEntryModel?> findConsolidatedEntry({
+    required String title,
+    required MediaType mediaType,
+    int? releaseYear,
+  });
+
   /// Add or update a watch history entry
   Future<void> upsertEntry(WatchHistoryEntryModel entry);
 
@@ -174,6 +182,32 @@ class WatchHistoryLocalDataSourceImpl implements WatchHistoryLocalDataSource {
     } catch (e) {
       throw CacheException(
         'Failed to get entry by normalized ID: ${e.toString()}',
+      );
+    }
+  }
+
+  @override
+  Future<WatchHistoryEntryModel?> findConsolidatedEntry({
+    required String title,
+    required MediaType mediaType,
+    int? releaseYear,
+  }) async {
+    try {
+      final allEntries = await getAllEntries();
+
+      // Find first entry matching title, type, and year (ignoring source)
+      for (final entry in allEntries) {
+        if (entry.title.toLowerCase() == title.toLowerCase() &&
+            entry.mediaType == mediaType &&
+            entry.releaseYear == releaseYear) {
+          return entry;
+        }
+      }
+
+      return null;
+    } catch (e) {
+      throw CacheException(
+        'Failed to find consolidated entry: ${e.toString()}',
       );
     }
   }

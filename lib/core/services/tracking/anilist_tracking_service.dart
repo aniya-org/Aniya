@@ -5,6 +5,7 @@
 /// for Flutter/Dart applications. This implementation follows common patterns
 /// for OAuth2 authentication and GraphQL API interactions.
 /// CREDIT: OAuth2 implementation based on AniList API documentation at https://docs.anilist.co/guide/auth/
+/// CREDIT: GraphQL search implementation based on AniList API v2 documentation
 library;
 
 import 'package:get/get.dart';
@@ -14,7 +15,16 @@ import '../../../../core/services/tracking/anilist_auth.dart';
 import '../../../../core/utils/logger.dart';
 
 class AniListTrackingService implements TrackingServiceInterface {
-  final AnilistAuth _auth = Get.find<AnilistAuth>();
+  late final AnilistAuth _auth;
+
+  AniListTrackingService() {
+    // Try to find existing instance, otherwise create new one
+    if (Get.isRegistered<AnilistAuth>(tag: 'anilist')) {
+      _auth = Get.find<AnilistAuth>(tag: 'anilist');
+    } else {
+      _auth = Get.put<AnilistAuth>(AnilistAuth(), tag: 'anilist', permanent: true);
+    }
+  }
 
   @override
   TrackingService get serviceType => TrackingService.anilist;
@@ -66,10 +76,7 @@ class AniListTrackingService implements TrackingServiceInterface {
     }
 
     try {
-      // For now, return empty list as search is not implemented in AnilistAuth
-      // TODO: Implement search in AnilistAuth controller
-      Logger.info('AniList search not yet implemented');
-      return [];
+      return await _auth.searchMedia(query, mediaType);
     } catch (e) {
       Logger.error('AniList: Search failed', error: e);
       return [];
@@ -85,10 +92,15 @@ class AniListTrackingService implements TrackingServiceInterface {
 
     try {
       // Use the auth controller's updateListEntry method
-      await _auth.updateListEntry(
+      final success = await _auth.updateListEntry(
         UpdateListEntryParams(id: media.id, status: TrackingStatus.planning),
       );
-      return true;
+      if (success) {
+        Logger.info('AniList: Successfully added to watchlist');
+      } else {
+        Logger.warning('AniList: Failed to add to watchlist');
+      }
+      return success;
     } catch (e) {
       Logger.error('AniList: Add to watchlist failed', error: e);
       return false;
@@ -124,14 +136,54 @@ class AniListTrackingService implements TrackingServiceInterface {
         status = TrackingStatus.completed;
       }
 
-      await _auth.updateListEntry(
-        UpdateListEntryParams(
-          id: progress.mediaId,
-          progress: progress.episode ?? progress.chapter,
-          status: status,
-        ),
-      );
-      return true;
+      // First, try direct update with the provided ID
+      try {
+        // Ensure we always have a status when updating progress
+        final updateStatus = status ?? TrackingStatus.watching;
+
+        final success = await _auth.updateListEntry(
+          UpdateListEntryParams(
+            id: progress.mediaId,
+            progress: progress.episode ?? progress.chapter,
+            status: updateStatus,
+          ),
+        );
+        return success;
+      } catch (e) {
+        Logger.warning(
+          'AniList: Direct update failed, searching for correct media ID by title: $e',
+        );
+
+        // If direct update fails, search for the media by title
+        final results = await _auth.searchMedia(
+          progress.mediaTitle,
+          progress.mediaType,
+        );
+
+        if (results.isNotEmpty) {
+          final correctId = results.first.id;
+          Logger.info(
+            'AniList: Found correct ID $correctId for "${progress.mediaTitle}"',
+          );
+
+          // Ensure we always have a status when updating progress
+          final updateStatus = status ?? TrackingStatus.watching;
+
+          final success = await _auth.updateListEntry(
+            UpdateListEntryParams(
+              id: correctId,
+              progress: progress.episode ?? progress.chapter,
+              status: updateStatus,
+            ),
+          );
+          return success;
+        } else {
+          Logger.error(
+            'AniList: Could not find media "${progress.mediaTitle}" on AniList',
+          );
+          return false;
+        }
+      }
     } catch (e) {
       Logger.error('AniList: Update progress failed', error: e);
       return false;
@@ -146,10 +198,17 @@ class AniListTrackingService implements TrackingServiceInterface {
     }
 
     try {
-      // For now, return null as progress tracking is not fully implemented
-      // TODO: Implement progress retrieval in AnilistAuth controller
-      Logger.info('AniList getProgress not yet implemented');
-      return null;
+      final entry = await _auth.getMediaListEntry(mediaId);
+      if (entry == null) return null;
+
+      return TrackingProgress(
+        mediaId: mediaId,
+        mediaType: MediaType.anime, // Would need to be determined based on media
+        currentEpisode: entry['progress'],
+        progress: entry['progress'] != null ? (entry['progress'] / 100.0) : null,
+        completed: entry['status'] == 'COMPLETED',
+        lastUpdated: DateTime.now(),
+      );
     } catch (e) {
       Logger.error('AniList: Get progress failed', error: e);
       return null;

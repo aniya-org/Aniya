@@ -1,3 +1,6 @@
+import 'package:aniya/core/extractor/local_extractor_service.dart';
+import 'package:aniya/core/extractor/models/extractor_request.dart';
+import 'package:aniya/core/extractor/models/raw_stream.dart';
 import 'package:dartz/dartz.dart';
 import 'package:dartotsu_extension_bridge/ExtensionManager.dart' as bridge;
 import 'package:dartotsu_extension_bridge/Extensions/ExtractorService.dart'
@@ -19,10 +22,14 @@ import '../../utils/logger.dart';
 /// Validates: Requirements 5.3, 5.4
 class VideoRepositoryImpl implements VideoRepository {
   final bridge.ExtensionManager? extensionManager;
+  final LocalExtractorService? localExtractorService;
 
-  VideoRepositoryImpl({this.extensionManager});
+  VideoRepositoryImpl({
+    this.extensionManager,
+    LocalExtractorService? localExtractorService,
+  }) : localExtractorService = localExtractorService;
 
-  final ExtractorService _extractorService = ExtractorService();
+  final ExtractorService _bridgeExtractorService = ExtractorService();
 
   /// Get a source by ID from the current extension manager
   dynamic _getSourceById(String sourceId) {
@@ -46,10 +53,13 @@ class VideoRepositoryImpl implements VideoRepository {
     }
   }
 
-  Future<String?> _tryExtractorService(VideoSource source) async {
+  Future<String?> _tryBridgeExtractorService(
+    VideoSource source, {
+    String? overrideUrl,
+  }) async {
     try {
-      if (!await _extractorService.isInitialized) {
-        final initialized = await _extractorService.initialize();
+      if (!await _bridgeExtractorService.isInitialized) {
+        final initialized = await _bridgeExtractorService.initialize();
         if (!initialized) {
           Logger.warning('ExtractorService failed to initialize');
           return null;
@@ -57,8 +67,8 @@ class VideoRepositoryImpl implements VideoRepository {
       }
 
       final referer = source.headers?['referer'] ?? source.headers?['Referer'];
-      final ExtractorResult result = await _extractorService.extract(
-        source.url,
+      final ExtractorResult result = await _bridgeExtractorService.extract(
+        overrideUrl ?? source.url,
         referer: referer,
       );
 
@@ -135,14 +145,26 @@ class VideoRepositoryImpl implements VideoRepository {
           continue;
         }
 
+        // CloudStream servers may return raw JSON payloads; sanitize to csjson://
+        final sanitizedUrl =
+            CloudStreamUrlCodec.sanitize(server.embed!.url) ??
+            server.embed!.url;
+
         // Create a video source for each server
+        final mergedHeaders = <String, String>{
+          if (server.embed?.headers != null) ...server.embed!.headers!,
+          // Preserve extension identity for downstream extraction
+          'x-extension-id': source.id ?? '',
+          if (source.name != null) 'x-extension-name': source.name!,
+        };
+
         final videoSource = VideoSourceModel(
           id: '${episodeId}_${server.name ?? i}',
           name: server.name ?? 'Server ${i + 1}',
-          url: server.embed!.url,
+          url: sanitizedUrl,
           quality: 'Auto', // Quality will be determined during extraction
           server: server.name ?? 'Unknown',
-          headers: server.embed?.headers,
+          headers: mergedHeaders,
         );
 
         videoSources.add(videoSource);
@@ -187,19 +209,102 @@ class VideoRepositoryImpl implements VideoRepository {
         return Left(ValidationFailure('Video source URL is empty'));
       }
 
+      // Decode CloudStream csjson payloads before any further handling
+      final rawUrl = source.url;
+      final isCsjson = rawUrl.startsWith(CloudStreamUrlCodec.prefix);
+      final decodedUrl = isCsjson
+          ? CloudStreamUrlCodec.desanitize(rawUrl)
+          : rawUrl;
+      final isJsonPayload = isCsjson || _isJsonPayload(decodedUrl);
+
       // Check if URL is already a direct video URL
-      if (_isDirectVideoUrl(source.url)) {
-        Logger.info('URL is already a direct video URL: ${source.url}');
-        return Right(source.url);
+      if (_isDirectVideoUrl(decodedUrl)) {
+        Logger.info('URL is already a direct video URL: $decodedUrl');
+        return Right(decodedUrl);
       }
 
-      // Try the CloudStream extractor service first (supports all video sources)
-      final extractorUrl = await _tryExtractorService(source);
-      if (extractorUrl != null) {
-        Logger.info(
-          'ExtractorService resolved playable URL for ${source.name}',
+      if (isJsonPayload) {
+        // CloudStream JSON payloads should be handled by the originating extension
+        final extensionId = source.headers?['x-extension-id'];
+        final sourceExtension = extensionId != null && extensionId.isNotEmpty
+            ? _getSourceById(extensionId)
+            : _getSourceByServerName(source.server);
+
+        if (sourceExtension == null) {
+          Logger.warning(
+            'No extension found for CloudStream payload server: ${source.server}',
+            tag: 'VideoRepositoryImpl',
+          );
+          return Left(
+            ExtensionFailure(
+              'No extension found for CloudStream payload server: ${source.server}',
+            ),
+          );
+        }
+
+        try {
+          final video = Video(
+            source.name,
+            decodedUrl,
+            source.quality,
+            headers: source.headers,
+          );
+          final methods = sourceExtension.methods;
+          final extractedVideos = await methods.loadVideo(video, null);
+
+          if (extractedVideos.isEmpty) {
+            Logger.warning(
+              'Extension returned no videos for CloudStream payload',
+              tag: 'VideoRepositoryImpl',
+            );
+            return Left(
+              ServerFailure('No videos extracted from CloudStream payload'),
+            );
+          }
+
+          final bestVideo = _selectBestQuality(extractedVideos);
+          Logger.info(
+            'Extension resolved CloudStream payload with quality: ${bestVideo.quality}',
+            tag: 'VideoRepositoryImpl',
+          );
+          return Right(bestVideo.url);
+        } catch (e, stack) {
+          Logger.error(
+            'Extension loadVideo failed for CloudStream payload',
+            tag: 'VideoRepositoryImpl',
+            error: e,
+            stackTrace: stack,
+          );
+          return Left(
+            UnknownFailure(
+              'Failed to extract CloudStream payload: ${e.toString()}',
+            ),
+          );
+        }
+      } else {
+        // Try the built-in Dart extractor catalogue first (only for real URLs)
+        final localUrl = await _tryLocalExtractorService(
+          source,
+          overrideUrl: decodedUrl,
         );
-        return Right(extractorUrl);
+        if (localUrl != null) {
+          Logger.info(
+            'Local extractor resolved playable URL for ${source.name}',
+          );
+          return Right(localUrl);
+        }
+
+        // Fall back to the CloudStream bridge extractor if needed.
+        final bridgeUrl = await _tryBridgeExtractorService(
+          source,
+          overrideUrl: decodedUrl,
+        );
+        if (bridgeUrl != null) {
+          Logger.info(
+            'Bridge ExtractorService resolved playable URL for ${source.name}',
+          );
+          return Right(bridgeUrl);
+        }
       }
 
       // For embed URLs, fall back to extension-specific loadVideo
@@ -207,22 +312,27 @@ class VideoRepositoryImpl implements VideoRepository {
         'ExtractorService unavailable, falling back to extension load',
       );
 
-      // Get the source extension from the server name
-      final sourceExtension = _getSourceByServerName(source.server);
+      // Try to locate the originating extension using embedded metadata
+      final extensionId = source.headers?['x-extension-id'];
+      final sourceExtension = extensionId != null && extensionId.isNotEmpty
+          ? _getSourceById(extensionId)
+          : _getSourceByServerName(source.server);
       if (sourceExtension == null) {
         Logger.warning(
           'Could not find extension for server: ${source.server}, returning embed URL',
         );
         // If we can't find the extension, return the embed URL
         // The video player might be able to handle it
-        return Right(_sanitizeForPlayer(source.url));
+        return Right(
+          _sanitizeForPlayer(isJsonPayload ? source.url : decodedUrl),
+        );
       }
 
       try {
         // Create a Video object from the source
         final video = Video(
           source.name,
-          source.url,
+          decodedUrl,
           source.quality,
           headers: source.headers,
         );
@@ -233,7 +343,7 @@ class VideoRepositoryImpl implements VideoRepository {
 
         if (extractedVideos.isEmpty) {
           Logger.warning('No videos extracted, returning original URL');
-          return Right(_sanitizeForPlayer(source.url));
+          return Right(_sanitizeForPlayer(decodedUrl));
         }
 
         // Return the first extracted video URL
@@ -249,7 +359,7 @@ class VideoRepositoryImpl implements VideoRepository {
         );
         // If extraction fails, return the original URL (encoded if needed)
         // The video player might still be able to handle it
-        return Right(_sanitizeForPlayer(source.url));
+        return Right(_sanitizeForPlayer(decodedUrl));
       }
     } on ValidationException catch (e) {
       Logger.error('Validation exception: ${e.message}');
@@ -322,19 +432,132 @@ class VideoRepositoryImpl implements VideoRepository {
     return bestVideo ?? videos.first;
   }
 
+  /// Stores extracted headers from local extractor for later use by the player
+  Map<String, String>? _lastExtractedHeaders;
+
+  Future<String?> _tryLocalExtractorService(
+    VideoSource source, {
+    String? overrideUrl,
+  }) async {
+    final service = localExtractorService;
+    if (service == null) {
+      return null;
+    }
+
+    final uri = Uri.tryParse(overrideUrl ?? source.url);
+    if (uri == null) {
+      Logger.warning(
+        'Unable to parse URL for local extraction: ${overrideUrl ?? source.url}',
+        tag: 'VideoRepositoryImpl',
+      );
+      return null;
+    }
+
+    final request = ExtractorRequest(
+      url: uri,
+      category: ExtractorCategory.video,
+      mediaTitle: source.name,
+      serverName: source.server,
+      referer: source.headers?['referer'] ?? source.headers?['Referer'],
+      headers: source.headers,
+    );
+
+    final streams = await service.extract(request);
+    if (streams.isEmpty) {
+      return null;
+    }
+
+    final bestStream = _selectBestLocalStream(streams);
+    if (bestStream == null) {
+      return null;
+    }
+
+    // Store extracted headers for propagation to player
+    if (bestStream.headers != null && bestStream.headers!.isNotEmpty) {
+      _lastExtractedHeaders = bestStream.headers;
+      Logger.debug(
+        'Local extractor produced headers for player: ${bestStream.headers}',
+        tag: 'VideoRepositoryImpl',
+      );
+    }
+
+    return bestStream.url.toString();
+  }
+
+  /// Get the last extracted headers from local extractor
+  /// These should be used when playing the extracted URL
+  Map<String, String>? getLastExtractedHeaders() => _lastExtractedHeaders;
+
+  RawStream? _selectBestLocalStream(List<RawStream> streams) {
+    if (streams.isEmpty) return null;
+
+    const qualityPriority = {
+      '1080p': 5,
+      '1080': 5,
+      '720p': 4,
+      '720': 4,
+      '480p': 3,
+      '480': 3,
+      '360p': 2,
+      '360': 2,
+      'auto': 1,
+    };
+
+    RawStream? best;
+    int bestScore = -1;
+
+    for (final stream in streams) {
+      final qualityKey = stream.quality?.toLowerCase().trim();
+      int score = 0;
+      if (qualityKey != null && qualityPriority.containsKey(qualityKey)) {
+        score = qualityPriority[qualityKey]!;
+      } else {
+        final numericMatch = RegExp(
+          r'(\d{3,4})',
+        ).firstMatch(stream.quality ?? '')?.group(0);
+        if (numericMatch != null) {
+          score = int.tryParse(numericMatch) ?? 0;
+        } else if (stream.isM3u8) {
+          score = 1;
+        }
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        best = stream;
+      }
+    }
+
+    return best ?? streams.first;
+  }
+
   /// Check if a URL is a direct video URL
   bool _isDirectVideoUrl(String url) {
     final videoExtensions = ['.mp4', '.m3u8', '.mkv', '.webm', '.avi', '.mov'];
 
     final lowerUrl = url.toLowerCase();
-    return videoExtensions.any((ext) => lowerUrl.contains(ext));
+    final hasVideoExtension = videoExtensions.any(
+      (ext) => lowerUrl.contains(ext),
+    );
+    final containsQueryVideoParam =
+        lowerUrl.contains('mime=video') || lowerUrl.contains('type=video');
+
+    return hasVideoExtension || containsQueryVideoParam;
+  }
+
+  /// Detects if the decoded URL is a JSON payload (CloudStream csjson)
+  bool _isJsonPayload(String value) {
+    if (value.startsWith(CloudStreamUrlCodec.prefix)) return true;
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return false;
+    final first = trimmed[0];
+    return first == '{' || first == '[';
   }
 
   String _sanitizeForPlayer(String url) {
     final trimmed = url.trim();
     if (trimmed.isEmpty) return trimmed;
-    final firstChar = trimmed[0];
-    if (firstChar == '{' || firstChar == '[') {
+    if (_isJsonPayload(trimmed)) {
       return CloudStreamUrlCodec.sanitize(trimmed) ?? trimmed;
     }
     return trimmed;

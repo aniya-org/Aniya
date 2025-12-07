@@ -26,6 +26,7 @@ import '../../../../core/widgets/tracking_dialog.dart';
 import '../../../../core/services/tracking/anilist_tracking_service.dart';
 import '../../../../core/services/tracking/mal_tracking_service.dart';
 import '../../../../core/services/tracking/simkl_tracking_service.dart';
+import '../../../../core/services/tracking/service_id_mapper.dart';
 
 /// Details screen for TMDB movies and TV shows
 class TmdbDetailsScreen extends StatefulWidget {
@@ -95,6 +96,9 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
     _aniListService = AniListTrackingService();
     _malService = MyAnimeListTrackingService();
     _simklService = SimklTrackingService();
+
+    // Initialize ServiceIdMapper
+    ServiceIdMapper.initialize();
 
     // 3 tabs for TV Shows (Overview, Episodes, More Info), 2 for Movies
     _tabController = TabController(length: widget.isMovie ? 2 : 3, vsync: this);

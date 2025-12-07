@@ -30,6 +30,9 @@ class WatchHistoryEntry extends Equatable {
   /// Source extension name for display
   final String sourceName;
 
+  /// Release/start year for title+year matching with tracking providers
+  final int? releaseYear;
+
   // === Video Progress (for anime, movies, TV, cartoons, documentaries, livestreams) ===
 
   /// Current episode number (1-indexed)
@@ -95,6 +98,7 @@ class WatchHistoryEntry extends Equatable {
     this.coverImage,
     required this.sourceId,
     required this.sourceName,
+    this.releaseYear,
     this.episodeNumber,
     this.episodeId,
     this.episodeTitle,
@@ -226,6 +230,7 @@ class WatchHistoryEntry extends Equatable {
     String? coverImage,
     String? sourceId,
     String? sourceName,
+    int? releaseYear,
     int? episodeNumber,
     String? episodeId,
     String? episodeTitle,
@@ -252,6 +257,7 @@ class WatchHistoryEntry extends Equatable {
       coverImage: coverImage ?? this.coverImage,
       sourceId: sourceId ?? this.sourceId,
       sourceName: sourceName ?? this.sourceName,
+      releaseYear: releaseYear ?? this.releaseYear,
       episodeNumber: episodeNumber ?? this.episodeNumber,
       episodeId: episodeId ?? this.episodeId,
       episodeTitle: episodeTitle ?? this.episodeTitle,
@@ -281,6 +287,7 @@ class WatchHistoryEntry extends Equatable {
     coverImage,
     sourceId,
     sourceName,
+    releaseYear,
     episodeNumber,
     episodeId,
     episodeTitle,
@@ -291,7 +298,6 @@ class WatchHistoryEntry extends Equatable {
     chapterTitle,
     volumeNumber,
     pageNumber,
-    totalPages,
     livestreamId,
     wasLive,
     createdAt,

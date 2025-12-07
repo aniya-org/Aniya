@@ -14,10 +14,16 @@ import '../domain/services/offline_storage_manager.dart';
 import '../domain/services/lazy_extension_loader.dart';
 import '../services/data_migration_service.dart';
 import '../services/tracking_auth_service.dart';
+import '../services/tracking/tracking_sync_service.dart';
+import '../services/tracking/anilist_tracking_service.dart';
+import '../services/tracking/mal_tracking_service.dart';
+import '../services/tracking/simkl_tracking_service.dart';
+import '../services/tracking/tracking_service_interface.dart';
 import '../services/extension_discovery_service.dart';
 import '../services/tracking/anilist_auth.dart';
 import '../services/tracking/mal_auth.dart';
 import '../services/tracking/simkl_auth.dart';
+import '../services/tracking/auth_state_manager.dart';
 import '../services/permission_service.dart';
 import '../services/tmdb_service.dart';
 import '../services/cloudstream_service.dart';
@@ -35,6 +41,8 @@ import '../data/repositories/media_repository_impl.dart';
 import '../data/repositories/library_repository_impl.dart';
 import '../data/repositories/extension_repository_impl.dart';
 import '../data/repositories/video_repository_impl.dart';
+import '../extractor/extractor_registry.dart';
+import '../extractor/local_extractor_service.dart';
 import '../data/repositories/tracking_repository_impl.dart';
 import '../data/repositories/tracking_auth_repository_impl.dart';
 import '../data/repositories/repository_repository_impl.dart';
@@ -165,6 +173,12 @@ Future<void> initializeDependencies() async {
       priorityConfig: sl<ProviderPriorityConfig>(),
       retryHandler: sl<RetryHandler>(),
     ),
+  );
+
+  // Register the local extractor registry/service for embed URL resolution
+  sl.registerLazySingleton<ExtractorRegistry>(() => ExtractorRegistry());
+  sl.registerLazySingleton<LocalExtractorService>(
+    () => LocalExtractorService(registry: sl<ExtractorRegistry>()),
   );
 
   // Register LazyExtensionLoader for on-demand extension loading
@@ -304,7 +318,10 @@ Future<void> initializeDependencies() async {
   );
 
   sl.registerLazySingleton<VideoRepository>(
-    () => VideoRepositoryImpl(extensionManager: _getExtensionManager()),
+    () => VideoRepositoryImpl(
+      extensionManager: _getExtensionManager(),
+      localExtractorService: sl<LocalExtractorService>(),
+    ),
   );
 
   sl.registerLazySingleton<TrackingRepository>(
@@ -471,6 +488,7 @@ Future<void> initializeDependencies() async {
       getLibraryItems: sl<GetLibraryItemsUseCase>(),
       tmdbService: sl<TmdbService>(),
       watchHistoryRepository: sl<WatchHistoryRepository>(),
+      watchHistoryController: sl<WatchHistoryController>(),
     ),
   );
   sl.registerLazySingleton<BrowseViewModel>(
@@ -492,7 +510,7 @@ Future<void> initializeDependencies() async {
   );
   sl.registerLazySingleton<SettingsViewModel>(
     () => SettingsViewModel(
-      sl<TrackingAuthService>(),
+      sl<AuthStateManager>(),
       sl<Box>(instanceName: 'settingsBox'),
       sl<ProviderCache>(),
     ),
@@ -512,6 +530,7 @@ Future<void> initializeDependencies() async {
     () => EpisodeSourceSelectionViewModel(
       extensionSearchRepository: sl<ExtensionSearchRepository>(),
       recentExtensionsRepository: sl<RecentExtensionsRepository>(),
+      extractorService: sl<LocalExtractorService>(),
     ),
   );
   sl.registerFactory<MangaReaderViewModel>(
@@ -552,6 +571,15 @@ Future<void> initializeDependencies() async {
   }
   if (!sl.isRegistered<SimklAuth>()) {
     sl.registerSingleton<SimklAuth>(simklAuth);
+  }
+
+  // Register AuthStateManager for centralized authentication state
+  final authStateManager = AuthStateManager();
+  if (!Get.isRegistered<AuthStateManager>()) {
+    Get.put<AuthStateManager>(authStateManager, permanent: true);
+  }
+  if (!sl.isRegistered<AuthStateManager>()) {
+    sl.registerSingleton<AuthStateManager>(authStateManager);
   }
 
   // Register AuthViewModel for managing authentication state
@@ -666,8 +694,42 @@ Future<void> initializeWatchHistoryDataSource() async {
       getLibraryItems: sl<GetLibraryItemsUseCase>(),
       tmdbService: sl<TmdbService>(),
       watchHistoryRepository: sl<WatchHistoryRepository>(),
+      watchHistoryController: sl<WatchHistoryController>(),
     ),
   );
+
+  // Register TrackingSyncService for batch sync operations
+  if (sl.isRegistered<TrackingSyncService>()) {
+    await sl.unregister<TrackingSyncService>();
+  }
+  sl.registerLazySingleton<TrackingSyncService>(
+    () => TrackingSyncService(
+      repository: sl<WatchHistoryRepository>(),
+      availableServices: _getAvailableTrackingServices(),
+    ),
+  );
+}
+
+/// Get available tracking services for sync operations
+List<TrackingServiceInterface> _getAvailableTrackingServices() {
+  final services = <TrackingServiceInterface>[];
+
+  // Add AniList service if available
+  if (sl.isRegistered<AniListTrackingService>()) {
+    services.add(sl<AniListTrackingService>());
+  }
+
+  // Add MAL service if available
+  if (sl.isRegistered<MyAnimeListTrackingService>()) {
+    services.add(sl<MyAnimeListTrackingService>());
+  }
+
+  // Add Simkl service if available
+  if (sl.isRegistered<SimklTrackingService>()) {
+    services.add(sl<SimklTrackingService>());
+  }
+
+  return services;
 }
 
 /// Get ExtensionManager from GetX (if available) or return null

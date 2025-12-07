@@ -14,7 +14,16 @@ import '../../../../core/services/tracking/simkl_auth.dart';
 import '../../../../core/utils/logger.dart';
 
 class SimklTrackingService implements TrackingServiceInterface {
-  final SimklAuth _auth = Get.find<SimklAuth>();
+  late final SimklAuth _auth;
+
+  SimklTrackingService() {
+    // Try to find existing instance, otherwise create new one
+    if (Get.isRegistered<SimklAuth>(tag: 'simkl')) {
+      _auth = Get.find<SimklAuth>(tag: 'simkl');
+    } else {
+      _auth = Get.put<SimklAuth>(SimklAuth(), tag: 'simkl', permanent: true);
+    }
+  }
 
   @override
   TrackingService get serviceType => TrackingService.simkl;
@@ -66,10 +75,7 @@ class SimklTrackingService implements TrackingServiceInterface {
     }
 
     try {
-      // For now, return empty list as search is not implemented in SimklAuth
-      // TODO: Implement search in SimklAuth controller
-      Logger.info('Simkl search not yet implemented');
-      return [];
+      return await _auth.searchMedia(query, mediaType);
     } catch (e) {
       Logger.error('Simkl: Search failed', error: e);
       return [];
@@ -84,8 +90,33 @@ class SimklTrackingService implements TrackingServiceInterface {
     }
 
     try {
-      await _auth.updateListEntry(media.id, status: TrackingStatus.planning);
-      return true;
+      // First, try direct update with the provided ID
+      try {
+        await _auth.updateListEntry(media.id, status: TrackingStatus.planning);
+        return true;
+      } catch (e) {
+        Logger.warning(
+          'Simkl: Direct add failed, searching for correct media ID by title: $e',
+        );
+
+        // If direct update fails, search for the media by title
+        final correctId = await _auth.searchMediaByTitle(media.title);
+
+        if (correctId != null) {
+          Logger.info(
+            'Simkl: Found correct ID $correctId for "${media.title}"',
+          );
+
+          await _auth.updateListEntry(correctId, status: TrackingStatus.planning);
+          Logger.info('Simkl: Add to watchlist successful after search');
+          return true;
+        } else {
+          Logger.error(
+            'Simkl: Could not find media "${media.title}" in Simkl',
+          );
+          return false;
+        }
+      }
     } catch (e) {
       Logger.error('Simkl: Add to watchlist failed', error: e);
       return false;
@@ -124,9 +155,12 @@ class SimklTrackingService implements TrackingServiceInterface {
 
       // Try direct update first
       try {
+        // Ensure we always have a status when updating progress
+        final updateStatus = status ?? TrackingStatus.watching;
+
         await _auth.updateListEntry(
           progress.mediaId,
-          status: status,
+          status: updateStatus,
           progress: progress.episode ?? progress.chapter,
         );
         return true;
@@ -136,15 +170,19 @@ class SimklTrackingService implements TrackingServiceInterface {
         );
 
         // Try to search for the media by title to get the correct Simkl ID
-        final correctId = await _auth.searchMedia(progress.mediaTitle);
+        final correctId = await _auth.searchMediaByTitle(progress.mediaTitle);
 
         if (correctId != null) {
           Logger.info(
             'Simkl: Found correct ID $correctId for "${progress.mediaTitle}"',
           );
+
+          // Ensure we always have a status when updating progress
+          final updateStatus = status ?? TrackingStatus.watching;
+
           await _auth.updateListEntry(
             correctId,
-            status: status,
+            status: updateStatus,
             progress: progress.episode ?? progress.chapter,
           );
           return true;
@@ -169,10 +207,17 @@ class SimklTrackingService implements TrackingServiceInterface {
     }
 
     try {
-      // For now, return null as progress tracking is not fully implemented
-      // TODO: Implement progress retrieval in SimklAuth controller
-      Logger.info('Simkl getProgress not yet implemented');
-      return null;
+      final entry = await _auth.getMediaListEntry(mediaId);
+      if (entry == null) return null;
+
+      return TrackingProgress(
+        mediaId: mediaId,
+        mediaType: MediaType.anime, // Simkl primarily handles anime
+        currentEpisode: entry['progress'],
+        progress: entry['progress'] != null ? (entry['progress'] / 100.0) : null,
+        completed: entry['status'] == 'completed',
+        lastUpdated: DateTime.now(),
+      );
     } catch (e) {
       Logger.error('Simkl: Get progress failed', error: e);
       return null;

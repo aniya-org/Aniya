@@ -32,6 +32,7 @@ class VideoPlayerViewModel extends ChangeNotifier {
   Duration _currentPosition = Duration.zero;
   bool _isLoading = false;
   String? _error;
+  Map<String, String>? _extractedHeaders;
 
   /// All available SourceEntity objects (from episode source selection)
   List<SourceEntity> _allSourceEntities = [];
@@ -47,6 +48,25 @@ class VideoPlayerViewModel extends ChangeNotifier {
   Duration get currentPosition => _currentPosition;
   bool get isLoading => _isLoading;
   String? get error => _error;
+
+  /// Get headers for playback, merging extracted headers with source headers
+  Map<String, String> getPlaybackHeaders() {
+    final headers = <String, String>{};
+    // Start with source headers
+    if (_selectedSource?.headers != null) {
+      headers.addAll(_selectedSource!.headers!);
+    }
+    // Override with extracted headers (these take precedence)
+    if (_extractedHeaders != null) {
+      headers.addAll(_extractedHeaders!);
+    }
+    return headers;
+  }
+
+  /// Store extracted headers from extractor service
+  void setExtractedHeaders(Map<String, String>? headers) {
+    _extractedHeaders = headers;
+  }
 
   Future<void> loadSources(String episodeId, String sourceId) async {
     _isLoading = true;

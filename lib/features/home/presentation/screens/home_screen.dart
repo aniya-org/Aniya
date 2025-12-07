@@ -533,8 +533,11 @@ class _HomeScreenState extends State<HomeScreen> with HomeScreenTmdbMethods {
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.delete_outline),
-                title: const Text('Remove from History'),
+                leading: const Icon(Icons.delete_outline, color: Colors.red),
+                title: const Text(
+                  'Remove from History',
+                  style: TextStyle(color: Colors.red),
+                ),
                 onTap: () {
                   Navigator.of(ctx).pop();
                   _removeHistoryEntry(entry);
@@ -555,13 +558,31 @@ class _HomeScreenState extends State<HomeScreen> with HomeScreenTmdbMethods {
       return;
     }
 
-    await _watchHistoryController!.removeEntry(
-      mediaId: entry.mediaId,
-      mediaType: entry.mediaType,
-      sourceId: entry.sourceId,
-    );
-    if (!mounted) return;
-    await context.read<HomeViewModel>().refresh();
+    try {
+      await _watchHistoryController!.removeEntry(
+        mediaId: entry.mediaId,
+        mediaType: entry.mediaType,
+        sourceId: entry.sourceId,
+      );
+      if (!mounted) return;
+
+      // Show success message
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Removed from history'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+
+      // The WatchHistoryController already calls notifyListeners() in removeEntry
+      // but we need to refresh the HomeViewModel since it has its own data
+      await context.read<HomeViewModel>().refresh();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to remove from history: $e')),
+      );
+    }
   }
 
   Widget _buildSectionHeader(BuildContext context, String title) {

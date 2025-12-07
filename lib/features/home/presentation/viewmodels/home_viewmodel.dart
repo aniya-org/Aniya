@@ -6,6 +6,7 @@ import '../../../../core/domain/usecases/get_trending_media_usecase.dart';
 import '../../../../core/domain/usecases/get_library_items_usecase.dart';
 import '../../../../core/domain/repositories/watch_history_repository.dart';
 import '../../../../core/services/tmdb_service.dart';
+import '../../../../core/services/watch_history_controller.dart';
 import '../../../../core/utils/error_message_mapper.dart';
 import '../../../../core/utils/logger.dart';
 import '../helpers/continue_watching_helper.dart';
@@ -15,13 +16,32 @@ class HomeViewModel extends ChangeNotifier {
   final GetLibraryItemsUseCase getLibraryItems;
   final TmdbService tmdbService;
   final WatchHistoryRepository? watchHistoryRepository;
+  final WatchHistoryController? watchHistoryController;
 
   HomeViewModel({
     required this.getTrendingMedia,
     required this.getLibraryItems,
     required this.tmdbService,
     this.watchHistoryRepository,
-  });
+    this.watchHistoryController,
+  }) {
+    // Listen to WatchHistoryController changes
+    watchHistoryController?.addListener(_onWatchHistoryChanged);
+  }
+
+  @override
+  void dispose() {
+    watchHistoryController?.removeListener(_onWatchHistoryChanged);
+    super.dispose();
+  }
+
+  void _onWatchHistoryChanged() {
+    // Reload watch history when controller notifies changes
+    _loadWatchHistory().then((_) {
+      _combineHistoryAndLibrary();
+      notifyListeners();
+    });
+  }
 
   final List<MediaEntity> _trendingAnime = [];
   final List<MediaEntity> _trendingManga = [];

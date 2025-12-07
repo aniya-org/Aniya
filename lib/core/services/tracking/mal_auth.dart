@@ -1,9 +1,10 @@
+import 'dart:convert';
+
 /// MyAnimeList authentication service following AnymeX pattern
 /// Handles OAuth2 with PKCE flow and token management for MyAnimeList
 ///
 /// CREDIT: Based on AnymeX's authentication pattern using FlutterWebAuth2
 /// and GetX state management with Hive storage
-import 'dart:convert';
 import 'dart:math';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:get/get.dart';
@@ -27,6 +28,7 @@ class MalAuth extends GetxController {
   RxList<TrackingMediaItem> mangaList = <TrackingMediaItem>[].obs;
 
   late final Box storage;
+  String? _lastCodeVerifier;
   String? _accessToken;
   String? _refreshToken;
   DateTime? _tokenExpiry;
@@ -84,21 +86,36 @@ class MalAuth extends GetxController {
       );
     }
 
-    // Generate PKCE values
-    final codeVerifier = _generateCodeVerifier();
-    final codeChallenge = _generateCodeChallenge(codeVerifier);
+    // Generate PKCE values (following AnymeX pattern)
+    final secureRandom = Random.secure();
+    final codeVerifierBytes = List<int>.generate(
+      96,
+      (_) => secureRandom.nextInt(256),
+    );
+
+    final codeVerifier = base64UrlEncode(
+      codeVerifierBytes,
+    ).replaceAll('=', '').replaceAll('+', '-').replaceAll('/', '_');
+
+    final codeChallenge = base64UrlEncode(
+      codeVerifierBytes,
+    ).replaceAll('=', '').replaceAll('+', '-').replaceAll('/', '_');
 
     // Store code verifier for token exchange
     await storage.put('mal_code_verifier', codeVerifier);
+
+    // Also store it in memory as backup
+    _lastCodeVerifier = codeVerifier;
+    Logger.info(
+      'MAL generated code verifier (first 20): ${codeVerifier.substring(0, 20)}',
+    );
 
     final authUrl = Uri.parse('https://myanimelist.net/v1/oauth2/authorize')
         .replace(
           queryParameters: {
             'response_type': 'code',
             'client_id': clientId,
-            'redirect_uri': redirectUri,
             'code_challenge': codeChallenge,
-            'code_challenge_method': 'plain',
             'state': 'mal_auth_${DateTime.now().millisecondsSinceEpoch}',
           },
         );
@@ -111,9 +128,26 @@ class MalAuth extends GetxController {
         callbackUrlScheme: 'aniya',
       );
 
+      Logger.info('MAL callback URL: $result');
+
       final code = Uri.parse(result).queryParameters['code'];
       if (code != null && code.isNotEmpty) {
         Logger.info("MAL authorization code received");
+        Logger.info(
+          "MAL authorization code (first 50 chars): ${code.substring(0, code.length > 50 ? 50 : code.length)}",
+        );
+
+        // Extract the actual callback URI from the result
+        final actualCallbackUri = Uri.parse(result);
+        final actualRedirectUri =
+            '${actualCallbackUri.scheme}://${actualCallbackUri.host}${actualCallbackUri.path}';
+
+        Logger.info(
+          'MAL actual redirect URI from callback: $actualRedirectUri',
+        );
+        Logger.info('MAL expected redirect URI: $redirectUri');
+
+        // Use the same redirect URI that was sent in the auth request
         await _exchangeCodeForToken(code, clientId, redirectUri);
       } else {
         Logger.error('MAL login failed: No authorization code received');
@@ -132,10 +166,21 @@ class MalAuth extends GetxController {
     String clientId,
     String redirectUri,
   ) async {
-    final codeVerifier = await storage.get('mal_code_verifier');
+    // Try to get code verifier from storage first
+    var codeVerifier = await storage.get('mal_code_verifier');
+
+    // If not in storage, try the in-memory backup
+    if (codeVerifier == null && _lastCodeVerifier != null) {
+      codeVerifier = _lastCodeVerifier;
+      Logger.warning('MAL: Using in-memory code verifier as fallback');
+    }
+
     if (codeVerifier == null) {
       throw Exception('No code verifier available');
     }
+    Logger.info(
+      'MAL code verifier (first 20 chars): ${codeVerifier.substring(0, codeVerifier.length > 20 ? 20 : codeVerifier.length)}',
+    );
 
     final clientSecret = dotenv.env['MAL_CLIENT_SECRET'] ?? '';
 
@@ -145,7 +190,6 @@ class MalAuth extends GetxController {
         'client_secret': clientSecret,
         'grant_type': 'authorization_code',
         'code': code,
-        'redirect_uri': redirectUri,
         'code_verifier': codeVerifier,
       };
 
@@ -154,7 +198,12 @@ class MalAuth extends GetxController {
       final response = await http.post(
         Uri.parse('https://myanimelist.net/v1/oauth2/token'),
         headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-        body: requestBody,
+        body: requestBody.entries
+            .map(
+              (e) =>
+                  '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value.toString())}',
+            )
+            .join('&'),
       );
 
       if (response.statusCode == 200) {
@@ -171,6 +220,10 @@ class MalAuth extends GetxController {
         await storage.put('mal_auth_token', _accessToken);
         await storage.put('mal_refresh_token', _refreshToken);
         await storage.put('mal_token_expiry', _tokenExpiry!.toIso8601String());
+
+        // Clean up the code verifier
+        await storage.delete('mal_code_verifier');
+        _lastCodeVerifier = null;
 
         Logger.info('MAL token stored successfully');
 
@@ -261,8 +314,14 @@ class MalAuth extends GetxController {
     String endpoint, {
     Map<String, String>? queryParams,
   }) async {
+    final token = await storage.get('mal_auth_token');
+    Logger.info('MAL: Auth check - token exists: ${token != null}');
+    if (token != null) {
+      Logger.info('MAL: Token expires at: ${await storage.get('mal_token_expiry')}');
+    }
+
     if (!isAuthenticated) {
-      Logger.warning('MAL: Not authenticated');
+      Logger.warning('MAL: Not authenticated - isAuthenticated flag is false');
       return null;
     }
 
@@ -429,7 +488,7 @@ class MalAuth extends GetxController {
     }
   }
 
-  Future<String?> searchMedia(String title, bool isAnime) async {
+  Future<String?> searchMediaByTitle(String title, bool isAnime) async {
     try {
       final endpoint = isAnime ? '/anime' : '/manga';
       final response = await http.get(
@@ -467,8 +526,9 @@ class MalAuth extends GetxController {
 
       if (isAnime) {
         endpoint = '/anime/$mediaId/my_list_status';
-        if (progress != null)
+        if (progress != null) {
           body['num_watched_episodes'] = progress.toString();
+        }
       } else {
         endpoint = '/manga/$mediaId/my_list_status';
         if (progress != null) body['num_chapters_read'] = progress.toString();
@@ -500,14 +560,29 @@ class MalAuth extends GetxController {
         body['score'] = score.toString();
       }
 
+      Logger.info('MAL API request: PUT $endpoint');
+      Logger.info('MAL API body: $body');
+
       final response = await http.put(
         Uri.parse('https://api.myanimelist.net/v2$endpoint'),
         headers: {
           'Authorization': 'Bearer $_accessToken',
           'Content-Type': 'application/x-www-form-urlencoded',
         },
-        body: body,
+        body: body.entries
+            .map(
+              (e) =>
+                  '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value.toString())}',
+            )
+            .join('&'),
       );
+
+      Logger.info('MAL API response status: ${response.statusCode}');
+      if (response.statusCode != 200) {
+        Logger.error('MAL API error response: ${response.body}');
+      } else {
+        Logger.info('MAL API success response: ${response.body}');
+      }
 
       return response.statusCode == 200;
     } catch (e) {
@@ -539,7 +614,68 @@ class MalAuth extends GetxController {
   }
 
   String _generateCodeChallenge(String codeVerifier) {
-    // For 'plain' method, challenge is same as verifier
-    return codeVerifier;
+    // For 'S256' method, challenge is BASE64URL-ENCODE(SHA256(ASCII(code_verifier)))
+    final bytes = utf8.encode(codeVerifier);
+    final digest = sha256.convert(bytes);
+    return base64UrlEncode(digest.bytes).replaceAll('=', '');
+  }
+
+  /// Search for anime/manga on MyAnimeList
+  Future<List<TrackingSearchResult>> searchMedia(
+    String query,
+    MediaType mediaType,
+  ) async {
+    if (!isAuthenticated) {
+      Logger.warning('MAL: Not authenticated for search');
+      return [];
+    }
+
+    Logger.info('MAL: Searching for "$query" (${mediaType.name})');
+
+    final fields = 'id,title,main_picture,start_date,media_type';
+    final endpoint = mediaType == MediaType.anime ? '/anime' : '/manga';
+
+    final data = await _makeAuthenticatedRequest(
+      endpoint,
+      queryParams: {'q': query, 'fields': fields, 'limit': '20'},
+    );
+
+    if (data != null && data['data'] != null) {
+      final items = data['data'] as List<dynamic>;
+      Logger.info('MAL: Found ${items.length} results');
+      return items.map((item) {
+        final node = item['node'];
+        return TrackingSearchResult(
+          id: node['id'].toString(),
+          title: node['title']?.toString() ?? 'Unknown Title',
+          coverImage: node['main_picture']?['large']?.toString(),
+          mediaType: mediaType,
+          year: node['start_date'] != null
+              ? int.tryParse(node['start_date'].toString().split('-')[0])
+              : null,
+          serviceIds: {'mal': node['id'].toString()},
+        );
+      }).toList();
+    }
+    Logger.warning('MAL: No results found or data was null');
+    return [];
+  }
+
+  /// Get specific anime/manga list entry for progress tracking
+  Future<Map<String, dynamic>?> getMediaListEntry(
+    String mediaId,
+    bool isAnime,
+  ) async {
+    if (!isAuthenticated) return null;
+
+    final endpoint = isAnime ? '/anime/$mediaId' : '/manga/$mediaId';
+    final fields = 'id,title,num_episodes,num_chapters,my_list_status';
+
+    final data = await _makeAuthenticatedRequest(
+      endpoint,
+      queryParams: {'fields': fields},
+    );
+
+    return data?['my_list_status'];
   }
 }

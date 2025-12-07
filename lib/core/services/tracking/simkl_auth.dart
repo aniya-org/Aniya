@@ -1,9 +1,10 @@
+import 'dart:convert';
+
 /// Simkl authentication service following AnymeX pattern
 /// Handles OAuth2 flow and token management for Simkl
 ///
 /// CREDIT: Based on AnymeX's authentication pattern using FlutterWebAuth2
 /// and GetX state management with Hive storage
-import 'dart:convert';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:get/get.dart';
 import 'package:get_it/get_it.dart';
@@ -65,14 +66,28 @@ class SimklAuth extends GetxController {
     String redirectUri = dotenv.env['SIMKL_CALLBACK_SCHEME'] ?? '';
 
     // Validate required environment variables
-    if (clientId.isEmpty || redirectUri.isEmpty) {
+    if (clientId.isEmpty) {
       Logger.error(
-        'Simkl login failed: Missing required environment variables',
+        'Simkl login failed: Missing SIMKL_CLIENT_ID environment variable',
       );
       throw Exception(
-        'Simkl authentication not configured. Please check your environment variables.',
+        'Simkl authentication not configured. Please add SIMKL_CLIENT_ID to your .env file.',
       );
     }
+    if (redirectUri.isEmpty) {
+      Logger.error(
+        'Simkl login failed: Missing SIMKL_CALLBACK_SCHEME environment variable',
+      );
+      throw Exception(
+        'Simkl authentication not configured. Please add SIMKL_CALLBACK_SCHEME to your .env file.',
+      );
+    }
+
+    // Log the client ID (partially masked for security)
+    Logger.info(
+      'Simkl: Using client_id: ${clientId.substring(0, 8)}... (length: ${clientId.length})',
+    );
+    Logger.info('Simkl: Using redirect_uri: $redirectUri');
 
     final authUrl = Uri.parse('https://simkl.com/oauth/authorize').replace(
       queryParameters: {
@@ -92,12 +107,17 @@ class SimklAuth extends GetxController {
         callbackUrlScheme: 'aniya',
       );
 
+      Logger.info('Simkl callback URL received: $result');
+
       final code = Uri.parse(result).queryParameters['code'];
       if (code != null && code.isNotEmpty) {
-        Logger.info("Simkl authorization code received");
+        Logger.info(
+          "Simkl authorization code received: ${code.substring(0, 10)}...",
+        );
         await _exchangeCodeForToken(code, clientId, redirectUri);
       } else {
         Logger.error('Simkl login failed: No authorization code received');
+        Logger.error('Full callback result: $result');
         throw Exception('Authorization failed: No code received from Simkl');
       }
     } catch (e) {
@@ -115,20 +135,34 @@ class SimklAuth extends GetxController {
 
     try {
       final requestBody = {
-        'client_id': clientId,
-        'client_secret': clientSecret,
+        'client_id': clientId.toString(),
+        'client_secret': clientSecret.toString(),
         'grant_type': 'authorization_code',
-        'code': code,
-        'redirect_uri': redirectUri,
+        'code': code.toString(),
+        'redirect_uri': redirectUri.toString(),
       };
 
       Logger.info('Simkl token exchange request: $requestBody');
 
+      final requestBodyJson = json.encode(requestBody);
+      Logger.info('Simkl token exchange JSON: $requestBodyJson');
+
+      // Try with JSON but also log the raw request
+      Logger.info(
+        'Simkl token exchange endpoint: https://api.simkl.com/oauth/token',
+      );
+      Logger.info('Request headers: Content-Type: application/json');
+
       final response = await http.post(
         Uri.parse('https://api.simkl.com/oauth/token'),
         headers: {'Content-Type': 'application/json'},
-        body: json.encode(requestBody),
+        body: requestBodyJson,
       );
+
+      // Log raw response for debugging
+      Logger.info('Simkl response status: ${response.statusCode}');
+      Logger.info('Simkl response headers: ${response.headers}');
+      Logger.info('Simkl response body: ${response.body}');
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -153,22 +187,40 @@ class SimklAuth extends GetxController {
         await fetchWatchlist();
         isLoggedIn.value = true;
       } else {
-        Logger.error('Simkl token exchange response: ${response.body}');
+        Logger.error('Simkl token exchange failed: ${response.statusCode}');
+        Logger.error('Response body: ${response.body}');
+
+        String errorMessage = 'Authentication failed';
+
         try {
           final errorData = json.decode(response.body);
-          final errorMessage =
-              errorData['error_description'] ??
-              errorData['error'] ??
-              'Unknown error';
-          Logger.error(
-            'Simkl token exchange failed: ${response.statusCode} - $errorMessage',
-          );
+
+          // Handle specific error cases
+          if (errorData['error'] == 'client_id_failed') {
+            errorMessage =
+                'Invalid SIMKL_CLIENT_ID. Please:\n'
+                '1. Visit https://simkl.com/oauth/applications\n'
+                '2. Create a new app or check your existing app\n'
+                '3. Copy the correct Client ID from your app settings\n'
+                '4. Update your .env file with the correct value';
+          } else if (errorData['error'] == 'invalid_client') {
+            errorMessage =
+                'Invalid client credentials. Please check your SIMKL_CLIENT_ID and SIMKL_CLIENT_SECRET.\n'
+                'Make sure both values match what\'s shown in your Simkl app settings.';
+          } else if (errorData['error'] == 'invalid_grant') {
+            errorMessage =
+                'Authorization code expired or invalid. Please try again.';
+          } else {
+            errorMessage =
+                errorData['error_description'] ??
+                errorData['message'] ??
+                'Authentication failed';
+          }
         } catch (e) {
           Logger.error('Failed to parse Simkl error response: $e');
-          Logger.error('Raw response: ${response.body}');
         }
-        Logger.error('Simkl token exchange failed');
-        throw Exception('Failed to exchange code for token: json_error');
+
+        throw Exception('Simkl authentication failed: $errorMessage');
       }
     } catch (e) {
       if (e is FormatException) {
@@ -205,7 +257,10 @@ class SimklAuth extends GetxController {
     ).replace(queryParameters: queryParams);
     final response = await http.get(
       uri,
-      headers: {'Authorization': 'Bearer $_accessToken'},
+      headers: {
+        'Authorization': 'Bearer $_accessToken',
+        'simkl-api-key': dotenv.env['SIMKL_CLIENT_ID'] ?? '',
+      },
     );
 
     if (response.statusCode == 200) {
@@ -286,7 +341,166 @@ class SimklAuth extends GetxController {
     }
   }
 
-  Future<String?> searchMedia(String title) async {
+  Future<bool> updateListEntry(
+    String mediaId, {
+    TrackingStatus? status,
+    int? progress,
+    double? score,
+  }) async {
+    if (mediaId.isEmpty) {
+      Logger.error('Simkl: Media ID is empty');
+      return false;
+    }
+
+    final simklId = int.tryParse(mediaId);
+    if (simklId == null || simklId == 0) {
+      Logger.error('Simkl: Invalid media ID: $mediaId');
+      return false;
+    }
+
+    Logger.info(
+      'Simkl: updateListEntry called with ID: $mediaId (parsed as: $simklId)',
+    );
+
+    try {
+      // Simkl /sync/add-to-list expects ids.simkl nesting and returns 201 on success.
+      // Ref: https://simkl.docs.apiary.io/#reference/sync/add-to-list/add-to-list
+      const endpoint = '/sync/add-to-list';
+
+      String simklStatus;
+      switch (status ?? TrackingStatus.planning) {
+        case TrackingStatus.watching:
+          simklStatus = 'watching';
+          break;
+        case TrackingStatus.completed:
+          simklStatus = 'completed';
+          break;
+        case TrackingStatus.onHold:
+          simklStatus = 'hold';
+          break;
+        case TrackingStatus.dropped:
+          simklStatus = 'dropped';
+          break;
+        case TrackingStatus.planning:
+          simklStatus = 'plantowatch';
+          break;
+      }
+
+      final body = {
+        'shows': [
+          {
+            'ids': {'simkl': simklId},
+            'status': simklStatus,
+            'to': {'simkl': simklId},
+          },
+        ],
+      };
+
+      if (score != null) {
+        // Simkl rating is separate
+        await _rateMedia(mediaId, score);
+      }
+
+      if (progress != null) {
+        // Simkl progress update is separate
+        await _updateProgress(mediaId, progress);
+      }
+
+      Logger.info(
+        'Simkl: Adding to list - mediaId: $mediaId, status: $simklStatus, body: $body',
+      );
+      final response = await http.post(
+        Uri.parse('https://api.simkl.com$endpoint'),
+        headers: {
+          'Authorization': 'Bearer $_accessToken',
+          'simkl-api-key': dotenv.env['SIMKL_CLIENT_ID'] ?? '',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode(body),
+      );
+
+      Logger.info('Simkl: Add to list response status: ${response.statusCode}');
+      if (response.statusCode != 200 && response.statusCode != 201) {
+        Logger.error('Simkl: Add to list failed: ${response.body}');
+      }
+
+      return response.statusCode == 200 || response.statusCode == 201;
+    } catch (e) {
+      Logger.info('Error updating Simkl list entry: $e');
+      return false;
+    }
+  }
+
+  Future<bool> _rateMedia(String mediaId, double rating) async {
+    try {
+      final endpoint = '/sync/ratings';
+      final simklId = int.tryParse(mediaId) ?? 0;
+      final response = await http.post(
+        Uri.parse('https://api.simkl.com$endpoint'),
+        headers: {
+          'Authorization': 'Bearer $_accessToken',
+          'simkl-api-key': dotenv.env['SIMKL_CLIENT_ID'] ?? '',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'shows': [
+            {
+              'ids': {'simkl': simklId},
+              'rating': rating,
+              'to': {'simkl': simklId},
+            },
+          ],
+        }),
+      );
+
+      return response.statusCode == 200;
+    } catch (e) {
+      Logger.info('Error rating Simkl media: $e');
+      return false;
+    }
+  }
+
+  Future<bool> _updateProgress(String mediaId, int progress) async {
+    try {
+      final endpoint = '/sync/history';
+      final simklId = int.tryParse(mediaId) ?? 0;
+      final response = await http.post(
+        Uri.parse('https://api.simkl.com$endpoint'),
+        headers: {
+          'Authorization': 'Bearer $_accessToken',
+          'simkl-api-key': dotenv.env['SIMKL_CLIENT_ID'] ?? '',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'shows': [
+            {
+              'ids': {'simkl': simklId},
+              'seasons': [
+                {
+                  'number': 1,
+                  'episodes': [
+                    {
+                      'number': progress,
+                      'watched_at': DateTime.now().toIso8601String(),
+                    },
+                  ],
+                },
+              ],
+              'to': {'simkl': simklId},
+            },
+          ],
+        }),
+      );
+
+      return response.statusCode == 200;
+    } catch (e) {
+      Logger.info('Error updating Simkl progress: $e');
+      return false;
+    }
+  }
+
+  /// Search for anime/manga on Simkl (returns ID for progress updates)
+  Future<String?> searchMediaByTitle(String title) async {
     try {
       final response = await http.get(
         Uri.parse(
@@ -312,125 +526,145 @@ class SimklAuth extends GetxController {
     }
   }
 
-  Future<bool> updateListEntry(
-    String mediaId, {
-    TrackingStatus? status,
-    int? progress,
-    double? score,
-  }) async {
-    try {
-      String endpoint;
-      Map<String, dynamic> body = {};
+  /// Search for anime/manga on Simkl (returns full search results)
+  Future<List<TrackingSearchResult>> searchMedia(
+    String query,
+    MediaType mediaType,
+  ) async {
+    if (!isAuthenticated) {
+      Logger.warning('Simkl: Not authenticated for search');
+      return [];
+    }
 
-      endpoint = '/sync/add-to-list';
+    Logger.info('Simkl: Searching for "$query" (${mediaType.name})');
 
-      String simklStatus;
-      switch (status ?? TrackingStatus.planning) {
-        case TrackingStatus.watching:
-          simklStatus = 'watching';
-          break;
-        case TrackingStatus.completed:
-          simklStatus = 'completed';
-          break;
-        case TrackingStatus.onHold:
-          simklStatus = 'hold';
-          break;
-        case TrackingStatus.dropped:
-          simklStatus = 'dropped';
-          break;
-        case TrackingStatus.planning:
-          simklStatus = 'plantowatch';
-          break;
-      }
+    // Try multiple search variations
+    final searchQueries = [
+      query.toLowerCase(),
+      query,
+      // Remove any special characters and try again
+      query.replaceAll(RegExp(r'[^\w\s]'), '').toLowerCase(),
+      // Try with just the first word for popular anime
+      query.split(' ').first.toLowerCase(),
+    ];
 
-      body = {
-        'shows': [
-          {'simkl': int.parse(mediaId), 'to': simklStatus},
-        ],
+    TrackingSearchResult? bestMatch;
+
+    outer:
+    for (final searchQuery in searchQueries) {
+      // Use the same endpoint format as searchMediaByTitle which works
+      final searchUrl =
+          Uri.parse(
+            'https://api.simkl.com/search/${Uri.encodeComponent(searchQuery)}',
+          ).replace(
+            queryParameters: {
+              'type': mediaType == MediaType.anime ? 'anime' : 'manga',
+            },
+          );
+
+      Logger.info('Simkl: Search URL: $searchUrl');
+
+      final headers = {
+        'Authorization': 'Bearer $_accessToken',
+        'simkl-api-key': dotenv.env['SIMKL_CLIENT_ID'] ?? '',
       };
 
-      if (score != null) {
-        // Simkl rating is separate
-        await _rateMedia(mediaId, score);
+      Logger.info('Simkl: Request headers: $headers');
+
+      final response = await http.get(searchUrl, headers: headers);
+
+      Logger.info('Simkl: Response status: ${response.statusCode}');
+      Logger.info('Simkl: Response body length: ${response.body.length}');
+      Logger.info('Simkl: Response body: "${response.body}"');
+
+      if (response.statusCode == 200) {
+        if (response.body.isEmpty || response.body == 'null') {
+          Logger.warning('Simkl: Empty or null response body');
+          continue;
+        }
+
+        dynamic data;
+        try {
+          data = json.decode(response.body);
+          Logger.info('Simkl: Successfully parsed JSON');
+          Logger.info('Simkl: Raw response data type: ${data.runtimeType}');
+
+          if (data == null) {
+            Logger.warning('Simkl: Parsed data is null');
+            continue;
+          }
+
+          Logger.info('Simkl: Raw response data: ${data.toString()}');
+        } catch (e) {
+          Logger.error('Simkl: Failed to parse JSON: $e');
+          Logger.error('Simkl: Raw response that failed: ${response.body}');
+          continue;
+        }
+
+        // Simkl returns a list directly
+        if (data is List && data.isNotEmpty) {
+          Logger.info('Simkl: Found ${data.length} results for "$searchQuery"');
+          // Use the first successful query's results
+          bestMatch = data.map((item) {
+            final show = item;
+            return TrackingSearchResult(
+              id: show['ids']?['simkl_id']?.toString() ?? '',
+              title: show['title']?.toString() ?? 'Unknown Title',
+              coverImage: show['poster']?.toString(),
+              mediaType: mediaType,
+              year: show['year'] != null
+                  ? int.tryParse(show['year'].toString())
+                  : null,
+              serviceIds: {
+                'simkl': show['ids']?['simkl_id']?.toString() ?? '',
+                'mal': show['ids']?['mal']?.toString(),
+                'anilist': show['ids']?['anilist']?.toString(),
+              },
+            );
+          }).first;
+          // Break out of the loop since we found a result
+          break outer;
+        } else {
+          Logger.warning('Simkl: No results in response for "$searchQuery"');
+        }
+      } else {
+        Logger.error(
+          'Simkl: HTTP error: ${response.statusCode} - ${response.reasonPhrase}',
+        );
+        continue;
       }
-
-      if (progress != null) {
-        // Simkl progress update is separate
-        await _updateProgress(mediaId, progress);
-      }
-
-      final response = await http.post(
-        Uri.parse('https://api.simkl.com$endpoint'),
-        headers: {
-          'Authorization': 'Bearer $_accessToken',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode(body),
-      );
-
-      return response.statusCode == 200;
-    } catch (e) {
-      Logger.info('Error updating Simkl list entry: $e');
-      return false;
     }
+
+    if (bestMatch != null) {
+      return [bestMatch];
+    }
+
+    Logger.warning('Simkl: No results found for any search variation');
+    return [];
   }
 
-  Future<bool> _rateMedia(String mediaId, double rating) async {
+  /// Get specific anime list entry for progress tracking
+  Future<Map<String, dynamic>?> getMediaListEntry(String mediaId) async {
+    if (!isAuthenticated) return null;
+
     try {
-      final endpoint = '/sync/ratings';
-      final response = await http.post(
-        Uri.parse('https://api.simkl.com$endpoint'),
+      final response = await http.get(
+        Uri.parse('https://api.simkl.com/shows/$mediaId'),
         headers: {
           'Authorization': 'Bearer $_accessToken',
-          'Content-Type': 'application/json',
+          'simkl-api-key': dotenv.env['SIMKL_CLIENT_ID'] ?? '',
         },
-        body: jsonEncode({
-          'shows': [
-            {'simkl': int.parse(mediaId), 'rating': rating},
-          ],
-        }),
       );
 
-      return response.statusCode == 200;
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        // Return the user's progress if available
+        return data['user_status'];
+      }
+      return null;
     } catch (e) {
-      Logger.info('Error rating Simkl media: $e');
-      return false;
-    }
-  }
-
-  Future<bool> _updateProgress(String mediaId, int progress) async {
-    try {
-      final endpoint = '/sync/history';
-      final response = await http.post(
-        Uri.parse('https://api.simkl.com$endpoint'),
-        headers: {
-          'Authorization': 'Bearer $_accessToken',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({
-          'shows': [
-            {
-              'simkl': int.parse(mediaId),
-              'seasons': [
-                {
-                  'number': 1,
-                  'episodes': [
-                    {
-                      'number': progress,
-                      'watched_at': DateTime.now().toIso8601String(),
-                    },
-                  ],
-                },
-              ],
-            },
-          ],
-        }),
-      );
-
-      return response.statusCode == 200;
-    } catch (e) {
-      Logger.info('Error updating Simkl progress: $e');
-      return false;
+      Logger.error('Failed to get Simkl media list entry', error: e);
+      return null;
     }
   }
 

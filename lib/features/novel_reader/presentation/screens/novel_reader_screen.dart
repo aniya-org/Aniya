@@ -22,6 +22,7 @@ import '../../../../core/widgets/tracking_dialog.dart';
 import '../../../../core/services/tracking/anilist_tracking_service.dart';
 import '../../../../core/services/tracking/mal_tracking_service.dart';
 import '../../../../core/services/tracking/simkl_tracking_service.dart';
+import '../../../../core/services/tracking/service_id_mapper.dart';
 
 /// Novel reader screen for reading light novel chapters
 ///
@@ -119,6 +120,9 @@ class _NovelReaderScreenState extends State<NovelReaderScreen> {
     _aniListService = AniListTrackingService();
     _malService = MyAnimeListTrackingService();
     _simklService = SimklTrackingService();
+
+    // Initialize ServiceIdMapper
+    ServiceIdMapper.initialize();
 
     _selectedSourceId =
         widget.source?.providerId ?? widget.chapter.sourceProvider;

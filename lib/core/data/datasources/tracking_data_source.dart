@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import '../models/user_model.dart';
 import '../models/library_item_model.dart';
@@ -160,7 +161,7 @@ class TrackingDataSourceImpl implements TrackingDataSource {
       options: Options(
         headers: {
           'Authorization': 'Bearer $token',
-          'simkl-api-key': 'YOUR_SIMKL_API_KEY', // TODO: Add to config
+          'simkl-api-key': dotenv.env['SIMKL_CLIENT_ID'] ?? '',
         },
       ),
     );
@@ -283,7 +284,7 @@ class TrackingDataSourceImpl implements TrackingDataSource {
       options: Options(
         headers: {
           'Authorization': 'Bearer $token',
-          'simkl-api-key': 'YOUR_SIMKL_API_KEY', // TODO: Add to config
+          'simkl-api-key': dotenv.env['SIMKL_CLIENT_ID'] ?? '',
         },
       ),
     );

@@ -463,6 +463,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     final episode = widget.episode!;
     final source = widget.source!;
 
+    // Extract release year from start date if available
+    int? releaseYear;
+    if (media.startDate != null) {
+      releaseYear = media.startDate!.year;
+    }
+
     await _watchHistoryController!.updateVideoProgress(
       mediaId: media.id,
       mediaType: media.type,
@@ -478,6 +484,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       episodeId: episode.id,
       episodeTitle: episode.title,
       normalizedId: null, // MediaEntity doesn't have normalizedId yet
+      releaseYear: releaseYear,
     );
   }
 
@@ -982,10 +989,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
     try {
       debugPrint('Opening video URL: $url');
-      await _player.open(
-        Media(url, httpHeaders: _selectedSource?.headers ?? {}),
-        play: false,
-      );
+      // Use merged headers from view model (includes extracted headers from extractor)
+      final playbackHeaders = _viewModel.getPlaybackHeaders();
+      await _player.open(Media(url, httpHeaders: playbackHeaders), play: false);
 
       if (_isDisposed) return;
 

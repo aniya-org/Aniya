@@ -37,6 +37,14 @@ abstract class WatchHistoryRepository {
     String normalizedId,
   );
 
+  /// Find consolidated entry by title, year, and type (ignoring source)
+  /// Used to consolidate entries from different sources
+  Future<Either<Failure, WatchHistoryEntry?>> findConsolidatedEntry({
+    required String title,
+    required MediaType mediaType,
+    int? releaseYear,
+  });
+
   /// Add or update a watch history entry
   Future<Either<Failure, Unit>> upsertEntry(WatchHistoryEntry entry);
 
@@ -100,5 +108,6 @@ abstract class WatchHistoryRepository {
     required String sourceId,
     required String sourceName,
     String? normalizedId,
+    int? releaseYear,
   });
 }

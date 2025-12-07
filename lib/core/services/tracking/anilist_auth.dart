@@ -394,9 +394,12 @@ class AnilistAuth extends GetxController {
     }
   }
 
-  Future<void> updateListEntry(UpdateListEntryParams params) async {
+  Future<bool> updateListEntry(UpdateListEntryParams params) async {
     final token = await storage.get('anilist_auth_token');
-    if (token == null) return;
+    if (token == null) {
+      Logger.warning('AniList: No auth token');
+      return false;
+    }
 
     final mutation = '''
       mutation (\$mediaId: Int, \$status: MediaListStatus, \$progress: Int, \$score: Float) {
@@ -411,8 +414,8 @@ class AnilistAuth extends GetxController {
 
     final Map<String, dynamic> variables = {
       'mediaId': int.parse(params.id),
-      'progress': params.progress,
-      'score': params.score,
+      'progress': params.progress ?? 0,  // Default to 0 if null
+      'score': params.score?.toDouble() ?? 0.0,  // Default to 0.0 if null
     };
 
     if (params.status != null) {
@@ -420,6 +423,7 @@ class AnilistAuth extends GetxController {
     }
 
     try {
+      Logger.info('AniList: Updating entry for media ID ${params.id}');
       final response = await http.post(
         Uri.parse('https://graphql.anilist.co'),
         headers: {
@@ -429,14 +433,30 @@ class AnilistAuth extends GetxController {
         body: jsonEncode({'query': mutation, 'variables': variables}),
       );
 
+      Logger.info('AniList: Response status: ${response.statusCode}');
+
       if (response.statusCode == 200) {
-        // Refresh the lists after update
-        await fetchUserAnimeList();
-        await fetchUserMangaList();
+        final data = jsonDecode(response.body);
+        if (data != null && data['data'] != null && data['data']['SaveMediaListEntry'] != null) {
+          Logger.info('AniList: Successfully updated entry');
+          // Refresh the lists after update
+          await fetchUserAnimeList();
+          await fetchUserMangaList();
+          return true;
+        } else if (data != null && data['errors'] != null) {
+          Logger.error('AniList: GraphQL error: ${data['errors']}');
+          return false;
+        }
+      } else {
+        Logger.error('AniList: HTTP error: ${response.statusCode} - ${response.body}');
+        return false;
       }
     } catch (e) {
-      Logger.info('Error updating AniList entry: $e');
+      Logger.error('AniList: Error updating entry: $e');
+      return false;
     }
+
+    return false;
   }
 
   String _mapTrackingStatusToAniList(TrackingStatus status) {
@@ -487,6 +507,140 @@ class AnilistAuth extends GetxController {
     } catch (e) {
       Logger.info('Error deleting AniList entry: $e');
     }
+  }
+
+  /// Search for media on AniList
+  Future<List<TrackingSearchResult>> searchMedia(
+    String query,
+    MediaType mediaType,
+  ) async {
+    final token = await storage.get('anilist_auth_token');
+    if (token == null) {
+      Logger.warning('AniList: No auth token for search');
+      return [];
+    }
+
+    Logger.info('AniList: Searching for "$query" (${mediaType.name})');
+
+    final mediaTypeEnum = mediaType == MediaType.anime ? 'ANIME' : 'MANGA';
+    Logger.info('AniList: Using media type: $mediaTypeEnum');
+
+    final searchQuery = '''
+      query (\$search: String, \$type: MediaType) {
+        Page(page: 1, perPage: 20) {
+          media(search: \$search, type: \$type) {
+            id
+            title {
+              romaji
+              english
+              native
+            }
+            coverImage {
+              large
+            }
+            startDate {
+              year
+            }
+            type
+            format
+          }
+        }
+      }
+    ''';
+
+    final variables = {
+      'search': query,
+      'type': mediaTypeEnum,
+    };
+
+    try {
+      final response = await http.post(
+        Uri.parse('https://graphql.anilist.co'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({'query': searchQuery, 'variables': variables}),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final mediaList =
+            data['data']?['Page']?['media'] as List<dynamic>? ?? [];
+
+        Logger.info('AniList: Found ${mediaList.length} results');
+
+        return mediaList.map((media) {
+          final title = media['title'];
+          return TrackingSearchResult(
+            id: media['id'].toString(),
+            title: title['romaji'] ?? title['english'] ?? 'Unknown Title',
+            alternativeTitles: {
+              'romaji': title['romaji'],
+              'english': title['english'],
+              'native': title['native'],
+            },
+            coverImage: media['coverImage']?['large'],
+            mediaType: mediaType,
+            year: media['startDate']?['year'],
+            serviceIds: {'anilist': media['id'].toString()},
+          );
+        }).toList();
+      }
+    } catch (e) {
+      Logger.error('AniList search failed', error: e);
+      Logger.error('AniList search error details', error: e.toString());
+    }
+    return [];
+  }
+
+  /// Get media list entry for progress tracking
+  Future<Map<String, dynamic>?> getMediaListEntry(String mediaId) async {
+    final token = await storage.get('anilist_auth_token');
+    if (token == null) return null;
+
+    final query = '''
+      query (\$mediaId: Int) {
+        MediaList(mediaId: \$mediaId) {
+          id
+          status
+          progress
+          score
+          startedAt {
+            year
+            month
+            day
+          }
+          completedAt {
+            year
+            month
+            day
+          }
+        }
+      }
+    ''';
+
+    try {
+      final response = await http.post(
+        Uri.parse('https://graphql.anilist.co'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({
+          'query': query,
+          'variables': {'mediaId': int.parse(mediaId)},
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['data']?['MediaList'];
+      }
+    } catch (e) {
+      Logger.error('Failed to get AniList media list entry', error: e);
+    }
+    return null;
   }
 
   Future<void> logout() async {

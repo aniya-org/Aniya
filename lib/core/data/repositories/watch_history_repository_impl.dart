@@ -132,6 +132,28 @@ class WatchHistoryRepositoryImpl implements WatchHistoryRepository {
   }
 
   @override
+  Future<Either<Failure, WatchHistoryEntry?>> findConsolidatedEntry({
+    required String title,
+    required MediaType mediaType,
+    int? releaseYear,
+  }) async {
+    try {
+      final entry = await localDataSource.findConsolidatedEntry(
+        title: title,
+        mediaType: mediaType,
+        releaseYear: releaseYear,
+      );
+      return Right(entry?.toEntity());
+    } on CacheException catch (e) {
+      return Left(CacheFailure(e.message));
+    } catch (e) {
+      return Left(
+        UnknownFailure('Failed to find consolidated entry: ${e.toString()}'),
+      );
+    }
+  }
+
+  @override
   Future<Either<Failure, Unit>> upsertEntry(WatchHistoryEntry entry) async {
     try {
       final model = WatchHistoryEntryModel.fromEntity(entry);
@@ -265,6 +287,7 @@ class WatchHistoryRepositoryImpl implements WatchHistoryRepository {
     required String sourceId,
     required String sourceName,
     String? normalizedId,
+    int? releaseYear,
   }) {
     final now = DateTime.now();
     final id = WatchHistoryEntry.generateId(mediaType, mediaId, sourceId);
@@ -281,6 +304,7 @@ class WatchHistoryRepositoryImpl implements WatchHistoryRepository {
       coverImage: coverImage,
       sourceId: sourceId,
       sourceName: sourceName,
+      releaseYear: releaseYear,
       createdAt: now,
       lastPlayedAt: now,
     );

@@ -8,6 +8,8 @@ import '../../../../core/domain/entities/source_entity.dart';
 import '../../../../core/domain/repositories/extension_search_repository.dart';
 import '../../../../core/domain/repositories/recent_extensions_repository.dart';
 import '../../../../core/error/failures.dart';
+import '../../../../core/extractor/local_extractor_service.dart';
+import '../../../../core/extractor/models/extractor_request.dart';
 import '../../../../core/utils/logger.dart';
 import '../../../extensions/controllers/extensions_controller.dart';
 
@@ -18,6 +20,7 @@ class EpisodeSourceSelectionViewModel extends ChangeNotifier {
   final ExtensionSearchRepository extensionSearchRepository;
   final RecentExtensionsRepository recentExtensionsRepository;
   final ExtensionsController extensionsController;
+  final LocalExtractorService extractorService;
 
   // ============================================================================
   // State Properties
@@ -125,6 +128,7 @@ class EpisodeSourceSelectionViewModel extends ChangeNotifier {
   EpisodeSourceSelectionViewModel({
     required this.extensionSearchRepository,
     required this.recentExtensionsRepository,
+    required this.extractorService,
     ExtensionsController? extensionsController,
   }) : extensionsController =
            extensionsController ?? Get.find<ExtensionsController>();
@@ -629,10 +633,12 @@ class EpisodeSourceSelectionViewModel extends ChangeNotifier {
             error: failure,
           );
         },
-        (sources) {
-          _availableSources = sources;
+        (sources) async {
+          // Extract playable URLs from embed URLs using the extractor service
+          final extractedSources = await _extractSourcesWithExtractor(sources);
+          _availableSources = extractedSources;
           Logger.info(
-            'Loaded ${sources.length} sources',
+            'Loaded ${extractedSources.length} sources (${sources.length} original)',
             tag: 'EpisodeSourceSelectionViewModel',
           );
         },
@@ -685,6 +691,74 @@ class EpisodeSourceSelectionViewModel extends ChangeNotifier {
         error: e,
       );
     }
+  }
+
+  /// Extract playable URLs from embed URLs using the extractor service
+  /// Converts RawStream results back to SourceEntity objects
+  Future<List<SourceEntity>> _extractSourcesWithExtractor(
+    List<SourceEntity> sources,
+  ) async {
+    final extractedSources = <SourceEntity>[];
+
+    for (final source in sources) {
+      try {
+        // Try to parse the source link as a URL
+        final uri = Uri.tryParse(source.sourceLink);
+        if (uri == null) {
+          // If URL is invalid, keep the original source
+          extractedSources.add(source);
+          continue;
+        }
+
+        // Create an extractor request
+        final request = ExtractorRequest(
+          url: uri,
+          category: ExtractorCategory.video,
+          mediaTitle: _selectedMedia?.title,
+          serverName: source.name,
+          referer: source.headers?['referer'] ?? source.headers?['Referer'],
+          headers: source.headers,
+        );
+
+        // Extract playable URLs
+        final streams = await extractorService.extract(request);
+
+        if (streams.isEmpty) {
+          // If extraction failed, keep the original source
+          extractedSources.add(source);
+          continue;
+        }
+
+        // Convert extracted streams to SourceEntity objects
+        for (final stream in streams) {
+          extractedSources.add(
+            SourceEntity(
+              id: '${source.id}_extracted',
+              name: '${source.name} (${stream.sourceLabel ?? "Extracted"})',
+              providerId: source.providerId,
+              quality: stream.quality ?? source.quality,
+              language: source.language,
+              sourceLink: stream.url.toString(),
+              headers: stream.headers ?? source.headers,
+            ),
+          );
+        }
+
+        Logger.debug(
+          'Extracted ${streams.length} playable URLs from ${source.name}',
+          tag: 'EpisodeSourceSelectionViewModel',
+        );
+      } catch (e) {
+        Logger.warning(
+          'Failed to extract from ${source.name}: $e',
+          tag: 'EpisodeSourceSelectionViewModel',
+        );
+        // If extraction throws an error, keep the original source
+        extractedSources.add(source);
+      }
+    }
+
+    return extractedSources;
   }
 
   /// Map Failure to user-friendly error message

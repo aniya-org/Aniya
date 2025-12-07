@@ -12,7 +12,16 @@ import '../../../../core/services/tracking/mal_auth.dart';
 import '../../../../core/utils/logger.dart';
 
 class MyAnimeListTrackingService implements TrackingServiceInterface {
-  final MalAuth _auth = Get.find<MalAuth>();
+  late final MalAuth _auth;
+
+  MyAnimeListTrackingService() {
+    // Try to find existing instance, otherwise create new one
+    if (Get.isRegistered<MalAuth>(tag: 'mal')) {
+      _auth = Get.find<MalAuth>(tag: 'mal');
+    } else {
+      _auth = Get.put<MalAuth>(MalAuth(), tag: 'mal', permanent: true);
+    }
+  }
 
   @override
   TrackingService get serviceType => TrackingService.mal;
@@ -64,10 +73,7 @@ class MyAnimeListTrackingService implements TrackingServiceInterface {
     }
 
     try {
-      // For now, return empty list as search is not implemented in MalAuth
-      // TODO: Implement search in MalAuth controller
-      Logger.info('MAL search not yet implemented');
-      return [];
+      return await _auth.searchMedia(query, mediaType);
     } catch (e) {
       Logger.error('MAL: Search failed', error: e);
       return [];
@@ -82,12 +88,45 @@ class MyAnimeListTrackingService implements TrackingServiceInterface {
     }
 
     try {
-      await _auth.updateListEntry(
-        media.id,
-        status: TrackingStatus.planning,
-        isAnime: media.mediaType == MediaType.anime,
-      );
-      return true;
+      // First, try direct update with the provided ID
+      try {
+        await _auth.updateListEntry(
+          media.id,
+          status: TrackingStatus.planning,
+          isAnime: media.mediaType == MediaType.anime,
+        );
+        return true;
+      } catch (e) {
+        Logger.warning(
+          'MAL: Direct add failed, searching for correct media ID by title: $e',
+        );
+
+        // If direct update fails, search for the media by title
+        final correctId = await _auth.searchMediaByTitle(
+          media.title,
+          media.mediaType == MediaType.anime,
+        );
+
+        if (correctId != null) {
+          Logger.info(
+            'MAL: Found correct ID $correctId for "${media.title}"',
+          );
+
+          await _auth.updateListEntry(
+            correctId,
+            status: TrackingStatus.planning,
+            isAnime: media.mediaType == MediaType.anime,
+          );
+
+          Logger.info('MAL: Add to watchlist successful after search');
+          return true;
+        } else {
+          Logger.error(
+            'MAL: Could not find media "${media.title}" on MyAnimeList',
+          );
+          return false;
+        }
+      }
     } catch (e) {
       Logger.error('MAL: Add to watchlist failed', error: e);
       return false;
@@ -128,19 +167,65 @@ class MyAnimeListTrackingService implements TrackingServiceInterface {
         status = TrackingStatus.completed;
       }
 
-      Logger.info(
-        'MAL: Calling updateListEntry with ID ${progress.mediaId}, status: $status, progress: ${progress.episode ?? progress.chapter}',
-      );
+      // First, try direct update with the provided ID
+      try {
+        // For new items with no progress, use planning status instead of watching
+        final updateStatus = status ??
+            ((progress.episode ?? progress.chapter ?? 0) > 0
+                ? TrackingStatus.watching
+                : TrackingStatus.planning);
 
-      await _auth.updateListEntry(
-        progress.mediaId,
-        status: status,
-        progress: progress.episode ?? progress.chapter,
-        isAnime: progress.mediaType == MediaType.anime,
-      );
+        Logger.info(
+          'MAL: Calling updateListEntry with ID ${progress.mediaId}, status: $updateStatus, progress: ${progress.episode ?? progress.chapter}',
+        );
 
-      Logger.info('MAL: Update successful');
-      return true;
+        await _auth.updateListEntry(
+          progress.mediaId,
+          status: updateStatus,
+          progress: progress.episode ?? progress.chapter,
+          isAnime: progress.mediaType == MediaType.anime,
+        );
+
+        Logger.info('MAL: Update successful');
+        return true;
+      } catch (e) {
+        Logger.warning(
+          'MAL: Direct update failed, searching for correct media ID by title: $e',
+        );
+
+        // If direct update fails, search for the media by title
+        final correctId = await _auth.searchMediaByTitle(
+          progress.mediaTitle,
+          progress.mediaType == MediaType.anime,
+        );
+
+        if (correctId != null) {
+          Logger.info(
+            'MAL: Found correct ID $correctId for "${progress.mediaTitle}"',
+          );
+
+          // For new items with no progress, use planning status instead of watching
+          final updateStatus = status ??
+              ((progress.episode ?? progress.chapter ?? 0) > 0
+                  ? TrackingStatus.watching
+                  : TrackingStatus.planning);
+
+          await _auth.updateListEntry(
+            correctId,
+            status: updateStatus,
+            progress: progress.episode ?? progress.chapter,
+            isAnime: progress.mediaType == MediaType.anime,
+          );
+
+          Logger.info('MAL: Update successful after search');
+          return true;
+        } else {
+          Logger.error(
+            'MAL: Could not find media "${progress.mediaTitle}" on MyAnimeList',
+          );
+          return false;
+        }
+      }
     } catch (e) {
       Logger.error('MAL: Update progress failed', error: e);
       return false;
@@ -155,10 +240,17 @@ class MyAnimeListTrackingService implements TrackingServiceInterface {
     }
 
     try {
-      // For now, return null as progress tracking is not fully implemented
-      // TODO: Implement progress retrieval in MalAuth controller
-      Logger.info('MAL getProgress not yet implemented');
-      return null;
+      final entry = await _auth.getMediaListEntry(mediaId, true); // Assume anime for now
+      if (entry == null) return null;
+
+      return TrackingProgress(
+        mediaId: mediaId,
+        mediaType: MediaType.anime, // Would need to be determined based on media
+        currentEpisode: entry['num_episodes_watched'],
+        currentChapter: entry['num_chapters_read'],
+        completed: entry['status'] == 'completed',
+        lastUpdated: DateTime.now(),
+      );
     } catch (e) {
       Logger.error('MAL: Get progress failed', error: e);
       return null;

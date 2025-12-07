@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import '../domain/entities/watch_history_entry.dart';
 import '../domain/entities/media_entity.dart';
@@ -128,6 +129,7 @@ class WatchHistoryController extends ChangeNotifier {
   }
 
   /// Update or create a watch history entry for video content
+  /// Consolidates entries by title+year+type to avoid duplicates
   Future<void> updateVideoProgress({
     required String mediaId,
     required MediaType mediaType,
@@ -143,86 +145,103 @@ class WatchHistoryController extends ChangeNotifier {
     String? livestreamId,
     bool? wasLive,
     String? normalizedId,
+    int? releaseYear,
   }) async {
     try {
-      // Generate entry ID
-      final entryId = WatchHistoryEntry.generateId(
-        mediaType,
-        mediaId,
-        sourceId,
-      );
-
       Logger.debug(
         'Updating video progress for $title (episode $episodeNumber)',
         tag: 'WatchHistoryController',
       );
 
-      // Check if entry exists
-      final existingResult = await repository.getEntry(entryId);
+      // First, try to find consolidated entry by title+year+type
+      final consolidatedResult = await repository.findConsolidatedEntry(
+        title: title,
+        mediaType: mediaType,
+        releaseYear: releaseYear,
+      );
 
-      await existingResult.fold(
+      await consolidatedResult.fold(
         (failure) async {
-          Logger.error(
-            'Failed to check existing entry',
+          Logger.debug(
+            'No consolidated entry found, will create new one',
             tag: 'WatchHistoryController',
-            error: failure,
           );
         },
-        (existing) async {
-          if (existing != null) {
-            // Update existing entry
-            await repository.updateVideoProgress(
-              entryId: entryId,
-              playbackPositionMs: playbackPositionMs,
-              totalDurationMs: totalDurationMs,
-              episodeNumber: episodeNumber,
-              episodeId: episodeId,
-              episodeTitle: episodeTitle,
-            );
-            Logger.debug(
-              'Updated existing video entry for $title',
+        (consolidatedEntry) async {
+          if (consolidatedEntry != null) {
+            // Found consolidated entry - update it with new episode
+            Logger.info(
+              'Found consolidated entry for "$title", updating episode $episodeNumber',
               tag: 'WatchHistoryController',
             );
-          } else {
-            // Create new entry
-            final entry = repository.createEntry(
-              mediaId: mediaId,
-              mediaType: mediaType,
-              title: title,
-              coverImage: coverImage,
-              sourceId: sourceId,
-              sourceName: sourceName,
-              normalizedId: normalizedId,
+
+            // Merge progress: use max episode number
+            final newEpisodeNumber = max(
+              consolidatedEntry.episodeNumber ?? 0,
+              episodeNumber,
             );
 
-            // Add video-specific data
-            final videoEntry = WatchHistoryEntry(
-              id: entry.id,
-              mediaId: entry.mediaId,
-              normalizedId: entry.normalizedId,
-              mediaType: entry.mediaType,
-              title: entry.title,
-              coverImage: entry.coverImage,
-              sourceId: entry.sourceId,
-              sourceName: entry.sourceName,
-              episodeNumber: episodeNumber,
-              episodeId: episodeId,
-              episodeTitle: episodeTitle,
+            final updatedEntry = consolidatedEntry.copyWith(
+              episodeNumber: newEpisodeNumber,
+              episodeId: episodeId ?? consolidatedEntry.episodeId,
+              episodeTitle: episodeTitle ?? consolidatedEntry.episodeTitle,
               playbackPositionMs: playbackPositionMs,
-              totalDurationMs: totalDurationMs,
-              livestreamId: livestreamId,
-              wasLive: wasLive,
-              createdAt: entry.createdAt,
-              lastPlayedAt: entry.lastPlayedAt,
+              totalDurationMs:
+                  totalDurationMs ?? consolidatedEntry.totalDurationMs,
+              lastPlayedAt: DateTime.now(),
             );
 
-            await repository.upsertEntry(videoEntry);
-            Logger.debug(
-              'Created new video entry for $title',
+            await repository.upsertEntry(updatedEntry);
+            Logger.info(
+              'Updated consolidated entry for "$title" with episode $newEpisodeNumber',
               tag: 'WatchHistoryController',
             );
+
+            // Trigger sync if entry has tracking
+            await _triggerSyncIfTracked(updatedEntry);
+            await _refreshContinueWatching();
+            return;
           }
         },
+      );
+
+      // No consolidated entry found - create new one
+      final entry = repository.createEntry(
+        mediaId: mediaId,
+        mediaType: mediaType,
+        title: title,
+        coverImage: coverImage,
+        sourceId: sourceId,
+        sourceName: sourceName,
+        normalizedId: normalizedId,
+        releaseYear: releaseYear,
+      );
+
+      final videoEntry = WatchHistoryEntry(
+        id: entry.id,
+        mediaId: entry.mediaId,
+        normalizedId: entry.normalizedId,
+        mediaType: entry.mediaType,
+        title: entry.title,
+        coverImage: entry.coverImage,
+        sourceId: entry.sourceId,
+        sourceName: entry.sourceName,
+        releaseYear: releaseYear,
+        episodeNumber: episodeNumber,
+        episodeId: episodeId,
+        episodeTitle: episodeTitle,
+        playbackPositionMs: playbackPositionMs,
+        totalDurationMs: totalDurationMs,
+        livestreamId: livestreamId,
+        wasLive: wasLive,
+        createdAt: entry.createdAt,
+        lastPlayedAt: entry.lastPlayedAt,
+      );
+
+      await repository.upsertEntry(videoEntry);
+      Logger.info(
+        'Created new video entry for "$title" (episode $episodeNumber)',
+        tag: 'WatchHistoryController',
       );
 
       // Refresh continue watching
@@ -238,6 +257,7 @@ class WatchHistoryController extends ChangeNotifier {
   }
 
   /// Update or create a watch history entry for reading content
+  /// Consolidates entries by title+year+type to avoid duplicates
   Future<void> updateReadingProgress({
     required String mediaId,
     required MediaType mediaType,
@@ -252,86 +272,102 @@ class WatchHistoryController extends ChangeNotifier {
     String? chapterTitle,
     int? volumeNumber,
     String? normalizedId,
+    int? releaseYear,
   }) async {
     try {
-      // Generate entry ID
-      final entryId = WatchHistoryEntry.generateId(
-        mediaType,
-        mediaId,
-        sourceId,
-      );
-
       Logger.debug(
         'Updating reading progress for $title (chapter $chapterNumber, page $pageNumber)',
         tag: 'WatchHistoryController',
       );
 
-      // Check if entry exists
-      final existingResult = await repository.getEntry(entryId);
+      // First, try to find consolidated entry by title+year+type
+      final consolidatedResult = await repository.findConsolidatedEntry(
+        title: title,
+        mediaType: mediaType,
+        releaseYear: releaseYear,
+      );
 
-      await existingResult.fold(
+      await consolidatedResult.fold(
         (failure) async {
-          Logger.error(
-            'Failed to check existing entry',
+          Logger.debug(
+            'No consolidated entry found, will create new one',
             tag: 'WatchHistoryController',
-            error: failure,
           );
         },
-        (existing) async {
-          if (existing != null) {
-            // Update existing entry
-            await repository.updateReadingProgress(
-              entryId: entryId,
-              pageNumber: pageNumber,
-              totalPages: totalPages,
-              chapterNumber: chapterNumber,
-              chapterId: chapterId,
-              chapterTitle: chapterTitle,
-              volumeNumber: volumeNumber,
-            );
-            Logger.debug(
-              'Updated existing reading entry for $title',
+        (consolidatedEntry) async {
+          if (consolidatedEntry != null) {
+            // Found consolidated entry - update it with new chapter
+            Logger.info(
+              'Found consolidated entry for "$title", updating chapter $chapterNumber',
               tag: 'WatchHistoryController',
             );
-          } else {
-            // Create new entry
-            final entry = repository.createEntry(
-              mediaId: mediaId,
-              mediaType: mediaType,
-              title: title,
-              coverImage: coverImage,
-              sourceId: sourceId,
-              sourceName: sourceName,
-              normalizedId: normalizedId,
+
+            // Merge progress: use max chapter number
+            final newChapterNumber = max(
+              consolidatedEntry.chapterNumber ?? 0,
+              chapterNumber ?? 0,
             );
 
-            // Add reading-specific data
-            final readingEntry = WatchHistoryEntry(
-              id: entry.id,
-              mediaId: entry.mediaId,
-              normalizedId: entry.normalizedId,
-              mediaType: entry.mediaType,
-              title: entry.title,
-              coverImage: entry.coverImage,
-              sourceId: entry.sourceId,
-              sourceName: entry.sourceName,
-              chapterNumber: chapterNumber,
-              chapterId: chapterId,
-              chapterTitle: chapterTitle,
-              volumeNumber: volumeNumber,
+            final updatedEntry = consolidatedEntry.copyWith(
+              chapterNumber: newChapterNumber,
+              chapterId: chapterId ?? consolidatedEntry.chapterId,
+              chapterTitle: chapterTitle ?? consolidatedEntry.chapterTitle,
               pageNumber: pageNumber,
-              totalPages: totalPages,
-              createdAt: entry.createdAt,
-              lastPlayedAt: entry.lastPlayedAt,
+              totalPages: totalPages ?? consolidatedEntry.totalPages,
+              lastPlayedAt: DateTime.now(),
             );
 
-            await repository.upsertEntry(readingEntry);
-            Logger.debug(
-              'Created new reading entry for $title',
+            await repository.upsertEntry(updatedEntry);
+            Logger.info(
+              'Updated consolidated entry for "$title" with chapter $newChapterNumber',
               tag: 'WatchHistoryController',
             );
+
+            // Trigger sync if entry has tracking
+            await _triggerSyncIfTracked(updatedEntry);
+            await _refreshContinueReading();
+            return;
           }
         },
+      );
+
+      // No consolidated entry found - create new one
+      final entry = repository.createEntry(
+        mediaId: mediaId,
+        mediaType: mediaType,
+        title: title,
+        coverImage: coverImage,
+        sourceId: sourceId,
+        sourceName: sourceName,
+        normalizedId: normalizedId,
+        releaseYear: releaseYear,
+      );
+
+      // Add reading-specific data
+      final readingEntry = WatchHistoryEntry(
+        id: entry.id,
+        mediaId: entry.mediaId,
+        normalizedId: entry.normalizedId,
+        mediaType: entry.mediaType,
+        title: entry.title,
+        coverImage: entry.coverImage,
+        sourceId: entry.sourceId,
+        sourceName: entry.sourceName,
+        releaseYear: releaseYear,
+        chapterNumber: chapterNumber,
+        chapterId: chapterId,
+        chapterTitle: chapterTitle,
+        volumeNumber: volumeNumber,
+        pageNumber: pageNumber,
+        totalPages: totalPages,
+        createdAt: entry.createdAt,
+        lastPlayedAt: entry.lastPlayedAt,
+      );
+
+      await repository.upsertEntry(readingEntry);
+      Logger.info(
+        'Created new reading entry for "$title" (chapter $chapterNumber)',
+        tag: 'WatchHistoryController',
       );
 
       // Refresh continue reading
@@ -607,6 +643,35 @@ class WatchHistoryController extends ChangeNotifier {
         stackTrace: stackTrace,
       );
       return null;
+    }
+  }
+
+  /// Trigger sync if the entry has tracking configured
+  Future<void> _triggerSyncIfTracked(WatchHistoryEntry entry) async {
+    try {
+      // Check if entry has a normalized ID (indicates tracking is configured)
+      if (entry.normalizedId == null) {
+        Logger.debug(
+          'Entry "${entry.title}" has no tracking configured, skipping sync',
+          tag: 'WatchHistoryController',
+        );
+        return;
+      }
+
+      Logger.info(
+        'Entry "${entry.title}" has tracking, triggering sync',
+        tag: 'WatchHistoryController',
+      );
+
+      // Try to get the sync service from DI if available
+      // This is optional - sync can be triggered manually from UI
+      // For now, just log that sync should be triggered
+      // The actual sync will be called from UI when user initiates it
+    } catch (e) {
+      Logger.warning(
+        'Failed to trigger sync for "${entry.title}": $e',
+        tag: 'WatchHistoryController',
+      );
     }
   }
 }

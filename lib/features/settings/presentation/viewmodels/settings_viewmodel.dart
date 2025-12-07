@@ -1,29 +1,34 @@
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../../../../core/utils/logger.dart';
 import '../../../../core/theme/theme.dart';
 import '../../../../core/utils/provider_cache.dart';
 
 import '../../../../core/enums/tracking_service.dart';
-import '../../../../core/services/tracking_auth_service.dart';
+import '../../../../core/services/tracking/auth_state_manager.dart';
 
 /// Enum for video quality preferences
 enum VideoQuality { auto, p360, p480, p720, p1080 }
 
 class SettingsViewModel extends ChangeNotifier {
-  final TrackingAuthService _authService;
+  final AuthStateManager _authStateManager;
   final Box _settingsBox;
   final ProviderCache _providerCache;
 
-  SettingsViewModel(this._authService, this._settingsBox, this._providerCache) {
+  SettingsViewModel(this._authStateManager, this._settingsBox, this._providerCache) {
     _setupAuthListeners();
   }
 
   /// Setup listeners for auth state changes
   void _setupAuthListeners() {
-    // Since we can't directly listen to GetX controllers from outside,
-    // we'll rely on the sync method being called when needed
-    // This could be enhanced in the future with a more reactive approach
+    // Listen to auth state changes
+    ever(_authStateManager.isServiceConnected, (callback) {
+      notifyListeners();
+    });
+    ever(_authStateManager.usernames, (callback) {
+      notifyListeners();
+    });
   }
 
   // Theme settings
@@ -163,31 +168,24 @@ class SettingsViewModel extends ChangeNotifier {
 
   /// Sync tracking service auth status with stored preferences
   Future<void> _syncTrackingAuthStatus() async {
-    final actuallyConnected = <TrackingService>{};
-    final usernames = <TrackingService, String>{};
+    // Update stored preferences to match actual auth status from AuthStateManager
+    _connectedTrackingServices.clear();
+    _trackingUsernames.clear();
 
-    // Check actual authentication status
     for (final service in TrackingService.values) {
-      if (await _authService.isAuthenticated(service)) {
-        actuallyConnected.add(service);
-        final username = await _authService.getUsername(service);
+      if (_authStateManager.isConnected(service)) {
+        _connectedTrackingServices.add(service);
+        final username = _authStateManager.getUsername(service);
         if (username != null) {
-          usernames[service] = username;
+          _trackingUsernames[service] = username;
         }
       }
     }
 
-    // Update stored preferences to match actual auth status
-    _connectedTrackingServices.clear();
-    _connectedTrackingServices.addAll(actuallyConnected);
-
-    _trackingUsernames.clear();
-    _trackingUsernames.addAll(usernames);
-
     // Initialize auto-sync settings for newly connected services
-    for (final service in actuallyConnected) {
+    for (final service in _connectedTrackingServices) {
       if (!_trackingAutoSync.containsKey(service)) {
-        _trackingAutoSync[service] = true; // Default to enabled
+        _trackingAutoSync[service] = _authStateManager.getAutoSync(service);
       }
     }
 
@@ -331,21 +329,8 @@ class SettingsViewModel extends ChangeNotifier {
   /// Connect a tracking service
   Future<void> connectTrackingService(TrackingService service) async {
     try {
-      final success = await _authService.authenticate(service);
+      final success = await _authStateManager.connectService(service);
       if (success) {
-        _connectedTrackingServices.add(service);
-
-        // Get and store username
-        final username = await _authService.getUsername(service);
-        if (username != null) {
-          _trackingUsernames[service] = username;
-        }
-
-        // Initialize auto-sync setting
-        if (!_trackingAutoSync.containsKey(service)) {
-          _trackingAutoSync[service] = true;
-        }
-
         _error = null;
         await _saveTrackingSettings();
         notifyListeners();
@@ -368,10 +353,7 @@ class SettingsViewModel extends ChangeNotifier {
   /// Disconnect a tracking service
   Future<void> disconnectTrackingService(TrackingService service) async {
     try {
-      await _authService.logout(service);
-      _connectedTrackingServices.remove(service);
-      _trackingUsernames.remove(service);
-      // Keep auto-sync preference for potential future reconnection
+      await _authStateManager.disconnectService(service);
       _error = null;
       await _saveTrackingSettings();
       notifyListeners();
@@ -395,17 +377,17 @@ class SettingsViewModel extends ChangeNotifier {
 
   /// Check if a tracking service is connected
   bool isTrackingServiceConnected(TrackingService service) {
-    return _connectedTrackingServices.contains(service);
+    return _authStateManager.isConnected(service);
   }
 
   /// Get username for a connected tracking service
   String? getTrackingUsername(TrackingService service) {
-    return _trackingUsernames[service];
+    return _authStateManager.getUsername(service);
   }
 
   /// Get auto-sync setting for a tracking service
   bool getTrackingAutoSync(TrackingService service) {
-    return _trackingAutoSync[service] ?? true;
+    return _authStateManager.getAutoSync(service);
   }
 
   /// Set auto-sync setting for a tracking service
@@ -414,6 +396,7 @@ class SettingsViewModel extends ChangeNotifier {
     bool enabled,
   ) async {
     try {
+      await _authStateManager.setAutoSync(service, enabled);
       _trackingAutoSync[service] = enabled;
       await _saveTrackingSettings();
       _error = null;

@@ -7,6 +7,8 @@ import 'package:hive_flutter/hive_flutter.dart';
 import '../../../../core/domain/entities/entities.dart';
 import '../../../../core/enums/tracking_service.dart';
 import '../../../../core/services/tracking/tracking_service_interface.dart';
+import '../../../../core/services/tracking/service_id_mapper.dart';
+import '../../../../core/utils/logger.dart';
 
 /// Dialog that allows users to track their progress in multiple services
 class TrackingDialog extends StatefulWidget {
@@ -35,6 +37,7 @@ class _TrackingDialogState extends State<TrackingDialog> {
   final Map<TrackingService, bool> _selectedServices = {};
   final Map<TrackingService, bool> _isLoading = {};
   final Map<TrackingService, String?> _errors = {};
+  final Map<TrackingService, String?> _serviceIds = {};
   late final Box _trackingBox;
 
   @override
@@ -47,11 +50,15 @@ class _TrackingDialogState extends State<TrackingDialog> {
     // Get or create the tracking preferences box
     _trackingBox = await Hive.openBox('tracking_preferences');
 
+    // Initialize the service ID mapper
+    await ServiceIdMapper.initialize();
+
     // Initialize all services
     for (final service in widget.availableServices) {
       final serviceType = service.serviceType;
       _isLoading[serviceType] = false;
       _errors[serviceType] = null;
+      _serviceIds[serviceType] = null;
 
       // Load previously selected services for this media item
       final trackingKey = _getTrackingKey(widget.media.id, serviceType);
@@ -61,6 +68,9 @@ class _TrackingDialogState extends State<TrackingDialog> {
       );
     }
 
+    // Preload service IDs for authenticated services
+    await _preloadServiceIds();
+
     if (mounted) {
       setState(() {});
     }
@@ -68,6 +78,30 @@ class _TrackingDialogState extends State<TrackingDialog> {
 
   String _getTrackingKey(String mediaId, TrackingService service) {
     return '${mediaId}_${service.name}';
+  }
+
+  /// Preload service IDs for all authenticated services
+  Future<void> _preloadServiceIds() async {
+    for (final service in widget.availableServices) {
+      if (service.isAuthenticated) {
+        try {
+          final serviceId = await ServiceIdMapper.getServiceId(
+            widget.media,
+            service.serviceType,
+            availableServices: widget.availableServices,
+          );
+          _serviceIds[service.serviceType] = serviceId;
+          Logger.info(
+            'Preloaded ${service.serviceType.name} ID for "${widget.media.title}": $serviceId',
+          );
+        } catch (e) {
+          Logger.error(
+            'Failed to preload ${service.serviceType.name} ID for "${widget.media.title}"',
+            error: e,
+          );
+        }
+      }
+    }
   }
 
   @override
@@ -174,6 +208,7 @@ class _TrackingDialogState extends State<TrackingDialog> {
     final isSelected = _selectedServices[serviceType] ?? false;
     final isLoading = _isLoading[serviceType] ?? false;
     final error = _errors[serviceType];
+    final serviceId = _serviceIds[serviceType];
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -192,7 +227,12 @@ class _TrackingDialogState extends State<TrackingDialog> {
           children: [
             _getServiceIcon(serviceType),
             const SizedBox(width: 8),
-            Text(_getServiceName(serviceType)),
+            Expanded(
+              child: Text(
+                _getServiceName(serviceType),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
             if (isLoading) ...[
               const SizedBox(width: 8),
               SizedBox(
@@ -206,17 +246,57 @@ class _TrackingDialogState extends State<TrackingDialog> {
             ],
           ],
         ),
-        subtitle: error != null
-            ? Text(error, style: TextStyle(color: Colors.red, fontSize: 12))
-            : Text(
-                service.isAuthenticated
-                    ? 'Authenticated'
-                    : 'Not authenticated - tap to authenticate',
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (error != null)
+              Text(
+                error,
+                style: TextStyle(color: Colors.red, fontSize: 12),
+              )
+            else if (!service.isAuthenticated)
+              Text(
+                'Not authenticated - tap to authenticate',
                 style: TextStyle(
-                  color: service.isAuthenticated ? Colors.green : Colors.orange,
+                  color: Colors.orange,
+                  fontSize: 12,
+                ),
+              )
+            else if (serviceId != null)
+              Text(
+                'Service ID: $serviceId',
+                style: TextStyle(
+                  color: Colors.green,
+                  fontSize: 12,
+                ),
+              )
+            else if (_selectedServices[serviceType] == true)
+              Text(
+                'Searching for media...',
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.primary,
+                  fontSize: 12,
+                ),
+              )
+            else
+              Text(
+                'Authenticated - ready to track',
+                style: TextStyle(
+                  color: Colors.green,
                   fontSize: 12,
                 ),
               ),
+            if (!service.isAuthenticated && isSelected)
+              Text(
+                'Note: Please authenticate first',
+                style: TextStyle(
+                  color: Colors.orange[700],
+                  fontSize: 11,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+          ],
+        ),
         value: isSelected,
         onChanged: isLoading
             ? null
@@ -225,23 +305,42 @@ class _TrackingDialogState extends State<TrackingDialog> {
                   // Try to authenticate first
                   setState(() {
                     _isLoading[serviceType] = true;
+                    _errors[serviceType] = null;
                   });
 
                   try {
                     final authenticated = await service.authenticate();
                     if (authenticated) {
-                      setState(() {
-                        _selectedServices[serviceType] = true;
-                        _errors[serviceType] = null;
-                      });
+                      // After successful authentication, try to get service ID
+                      try {
+                        final id = await ServiceIdMapper.getServiceId(
+                          widget.media,
+                          serviceType,
+                          availableServices: widget.availableServices,
+                        );
+                        setState(() {
+                          _selectedServices[serviceType] = true;
+                          _serviceIds[serviceType] = id;
+                          _errors[serviceType] = null;
+                        });
+                      } catch (e) {
+                        Logger.warning(
+                          'Could not pre-fetch service ID after authentication: $e',
+                        );
+                        setState(() {
+                          _selectedServices[serviceType] = true;
+                          _errors[serviceType] = null;
+                        });
+                      }
                     } else {
                       setState(() {
                         _errors[serviceType] = 'Authentication failed';
                       });
                     }
                   } catch (e) {
+                    Logger.error('Authentication error', error: e);
                     setState(() {
-                      _errors[serviceType] = 'Authentication error: $e';
+                      _errors[serviceType] = 'Authentication error: ${e.toString().length > 50 ? e.toString().substring(0, 50) + '...' : e.toString()}';
                     });
                   } finally {
                     setState(() {
@@ -296,6 +395,8 @@ class _TrackingDialogState extends State<TrackingDialog> {
         .where((service) => _selectedServices[service.serviceType] ?? false)
         .toList();
 
+    Logger.info('Tracking dialog: Selected services: ${selectedServices.map((s) => s.serviceType.name).join(', ')}');
+
     if (selectedServices.isEmpty) {
       Navigator.of(context).pop();
       return;
@@ -309,32 +410,148 @@ class _TrackingDialogState extends State<TrackingDialog> {
       }
     });
 
-    // Track progress in selected services
-    final trackingUpdate = TrackingProgressUpdate(
-      mediaId: widget.media.id,
-      mediaTitle: widget.media.title,
-      mediaType: widget.media.type,
-      episode: widget.currentEpisode,
-      chapter: widget.currentChapter,
-      progress: widget.progress,
-      completed: widget.completed,
-    );
-
     final results = <TrackingService, bool>{};
 
     for (final service in selectedServices) {
+      Logger.info('Processing service: ${service.serviceType.name}, authenticated: ${service.isAuthenticated}');
+
+      // Skip if not authenticated
+      if (!service.isAuthenticated) {
+        setState(() {
+          _errors[service.serviceType] = 'Service not authenticated';
+        });
+        results[service.serviceType] = false;
+        continue;
+      }
+
       try {
+        // Get or find the service-specific ID
+        String? serviceId = _serviceIds[service.serviceType];
+
+        if (serviceId == null) {
+          // Try to get the service ID now
+          setState(() {
+            _errors[service.serviceType] = 'Finding media on service...';
+          });
+
+          try {
+            serviceId = await ServiceIdMapper.getServiceId(
+              widget.media,
+              service.serviceType,
+              availableServices: widget.availableServices,
+            );
+
+            if (serviceId != null) {
+              setState(() {
+                _serviceIds[service.serviceType] = serviceId;
+                _errors[service.serviceType] = null;
+              });
+              Logger.info(
+                'Found ${service.serviceType.name} ID for "${widget.media.title}": $serviceId',
+              );
+            }
+          } catch (e) {
+            Logger.error('Failed to get service ID', error: e);
+            setState(() {
+              _errors[service.serviceType] = 'Could not find media on service';
+            });
+            results[service.serviceType] = false;
+            continue;
+          }
+        }
+
+        if (serviceId == null) {
+          setState(() {
+            _errors[service.serviceType] = 'Media not found on service';
+          });
+          results[service.serviceType] = false;
+          continue;
+        }
+
+        // Create media item for tracking with service-specific ID
+        final mediaItem = TrackingMediaItem(
+          id: serviceId,
+          title: widget.media.title,
+          mediaType: widget.media.type,
+          coverImage: widget.media.coverImage,
+          serviceIds: {service.serviceType.name: serviceId},
+        );
+
+        // Create progress update with service-specific ID
+        final trackingUpdate = TrackingProgressUpdate(
+          mediaId: serviceId,
+          mediaTitle: widget.media.title,
+          mediaType: widget.media.type,
+          episode: widget.currentEpisode ?? 0,
+          chapter: widget.currentChapter ?? 0,
+          progress: widget.progress ?? 0.0,
+          completed: widget.completed ?? false,
+        );
+
+        // First, check if item exists in watchlist
+        var existsInWatchlist = false;
+        try {
+          Logger.info('Checking watchlist for ${service.serviceType.name}...');
+          final watchlist = await service.getWatchlist();
+          Logger.info('${service.serviceType.name} watchlist has ${watchlist.length} items');
+
+          existsInWatchlist = watchlist.any((item) => item.id == serviceId);
+          Logger.info('Item $serviceId exists in ${service.serviceType.name} watchlist: $existsInWatchlist');
+        } catch (e) {
+          Logger.warning('Failed to check watchlist for ${service.serviceType.name}: $e');
+          // Continue with update even if watchlist check fails
+        }
+
+        // Add to watchlist if not exists
+        if (!existsInWatchlist) {
+          try {
+            setState(() {
+              _errors[service.serviceType] = 'Adding to watchlist...';
+            });
+
+            Logger.info('Adding ${widget.media.title} to ${service.serviceType.name} watchlist...');
+            final added = await service.addToWatchlist(mediaItem);
+            Logger.info('Added to watchlist result: $added');
+
+            if (!added) {
+              setState(() {
+                _errors[service.serviceType] = 'Failed to add to watchlist';
+              });
+              results[service.serviceType] = false;
+              continue;
+            }
+          } catch (e) {
+            Logger.error('Failed to add to watchlist for ${service.serviceType.name}', error: e);
+            setState(() {
+              _errors[service.serviceType] = 'Watchlist error: ${e.toString().length > 30 ? e.toString().substring(0, 30) + '...' : e.toString()}';
+            });
+            results[service.serviceType] = false;
+            continue;
+          }
+        }
+
+        // Update progress
+        setState(() {
+          _errors[service.serviceType] = 'Updating progress...';
+        });
+
         final success = await service.updateProgress(trackingUpdate);
         results[service.serviceType] = success;
 
-        if (!success) {
+        if (success) {
+          setState(() {
+            _errors[service.serviceType] = null;
+          });
+          Logger.info('Successfully updated progress on ${service.serviceType.name}');
+        } else {
           setState(() {
             _errors[service.serviceType] = 'Failed to update progress';
           });
         }
       } catch (e) {
+        Logger.error('Unexpected error in ${service.serviceType.name}', error: e);
         setState(() {
-          _errors[service.serviceType] = 'Error: $e';
+          _errors[service.serviceType] = 'Error: ${e.toString().length > 50 ? e.toString().substring(0, 50) + '...' : e.toString()}';
         });
         results[service.serviceType] = false;
       }
@@ -347,15 +564,19 @@ class _TrackingDialogState extends State<TrackingDialog> {
       }
     });
 
-    // Show success message
+    // Show result message
     final successCount = results.values.where((success) => success).length;
     final totalCount = results.length;
+    final failedServices = results.entries
+        .where((entry) => !entry.value)
+        .map((entry) => entry.key.name)
+        .toList();
 
     if (successCount == totalCount) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Progress tracked successfully in $successCount service${successCount == 1 ? '' : 's'}',
+            '✓ Progress tracked successfully in $successCount service${successCount == 1 ? '' : 's'}',
           ),
           backgroundColor: Colors.green,
         ),
@@ -364,16 +585,20 @@ class _TrackingDialogState extends State<TrackingDialog> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Progress tracked in $successCount of $totalCount services',
+            '⚠ Tracked in $successCount of $totalCount services\nFailed: ${failedServices.join(', ')}',
           ),
           backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 5),
         ),
       );
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Failed to track progress in any service'),
+        SnackBar(
+          content: Text(
+            '✗ Failed to track progress in any service\nIssues: ${failedServices.join(', ')}',
+          ),
           backgroundColor: Colors.red,
+          duration: const Duration(seconds: 5),
         ),
       );
     }
@@ -386,7 +611,13 @@ class _TrackingDialogState extends State<TrackingDialog> {
       await _trackingBox.put(trackingKey, isSelected);
     }
 
-    Navigator.of(context).pop();
+    // Don't auto-close if there were errors so user can see them
+    if (successCount > 0 || mounted) {
+      await Future.delayed(const Duration(seconds: 3));
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    }
   }
 }
 
