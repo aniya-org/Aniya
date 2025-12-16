@@ -5,6 +5,7 @@ import 'package:get/get.dart';
 import 'package:dartotsu_extension_bridge/Models/Source.dart';
 import 'package:hive/hive.dart';
 import 'package:aniya/eval_extensions/storage/aniya_eval_plugin_store.dart';
+import 'package:aniya/eval_extensions/aniya_eval_extensions.dart';
 import 'package:aniya/eval_extensions/runtime/aniya_eval_runtime.dart';
 import 'package:aniya/eval_extensions/templates/sample_plugin.dart';
 
@@ -50,4 +51,26 @@ void main() {
     ]);
     expect(result, isNotNull);
   });
+
+  test(
+    'Aniya eval extensions initializes store when listing installed',
+    () async {
+      final store = AniyaEvalPluginStore();
+      final plugin = AniyaEvalPlugin(
+        id: 'sample',
+        name: 'Sample',
+        version: '0.0.1',
+        language: 'en',
+        itemType: ItemType.manga,
+        sourceCode: sampleAniyaPlugin,
+      );
+      await store.init();
+      await store.put(plugin);
+
+      final uninitializedStore = AniyaEvalPluginStore();
+      final manager = AniyaEvalExtensions(store: uninitializedStore);
+      final installed = await manager.getInstalledMangaExtensions();
+      expect(installed, isNotEmpty);
+    },
+  );
 }

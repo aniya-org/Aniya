@@ -72,6 +72,15 @@ class ExtensionsController extends GetxController {
   final RxString _activeNovelRepo = ''.obs;
   final RxString _activeAniyomiAnimeRepo = ''.obs;
   final RxString _activeAniyomiMangaRepo = ''.obs;
+  final RxString _activeAniyaAnimeRepo = ''.obs;
+  final RxString _activeAniyaMangaRepo = ''.obs;
+  final RxString _activeAniyaNovelRepo = ''.obs;
+  final RxString _activeAniyaMovieRepo = ''.obs;
+  final RxString _activeAniyaTvRepo = ''.obs;
+  final RxString _activeAniyaCartoonRepo = ''.obs;
+  final RxString _activeAniyaDocumentaryRepo = ''.obs;
+  final RxString _activeAniyaLivestreamRepo = ''.obs;
+  final RxString _activeAniyaNsfwRepo = ''.obs;
   final RxString _activeCloudStreamAnimeRepo = ''.obs;
   final RxString _activeCloudStreamMangaRepo = ''.obs;
   final RxString _activeCloudStreamNovelRepo = ''.obs;
@@ -333,13 +342,48 @@ class ExtensionsController extends GetxController {
           continue;
         }
 
-        await manager.fetchAvailableAnimeExtensions([
-          _getRepoForType(type, isAnime: true),
-        ]);
-        await manager.fetchAvailableMangaExtensions([
-          _getRepoForType(type, isAnime: false),
-        ]);
-        await manager.fetchAvailableNovelExtensions([_activeNovelRepo.value]);
+        if (type == ExtensionType.aniya) {
+          await manager.fetchAvailableAnimeExtensions(
+            _getAniyaReposForItem(domain.ItemType.anime),
+          );
+          await manager.fetchAvailableMangaExtensions(
+            _getAniyaReposForItem(domain.ItemType.manga),
+          );
+          await manager.fetchAvailableNovelExtensions(
+            _getAniyaReposForItem(domain.ItemType.novel),
+          );
+          await manager.fetchAvailableMovieExtensions(
+            _getAniyaReposForItem(domain.ItemType.movie),
+          );
+          await manager.fetchAvailableTvShowExtensions(
+            _getAniyaReposForItem(domain.ItemType.tvShow),
+          );
+          await manager.fetchAvailableCartoonExtensions(
+            _getAniyaReposForItem(domain.ItemType.cartoon),
+          );
+          await manager.fetchAvailableDocumentaryExtensions(
+            _getAniyaReposForItem(domain.ItemType.documentary),
+          );
+          await manager.fetchAvailableLivestreamExtensions(
+            _getAniyaReposForItem(domain.ItemType.livestream),
+          );
+          await manager.fetchAvailableNsfwExtensions(
+            _getAniyaReposForItem(domain.ItemType.nsfw),
+          );
+          continue;
+        }
+
+        await manager.fetchAvailableAnimeExtensions(
+          _repoList(_getRepoForType(type, isAnime: true)),
+        );
+        await manager.fetchAvailableMangaExtensions(
+          _repoList(_getRepoForType(type, isAnime: false)),
+        );
+        await manager.fetchAvailableNovelExtensions(
+          type == ExtensionType.mangayomi
+              ? _repoList(_activeNovelRepo.value)
+              : const <String>[],
+        );
       }
 
       await _sortAllExtensions();
@@ -433,6 +477,20 @@ class ExtensionsController extends GetxController {
       );
     }
 
+    if (type == ExtensionType.aniya) {
+      return RepositoryConfig(
+        animeRepoUrl: _valueOrNull(_activeAniyaAnimeRepo.value),
+        mangaRepoUrl: _valueOrNull(_activeAniyaMangaRepo.value),
+        novelRepoUrl: _valueOrNull(_activeAniyaNovelRepo.value),
+        movieRepoUrl: _valueOrNull(_activeAniyaMovieRepo.value),
+        tvShowRepoUrl: _valueOrNull(_activeAniyaTvRepo.value),
+        cartoonRepoUrl: _valueOrNull(_activeAniyaCartoonRepo.value),
+        documentaryRepoUrl: _valueOrNull(_activeAniyaDocumentaryRepo.value),
+        livestreamRepoUrl: _valueOrNull(_activeAniyaLivestreamRepo.value),
+        nsfwRepoUrl: _valueOrNull(_activeAniyaNsfwRepo.value),
+      );
+    }
+
     final animeRepo = type == ExtensionType.aniyomi
         ? _activeAniyomiAnimeRepo.value
         : _activeAnimeRepo.value;
@@ -446,7 +504,7 @@ class ExtensionsController extends GetxController {
     return RepositoryConfig(
       animeRepoUrl: _valueOrNull(animeRepo),
       mangaRepoUrl: _valueOrNull(mangaRepo),
-      novelRepoUrl: _valueOrNull(novelRepo),
+      novelRepoUrl: novelRepo.isEmpty ? null : _valueOrNull(novelRepo),
     );
   }
 
@@ -592,6 +650,19 @@ class ExtensionsController extends GetxController {
         config.livestreamRepoUrl ?? '',
       );
       _setCloudStreamRepo(domain.ItemType.nsfw, config.nsfwRepoUrl ?? '');
+    } else if (type == ExtensionType.aniya) {
+      _setAniyaRepo(domain.ItemType.anime, config.animeRepoUrl ?? '');
+      _setAniyaRepo(domain.ItemType.manga, config.mangaRepoUrl ?? '');
+      _setAniyaRepo(domain.ItemType.novel, config.novelRepoUrl ?? '');
+      _setAniyaRepo(domain.ItemType.movie, config.movieRepoUrl ?? '');
+      _setAniyaRepo(domain.ItemType.tvShow, config.tvShowRepoUrl ?? '');
+      _setAniyaRepo(domain.ItemType.cartoon, config.cartoonRepoUrl ?? '');
+      _setAniyaRepo(
+        domain.ItemType.documentary,
+        config.documentaryRepoUrl ?? '',
+      );
+      _setAniyaRepo(domain.ItemType.livestream, config.livestreamRepoUrl ?? '');
+      _setAniyaRepo(domain.ItemType.nsfw, config.nsfwRepoUrl ?? '');
     } else {
       _setAnimeRepo(config.animeRepoUrl ?? '', type);
       _setMangaRepo(config.mangaRepoUrl ?? '', type);
@@ -820,6 +891,24 @@ class ExtensionsController extends GetxController {
         _themeBox.get('activeAniyomiAnimeRepo', defaultValue: '') as String;
     _activeAniyomiMangaRepo.value =
         _themeBox.get('activeAniyomiMangaRepo', defaultValue: '') as String;
+    _activeAniyaAnimeRepo.value =
+        _themeBox.get('activeAniyaAnimeRepo', defaultValue: '') as String;
+    _activeAniyaMangaRepo.value =
+        _themeBox.get('activeAniyaMangaRepo', defaultValue: '') as String;
+    _activeAniyaNovelRepo.value =
+        _themeBox.get('activeAniyaNovelRepo', defaultValue: '') as String;
+    _activeAniyaMovieRepo.value =
+        _themeBox.get('activeAniyaMovieRepo', defaultValue: '') as String;
+    _activeAniyaTvRepo.value =
+        _themeBox.get('activeAniyaTvRepo', defaultValue: '') as String;
+    _activeAniyaCartoonRepo.value =
+        _themeBox.get('activeAniyaCartoonRepo', defaultValue: '') as String;
+    _activeAniyaDocumentaryRepo.value =
+        _themeBox.get('activeAniyaDocumentaryRepo', defaultValue: '') as String;
+    _activeAniyaLivestreamRepo.value =
+        _themeBox.get('activeAniyaLivestreamRepo', defaultValue: '') as String;
+    _activeAniyaNsfwRepo.value =
+        _themeBox.get('activeAniyaNsfwRepo', defaultValue: '') as String;
     _activeCloudStreamAnimeRepo.value =
         _themeBox.get('activeCloudStreamAnimeRepo', defaultValue: '') as String;
     _activeCloudStreamMangaRepo.value =
@@ -850,6 +939,15 @@ class ExtensionsController extends GetxController {
       ..put('activeNovelRepo', _activeNovelRepo.value)
       ..put('activeAniyomiAnimeRepo', _activeAniyomiAnimeRepo.value)
       ..put('activeAniyomiMangaRepo', _activeAniyomiMangaRepo.value)
+      ..put('activeAniyaAnimeRepo', _activeAniyaAnimeRepo.value)
+      ..put('activeAniyaMangaRepo', _activeAniyaMangaRepo.value)
+      ..put('activeAniyaNovelRepo', _activeAniyaNovelRepo.value)
+      ..put('activeAniyaMovieRepo', _activeAniyaMovieRepo.value)
+      ..put('activeAniyaTvRepo', _activeAniyaTvRepo.value)
+      ..put('activeAniyaCartoonRepo', _activeAniyaCartoonRepo.value)
+      ..put('activeAniyaDocumentaryRepo', _activeAniyaDocumentaryRepo.value)
+      ..put('activeAniyaLivestreamRepo', _activeAniyaLivestreamRepo.value)
+      ..put('activeAniyaNsfwRepo', _activeAniyaNsfwRepo.value)
       ..put('activeCloudStreamAnimeRepo', _activeCloudStreamAnimeRepo.value)
       ..put('activeCloudStreamMangaRepo', _activeCloudStreamMangaRepo.value)
       ..put('activeCloudStreamNovelRepo', _activeCloudStreamNovelRepo.value)
@@ -896,6 +994,15 @@ class ExtensionsController extends GetxController {
       _activeNovelRepo.value,
       _activeAniyomiAnimeRepo.value,
       _activeAniyomiMangaRepo.value,
+      _activeAniyaAnimeRepo.value,
+      _activeAniyaMangaRepo.value,
+      _activeAniyaNovelRepo.value,
+      _activeAniyaMovieRepo.value,
+      _activeAniyaTvRepo.value,
+      _activeAniyaCartoonRepo.value,
+      _activeAniyaDocumentaryRepo.value,
+      _activeAniyaLivestreamRepo.value,
+      _activeAniyaNsfwRepo.value,
       _activeCloudStreamAnimeRepo.value,
       _activeCloudStreamMangaRepo.value,
       _activeCloudStreamNovelRepo.value,
@@ -915,6 +1022,8 @@ class ExtensionsController extends GetxController {
   void _setAnimeRepo(String value, ExtensionType type) {
     if (type == ExtensionType.aniyomi) {
       _activeAniyomiAnimeRepo.value = value;
+    } else if (type == ExtensionType.aniya) {
+      _activeAniyaAnimeRepo.value = value;
     } else {
       _activeAnimeRepo.value = value;
     }
@@ -924,8 +1033,43 @@ class ExtensionsController extends GetxController {
   void _setMangaRepo(String value, ExtensionType type) {
     if (type == ExtensionType.aniyomi) {
       _activeAniyomiMangaRepo.value = value;
+    } else if (type == ExtensionType.aniya) {
+      _activeAniyaMangaRepo.value = value;
     } else {
       _activeMangaRepo.value = value;
+    }
+    _persistRepoSettings();
+  }
+
+  void _setAniyaRepo(domain.ItemType type, String value) {
+    switch (type) {
+      case domain.ItemType.anime:
+        _activeAniyaAnimeRepo.value = value;
+        break;
+      case domain.ItemType.manga:
+        _activeAniyaMangaRepo.value = value;
+        break;
+      case domain.ItemType.novel:
+        _activeAniyaNovelRepo.value = value;
+        break;
+      case domain.ItemType.movie:
+        _activeAniyaMovieRepo.value = value;
+        break;
+      case domain.ItemType.tvShow:
+        _activeAniyaTvRepo.value = value;
+        break;
+      case domain.ItemType.cartoon:
+        _activeAniyaCartoonRepo.value = value;
+        break;
+      case domain.ItemType.documentary:
+        _activeAniyaDocumentaryRepo.value = value;
+        break;
+      case domain.ItemType.livestream:
+        _activeAniyaLivestreamRepo.value = value;
+        break;
+      case domain.ItemType.nsfw:
+        _activeAniyaNsfwRepo.value = value;
+        break;
     }
     _persistRepoSettings();
   }
@@ -974,8 +1118,42 @@ class ExtensionsController extends GetxController {
           ? _activeAniyomiAnimeRepo.value
           : _activeAniyomiMangaRepo.value;
     }
+    if (type == ExtensionType.aniya) {
+      return isAnime
+          ? _activeAniyaAnimeRepo.value
+          : _activeAniyaMangaRepo.value;
+    }
     return isAnime ? _activeAnimeRepo.value : _activeMangaRepo.value;
   }
+
+  List<String> _getAniyaReposForItem(domain.ItemType itemType) {
+    final value = () {
+      switch (itemType) {
+        case domain.ItemType.anime:
+          return _activeAniyaAnimeRepo.value;
+        case domain.ItemType.manga:
+          return _activeAniyaMangaRepo.value;
+        case domain.ItemType.novel:
+          return _activeAniyaNovelRepo.value;
+        case domain.ItemType.movie:
+          return _activeAniyaMovieRepo.value;
+        case domain.ItemType.tvShow:
+          return _activeAniyaTvRepo.value;
+        case domain.ItemType.cartoon:
+          return _activeAniyaCartoonRepo.value;
+        case domain.ItemType.documentary:
+          return _activeAniyaDocumentaryRepo.value;
+        case domain.ItemType.livestream:
+          return _activeAniyaLivestreamRepo.value;
+        case domain.ItemType.nsfw:
+          return _activeAniyaNsfwRepo.value;
+      }
+    }();
+
+    return _repoList(value);
+  }
+
+  List<String> _repoList(String value) => value.isEmpty ? <String>[] : [value];
 
   List<String> _getCloudStreamReposForItem(domain.ItemType itemType) {
     final value = () {
@@ -1149,7 +1327,10 @@ class ExtensionsController extends GetxController {
   Future<List<Source>> _getInstalledForManager(
     bridge.Extension manager,
     ItemType itemType,
-  ) {
+  ) async {
+    if (!manager.isInitialized.value) {
+      await manager.initialize();
+    }
     switch (itemType) {
       case ItemType.anime:
         return manager.getInstalledAnimeExtensions();

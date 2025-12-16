@@ -10,17 +10,17 @@ class AniyaEvalExtensions extends Extension {
   AniyaEvalExtensions({required this.store});
 
   @override
-  bool get supportsMovie => false;
+  bool get supportsMovie => true;
   @override
-  bool get supportsTvShow => false;
+  bool get supportsTvShow => true;
   @override
-  bool get supportsCartoon => false;
+  bool get supportsCartoon => true;
   @override
-  bool get supportsDocumentary => false;
+  bool get supportsDocumentary => true;
   @override
-  bool get supportsLivestream => false;
+  bool get supportsLivestream => true;
   @override
-  bool get supportsNsfw => false;
+  bool get supportsNsfw => true;
 
   @override
   Future<void> initialize() async {
@@ -33,6 +33,7 @@ class AniyaEvalExtensions extends Extension {
   }
 
   Future<void> _refreshInstalled() async {
+    await store.init();
     installedAnimeExtensions.value = store
         .byType(ItemType.anime)
         .map(store.toBridgeSource)
@@ -43,6 +44,30 @@ class AniyaEvalExtensions extends Extension {
         .toList();
     installedNovelExtensions.value = store
         .byType(ItemType.novel)
+        .map(store.toBridgeSource)
+        .toList();
+    installedMovieExtensions.value = store
+        .byType(ItemType.movie)
+        .map(store.toBridgeSource)
+        .toList();
+    installedTvShowExtensions.value = store
+        .byType(ItemType.tvShow)
+        .map(store.toBridgeSource)
+        .toList();
+    installedCartoonExtensions.value = store
+        .byType(ItemType.cartoon)
+        .map(store.toBridgeSource)
+        .toList();
+    installedDocumentaryExtensions.value = store
+        .byType(ItemType.documentary)
+        .map(store.toBridgeSource)
+        .toList();
+    installedLivestreamExtensions.value = store
+        .byType(ItemType.livestream)
+        .map(store.toBridgeSource)
+        .toList();
+    installedNsfwExtensions.value = store
+        .byType(ItemType.nsfw)
         .map(store.toBridgeSource)
         .toList();
   }
@@ -63,6 +88,42 @@ class AniyaEvalExtensions extends Extension {
   Future<List<Source>> getInstalledNovelExtensions() async {
     await _refreshInstalled();
     return installedNovelExtensions.value;
+  }
+
+  @override
+  Future<List<Source>> getInstalledMovieExtensions() async {
+    await _refreshInstalled();
+    return installedMovieExtensions.value;
+  }
+
+  @override
+  Future<List<Source>> getInstalledTvShowExtensions() async {
+    await _refreshInstalled();
+    return installedTvShowExtensions.value;
+  }
+
+  @override
+  Future<List<Source>> getInstalledCartoonExtensions() async {
+    await _refreshInstalled();
+    return installedCartoonExtensions.value;
+  }
+
+  @override
+  Future<List<Source>> getInstalledDocumentaryExtensions() async {
+    await _refreshInstalled();
+    return installedDocumentaryExtensions.value;
+  }
+
+  @override
+  Future<List<Source>> getInstalledLivestreamExtensions() async {
+    await _refreshInstalled();
+    return installedLivestreamExtensions.value;
+  }
+
+  @override
+  Future<List<Source>> getInstalledNsfwExtensions() async {
+    await _refreshInstalled();
+    return installedNsfwExtensions.value;
   }
 
   @override

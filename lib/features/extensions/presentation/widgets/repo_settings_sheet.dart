@@ -60,6 +60,12 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
   late final TextEditingController _animeUrlController;
   late final TextEditingController _mangaUrlController;
   late final TextEditingController _novelUrlController;
+  late final TextEditingController _movieUrlController;
+  late final TextEditingController _tvShowUrlController;
+  late final TextEditingController _cartoonUrlController;
+  late final TextEditingController _documentaryUrlController;
+  late final TextEditingController _livestreamUrlController;
+  late final TextEditingController _nsfwUrlController;
 
   late ExtensionType _selectedType;
   TabController? _tabController;
@@ -79,6 +85,24 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
     );
     _novelUrlController = TextEditingController(
       text: widget.currentConfig?.novelRepoUrl ?? '',
+    );
+    _movieUrlController = TextEditingController(
+      text: widget.currentConfig?.movieRepoUrl ?? '',
+    );
+    _tvShowUrlController = TextEditingController(
+      text: widget.currentConfig?.tvShowRepoUrl ?? '',
+    );
+    _cartoonUrlController = TextEditingController(
+      text: widget.currentConfig?.cartoonRepoUrl ?? '',
+    );
+    _documentaryUrlController = TextEditingController(
+      text: widget.currentConfig?.documentaryRepoUrl ?? '',
+    );
+    _livestreamUrlController = TextEditingController(
+      text: widget.currentConfig?.livestreamRepoUrl ?? '',
+    );
+    _nsfwUrlController = TextEditingController(
+      text: widget.currentConfig?.nsfwRepoUrl ?? '',
     );
 
     // Check if running on Android
@@ -130,6 +154,12 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
     _animeUrlController.dispose();
     _mangaUrlController.dispose();
     _novelUrlController.dispose();
+    _movieUrlController.dispose();
+    _tvShowUrlController.dispose();
+    _cartoonUrlController.dispose();
+    _documentaryUrlController.dispose();
+    _livestreamUrlController.dispose();
+    _nsfwUrlController.dispose();
     _tabController?.removeListener(_onTabChanged);
     _tabController?.dispose();
     super.dispose();
@@ -160,17 +190,56 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
 
   void _handleSave() {
     if (_formKey.currentState?.validate() ?? false) {
-      final config = RepositoryConfig(
-        animeRepoUrl: _animeUrlController.text.isEmpty
-            ? null
-            : _animeUrlController.text.trim(),
-        mangaRepoUrl: _mangaUrlController.text.isEmpty
-            ? null
-            : _mangaUrlController.text.trim(),
-        novelRepoUrl: _novelUrlController.text.isEmpty
-            ? null
-            : _novelUrlController.text.trim(),
-      );
+      final config = switch (_selectedType) {
+        ExtensionType.aniyomi => RepositoryConfig(
+          animeRepoUrl: _animeUrlController.text.isEmpty
+              ? null
+              : _animeUrlController.text.trim(),
+          mangaRepoUrl: _mangaUrlController.text.isEmpty
+              ? null
+              : _mangaUrlController.text.trim(),
+        ),
+        ExtensionType.aniya => RepositoryConfig(
+          animeRepoUrl: _animeUrlController.text.isEmpty
+              ? null
+              : _animeUrlController.text.trim(),
+          mangaRepoUrl: _mangaUrlController.text.isEmpty
+              ? null
+              : _mangaUrlController.text.trim(),
+          novelRepoUrl: _novelUrlController.text.isEmpty
+              ? null
+              : _novelUrlController.text.trim(),
+          movieRepoUrl: _movieUrlController.text.isEmpty
+              ? null
+              : _movieUrlController.text.trim(),
+          tvShowRepoUrl: _tvShowUrlController.text.isEmpty
+              ? null
+              : _tvShowUrlController.text.trim(),
+          cartoonRepoUrl: _cartoonUrlController.text.isEmpty
+              ? null
+              : _cartoonUrlController.text.trim(),
+          documentaryRepoUrl: _documentaryUrlController.text.isEmpty
+              ? null
+              : _documentaryUrlController.text.trim(),
+          livestreamRepoUrl: _livestreamUrlController.text.isEmpty
+              ? null
+              : _livestreamUrlController.text.trim(),
+          nsfwRepoUrl: _nsfwUrlController.text.isEmpty
+              ? null
+              : _nsfwUrlController.text.trim(),
+        ),
+        _ => RepositoryConfig(
+          animeRepoUrl: _animeUrlController.text.isEmpty
+              ? null
+              : _animeUrlController.text.trim(),
+          mangaRepoUrl: _mangaUrlController.text.isEmpty
+              ? null
+              : _mangaUrlController.text.trim(),
+          novelRepoUrl: _novelUrlController.text.isEmpty
+              ? null
+              : _novelUrlController.text.trim(),
+        ),
+      };
       widget.onSave?.call(_selectedType, config);
       Navigator.of(context).pop();
     }
@@ -310,12 +379,59 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
                           const SizedBox(height: 16),
 
                           // Novel Repository URL
-                          _buildUrlField(
-                            controller: _novelUrlController,
-                            label: 'Novel Repository URL',
-                            hint: 'https://example.com/novel-repo.json',
-                            icon: Icons.auto_stories_outlined,
-                          ),
+                          if (_selectedType != ExtensionType.aniyomi) ...[
+                            _buildUrlField(
+                              controller: _novelUrlController,
+                              label: 'Novel Repository URL',
+                              hint: 'https://example.com/novel-repo.json',
+                              icon: Icons.auto_stories_outlined,
+                            ),
+                            const SizedBox(height: 16),
+                          ],
+
+                          if (_selectedType == ExtensionType.aniya) ...[
+                            _buildUrlField(
+                              controller: _movieUrlController,
+                              label: 'Movie Repository URL',
+                              hint: 'https://example.com/movie-repo.json',
+                              icon: Icons.movie,
+                            ),
+                            const SizedBox(height: 16),
+                            _buildUrlField(
+                              controller: _tvShowUrlController,
+                              label: 'TV Show Repository URL',
+                              hint: 'https://example.com/tv-repo.json',
+                              icon: Icons.tv,
+                            ),
+                            const SizedBox(height: 16),
+                            _buildUrlField(
+                              controller: _cartoonUrlController,
+                              label: 'Cartoon Repository URL',
+                              hint: 'https://example.com/cartoon-repo.json',
+                              icon: Icons.brush,
+                            ),
+                            const SizedBox(height: 16),
+                            _buildUrlField(
+                              controller: _documentaryUrlController,
+                              label: 'Documentary Repository URL',
+                              hint: 'https://example.com/documentary-repo.json',
+                              icon: Icons.description,
+                            ),
+                            const SizedBox(height: 16),
+                            _buildUrlField(
+                              controller: _livestreamUrlController,
+                              label: 'Livestream Repository URL',
+                              hint: 'https://example.com/livestream-repo.json',
+                              icon: Icons.live_tv,
+                            ),
+                            const SizedBox(height: 16),
+                            _buildUrlField(
+                              controller: _nsfwUrlController,
+                              label: 'NSFW Repository URL',
+                              hint: 'https://example.com/nsfw-repo.json',
+                              icon: Icons.explicit,
+                            ),
+                          ],
 
                           const SizedBox(height: 32),
 
