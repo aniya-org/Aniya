@@ -100,6 +100,7 @@ class HardwareAccelerationConfigurator {
       case HardwareAccelerationMode.software:
         return const HardwareAccelerationConfig(
           mode: HardwareAccelerationMode.software,
+          hwdec: 'no',
           enableHardwareAcceleration: false,
         );
 
@@ -169,6 +170,18 @@ class HardwareAccelerationConfigurator {
     return VideoControllerConfiguration(
       enableHardwareAcceleration: config.enableHardwareAcceleration,
     );
+  }
+
+  static HardwareAccelerationConfig getAutoConfigForProfile(
+    HardwareProfile profile,
+  ) {
+    return _getAutoConfig(profile);
+  }
+
+  static HardwareAccelerationConfig getPlatformPresetConfigForProfile(
+    HardwareProfile profile,
+  ) {
+    return _getPlatformPresetConfig(profile);
   }
 
   // Private helper methods
@@ -392,8 +405,8 @@ class HardwareAccelerationConfigurator {
                 mode: HardwareAccelerationMode.platformPreset,
                 hwdec: 'auto-safe',
                 gpuApi: 'opengl',
-                enableHardwareAcceleration:
-                    false, // Force software on NVIDIA Linux for stability
+                vo: 'gpu',
+                enableHardwareAcceleration: true,
               );
             case GpuVendor.amd:
               return const HardwareAccelerationConfig(

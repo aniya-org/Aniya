@@ -60,7 +60,7 @@ dependencies:
   # Extension Bridge
   dartotsu_extension_bridge:
     # path: packages/dartotsu_extension_bridge
-    path: ref/DartotsuExtensionBridge
+    path: deps/DartotsuExtensionBridge
     # git:
     #   url: https://github.com/wuxnz/DartotsuExtensionBridge.git
 
@@ -76,7 +76,6 @@ dependencies:
 
   # HTTP Client
   dio: ^5.7.0
-  http: ^1.2.2
 
   # Secure Storage
   flutter_secure_storage: ^9.2.4
@@ -120,6 +119,12 @@ dependencies:
 
   # Crypto
   crypto:
+
+  # Plugin Specific
+  dart_eval: ^0.8.2
+  eval_annotation: ^0.8.1
+  beautiful_soup_dart: ^0.3.0
+  http: ^1.6.0
 
 dev_dependencies:
   flutter_test:

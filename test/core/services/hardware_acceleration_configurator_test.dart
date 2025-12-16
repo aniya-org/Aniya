@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'dart:io';
 import 'package:aniya/core/services/hardware_acceleration_configurator.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 
 void main() {
   group('HardwareAccelerationConfigurator', () {
@@ -69,7 +69,7 @@ void main() {
 
     group('Platform-specific configurations', () {
       test('should handle Linux NVIDIA configuration', () async {
-        final config = HardwareAccelerationConfigurator._getAutoConfig(
+        final config = HardwareAccelerationConfigurator.getAutoConfigForProfile(
           const HardwareProfile(
             os: 'linux',
             gpuVendor: GpuVendor.nvidia,
@@ -86,7 +86,7 @@ void main() {
       });
 
       test('should handle Linux AMD configuration', () async {
-        final config = HardwareAccelerationConfigurator._getAutoConfig(
+        final config = HardwareAccelerationConfigurator.getAutoConfigForProfile(
           const HardwareProfile(
             os: 'linux',
             gpuVendor: GpuVendor.amd,
@@ -103,7 +103,7 @@ void main() {
       });
 
       test('should handle Windows configuration', () async {
-        final config = HardwareAccelerationConfigurator._getAutoConfig(
+        final config = HardwareAccelerationConfigurator.getAutoConfigForProfile(
           const HardwareProfile(
             os: 'windows',
             gpuVendor: GpuVendor.nvidia,
@@ -121,7 +121,7 @@ void main() {
       });
 
       test('should handle macOS configuration', () async {
-        final config = HardwareAccelerationConfigurator._getAutoConfig(
+        final config = HardwareAccelerationConfigurator.getAutoConfigForProfile(
           const HardwareProfile(
             os: 'macos',
             gpuVendor: GpuVendor.intel,
@@ -138,7 +138,7 @@ void main() {
       });
 
       test('should handle Wayland-specific configurations', () async {
-        final config = HardwareAccelerationConfigurator._getAutoConfig(
+        final config = HardwareAccelerationConfigurator.getAutoConfigForProfile(
           const HardwareProfile(
             os: 'linux',
             gpuVendor: GpuVendor.amd,
@@ -161,7 +161,7 @@ void main() {
         'should handle Linux NVIDIA platform preset conservatively',
         () async {
           final config =
-              HardwareAccelerationConfigurator._getPlatformPresetConfig(
+              HardwareAccelerationConfigurator.getPlatformPresetConfigForProfile(
                 const HardwareProfile(
                   os: 'linux',
                   gpuVendor: GpuVendor.nvidia,
@@ -181,7 +181,7 @@ void main() {
 
       test('should handle Linux Wayland NVIDIA more conservatively', () async {
         final config =
-            HardwareAccelerationConfigurator._getPlatformPresetConfig(
+            HardwareAccelerationConfigurator.getPlatformPresetConfigForProfile(
               const HardwareProfile(
                 os: 'linux',
                 gpuVendor: GpuVendor.nvidia,
@@ -212,7 +212,7 @@ void main() {
 
     group('Error handling', () {
       test('should handle missing GPU vendor gracefully', () async {
-        final config = HardwareAccelerationConfigurator._getAutoConfig(
+        final config = HardwareAccelerationConfigurator.getAutoConfigForProfile(
           const HardwareProfile(
             os: 'linux',
             gpuVendor: GpuVendor.unknown,
@@ -228,7 +228,7 @@ void main() {
       });
 
       test('should handle unknown OS gracefully', () async {
-        final config = HardwareAccelerationConfigurator._getAutoConfig(
+        final config = HardwareAccelerationConfigurator.getAutoConfigForProfile(
           const HardwareProfile(
             os: 'unknown',
             gpuVendor: GpuVendor.unknown,

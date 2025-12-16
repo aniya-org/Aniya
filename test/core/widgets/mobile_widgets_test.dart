@@ -7,10 +7,15 @@ import 'package:aniya/core/widgets/mobile_navigation_bar_controller.dart';
 
 void main() {
   group('Mobile Widgets', () {
+    void setTestScreenSize(WidgetTester tester, Size size) {
+      final view = tester.view;
+      view.physicalSize = size;
+      addTearDown(view.resetPhysicalSize);
+    }
+
     group('MobileOrientationListener', () {
       testWidgets('renders child widget', (WidgetTester tester) async {
-        tester.binding.window.physicalSizeTestValue = const Size(400, 800);
-        addTearDown(tester.binding.window.clearPhysicalSizeTestValue);
+        setTestScreenSize(tester, const Size(400, 800));
 
         await tester.pumpWidget(
           MaterialApp(
@@ -29,8 +34,7 @@ void main() {
         bool callbackCalled = false;
         Orientation? changedOrientation;
 
-        tester.binding.window.physicalSizeTestValue = const Size(400, 800);
-        addTearDown(tester.binding.window.clearPhysicalSizeTestValue);
+        setTestScreenSize(tester, const Size(400, 800));
 
         await tester.pumpWidget(
           MaterialApp(
@@ -45,13 +49,14 @@ void main() {
         );
 
         expect(find.text('Test Content'), findsOneWidget);
+        expect(callbackCalled, isFalse);
+        expect(changedOrientation, isNull);
       });
     });
 
     group('MobileSafeArea', () {
       testWidgets('renders child widget', (WidgetTester tester) async {
-        tester.binding.window.physicalSizeTestValue = const Size(400, 800);
-        addTearDown(tester.binding.window.clearPhysicalSizeTestValue);
+        setTestScreenSize(tester, const Size(400, 800));
 
         await tester.pumpWidget(
           MaterialApp(
@@ -65,8 +70,7 @@ void main() {
       });
 
       testWidgets('respects top parameter', (WidgetTester tester) async {
-        tester.binding.window.physicalSizeTestValue = const Size(400, 800);
-        addTearDown(tester.binding.window.clearPhysicalSizeTestValue);
+        setTestScreenSize(tester, const Size(400, 800));
 
         await tester.pumpWidget(
           MaterialApp(
@@ -80,8 +84,7 @@ void main() {
       });
 
       testWidgets('respects bottom parameter', (WidgetTester tester) async {
-        tester.binding.window.physicalSizeTestValue = const Size(400, 800);
-        addTearDown(tester.binding.window.clearPhysicalSizeTestValue);
+        setTestScreenSize(tester, const Size(400, 800));
 
         await tester.pumpWidget(
           MaterialApp(
@@ -100,8 +103,7 @@ void main() {
 
     group('MobilePaddedSafeArea', () {
       testWidgets('renders child with padding', (WidgetTester tester) async {
-        tester.binding.window.physicalSizeTestValue = const Size(400, 800);
-        addTearDown(tester.binding.window.clearPhysicalSizeTestValue);
+        setTestScreenSize(tester, const Size(400, 800));
 
         await tester.pumpWidget(
           MaterialApp(
@@ -118,8 +120,7 @@ void main() {
       });
 
       testWidgets('applies custom padding', (WidgetTester tester) async {
-        tester.binding.window.physicalSizeTestValue = const Size(400, 800);
-        addTearDown(tester.binding.window.clearPhysicalSizeTestValue);
+        setTestScreenSize(tester, const Size(400, 800));
 
         await tester.pumpWidget(
           MaterialApp(
@@ -138,8 +139,7 @@ void main() {
 
     group('MobileSystemUIAwareSafeArea', () {
       testWidgets('renders child widget', (WidgetTester tester) async {
-        tester.binding.window.physicalSizeTestValue = const Size(400, 800);
-        addTearDown(tester.binding.window.clearPhysicalSizeTestValue);
+        setTestScreenSize(tester, const Size(400, 800));
 
         await tester.pumpWidget(
           MaterialApp(
@@ -157,8 +157,7 @@ void main() {
       testWidgets('respects avoidStatusBar parameter', (
         WidgetTester tester,
       ) async {
-        tester.binding.window.physicalSizeTestValue = const Size(400, 800);
-        addTearDown(tester.binding.window.clearPhysicalSizeTestValue);
+        setTestScreenSize(tester, const Size(400, 800));
 
         await tester.pumpWidget(
           MaterialApp(
@@ -177,8 +176,7 @@ void main() {
       testWidgets('respects avoidNavigationBar parameter', (
         WidgetTester tester,
       ) async {
-        tester.binding.window.physicalSizeTestValue = const Size(400, 800);
-        addTearDown(tester.binding.window.clearPhysicalSizeTestValue);
+        setTestScreenSize(tester, const Size(400, 800));
 
         await tester.pumpWidget(
           MaterialApp(
@@ -197,8 +195,7 @@ void main() {
 
     group('MobileStatusBarController', () {
       testWidgets('renders child widget', (WidgetTester tester) async {
-        tester.binding.window.physicalSizeTestValue = const Size(400, 800);
-        addTearDown(tester.binding.window.clearPhysicalSizeTestValue);
+        setTestScreenSize(tester, const Size(400, 800));
 
         await tester.pumpWidget(
           MaterialApp(
@@ -212,8 +209,7 @@ void main() {
       });
 
       testWidgets('applies light brightness', (WidgetTester tester) async {
-        tester.binding.window.physicalSizeTestValue = const Size(400, 800);
-        addTearDown(tester.binding.window.clearPhysicalSizeTestValue);
+        setTestScreenSize(tester, const Size(400, 800));
 
         await tester.pumpWidget(
           MaterialApp(
@@ -228,8 +224,7 @@ void main() {
       });
 
       testWidgets('applies dark brightness', (WidgetTester tester) async {
-        tester.binding.window.physicalSizeTestValue = const Size(400, 800);
-        addTearDown(tester.binding.window.clearPhysicalSizeTestValue);
+        setTestScreenSize(tester, const Size(400, 800));
 
         await tester.pumpWidget(
           MaterialApp(
@@ -246,8 +241,7 @@ void main() {
 
     group('MobileNavigationBarController', () {
       testWidgets('renders child widget', (WidgetTester tester) async {
-        tester.binding.window.physicalSizeTestValue = const Size(400, 800);
-        addTearDown(tester.binding.window.clearPhysicalSizeTestValue);
+        setTestScreenSize(tester, const Size(400, 800));
 
         await tester.pumpWidget(
           MaterialApp(
@@ -261,8 +255,7 @@ void main() {
       });
 
       testWidgets('applies light brightness', (WidgetTester tester) async {
-        tester.binding.window.physicalSizeTestValue = const Size(400, 800);
-        addTearDown(tester.binding.window.clearPhysicalSizeTestValue);
+        setTestScreenSize(tester, const Size(400, 800));
 
         await tester.pumpWidget(
           MaterialApp(
@@ -277,8 +270,7 @@ void main() {
       });
 
       testWidgets('applies dark brightness', (WidgetTester tester) async {
-        tester.binding.window.physicalSizeTestValue = const Size(400, 800);
-        addTearDown(tester.binding.window.clearPhysicalSizeTestValue);
+        setTestScreenSize(tester, const Size(400, 800));
 
         await tester.pumpWidget(
           MaterialApp(
@@ -297,8 +289,7 @@ void main() {
       testWidgets('provides brightness to descendants', (
         WidgetTester tester,
       ) async {
-        tester.binding.window.physicalSizeTestValue = const Size(400, 800);
-        addTearDown(tester.binding.window.clearPhysicalSizeTestValue);
+        setTestScreenSize(tester, const Size(400, 800));
 
         await tester.pumpWidget(
           MaterialApp(
@@ -328,8 +319,7 @@ void main() {
       testWidgets('provides brightness to descendants', (
         WidgetTester tester,
       ) async {
-        tester.binding.window.physicalSizeTestValue = const Size(400, 800);
-        addTearDown(tester.binding.window.clearPhysicalSizeTestValue);
+        setTestScreenSize(tester, const Size(400, 800));
 
         await tester.pumpWidget(
           MaterialApp(

@@ -291,6 +291,8 @@ class _AniyaAppState extends State<AniyaApp> {
         return bridge.ExtensionType.cloudstream;
       case domain.ExtensionType.lnreader:
         return bridge.ExtensionType.lnreader;
+      case domain.ExtensionType.aniya:
+        return bridge.ExtensionType.aniya;
     }
   }
 }

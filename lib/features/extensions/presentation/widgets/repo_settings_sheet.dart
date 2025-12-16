@@ -60,22 +60,12 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
   late final TextEditingController _animeUrlController;
   late final TextEditingController _mangaUrlController;
   late final TextEditingController _novelUrlController;
-  // CloudStream-specific controllers (Requirements 12.1, 12.4)
-  late final TextEditingController _movieUrlController;
-  late final TextEditingController _tvShowUrlController;
-  late final TextEditingController _cartoonUrlController;
-  late final TextEditingController _documentaryUrlController;
-  late final TextEditingController _livestreamUrlController;
-  late final TextEditingController _nsfwUrlController;
 
   late ExtensionType _selectedType;
   TabController? _tabController;
 
   final _formKey = GlobalKey<FormState>();
   bool _isAndroid = false;
-
-  /// Returns true if the current extension type is CloudStream
-  bool get _isCloudStream => _selectedType == ExtensionType.cloudstream;
 
   @override
   void initState() {
@@ -90,25 +80,6 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
     _novelUrlController = TextEditingController(
       text: widget.currentConfig?.novelRepoUrl ?? '',
     );
-    // Initialize CloudStream-specific controllers
-    _movieUrlController = TextEditingController(
-      text: widget.currentConfig?.movieRepoUrl ?? '',
-    );
-    _tvShowUrlController = TextEditingController(
-      text: widget.currentConfig?.tvShowRepoUrl ?? '',
-    );
-    _cartoonUrlController = TextEditingController(
-      text: widget.currentConfig?.cartoonRepoUrl ?? '',
-    );
-    _documentaryUrlController = TextEditingController(
-      text: widget.currentConfig?.documentaryRepoUrl ?? '',
-    );
-    _livestreamUrlController = TextEditingController(
-      text: widget.currentConfig?.livestreamRepoUrl ?? '',
-    );
-    _nsfwUrlController = TextEditingController(
-      text: widget.currentConfig?.nsfwRepoUrl ?? '',
-    );
 
     // Check if running on Android
     try {
@@ -117,7 +88,7 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
       _isAndroid = false;
     }
 
-    // Initialize tab controller for Android (3 tabs: Mangayomi, Aniyomi, CloudStream)
+    // Initialize tab controller for Android (3 tabs: Mangayomi, Aniyomi, Aniya)
     if (_isAndroid) {
       _tabController = TabController(
         length: 3,
@@ -134,7 +105,7 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
         return 0;
       case ExtensionType.aniyomi:
         return 1;
-      case ExtensionType.cloudstream:
+      case ExtensionType.aniya:
         return 2;
       default:
         return 0;
@@ -148,7 +119,7 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
       case 1:
         return ExtensionType.aniyomi;
       case 2:
-        return ExtensionType.cloudstream;
+        return ExtensionType.aniya;
       default:
         return ExtensionType.mangayomi;
     }
@@ -159,12 +130,6 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
     _animeUrlController.dispose();
     _mangaUrlController.dispose();
     _novelUrlController.dispose();
-    _movieUrlController.dispose();
-    _tvShowUrlController.dispose();
-    _cartoonUrlController.dispose();
-    _documentaryUrlController.dispose();
-    _livestreamUrlController.dispose();
-    _nsfwUrlController.dispose();
     _tabController?.removeListener(_onTabChanged);
     _tabController?.dispose();
     super.dispose();
@@ -193,33 +158,6 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
     return null;
   }
 
-  /// Validates CloudStream repository URLs
-  ///
-  /// CloudStream repos should point to manifest JSON files containing
-  /// a `pluginLists` array, not direct plugin list URLs.
-  /// This provides a hint to users about the expected format.
-  String? _validateCloudStreamUrl(String? value) {
-    final basicError = _validateUrl(value);
-    if (basicError != null) return basicError;
-
-    // Additional hint for CloudStream URLs
-    if (value != null && value.isNotEmpty) {
-      final uri = Uri.tryParse(value);
-      if (uri != null) {
-        final path = uri.path.toLowerCase();
-        // Warn if URL looks like a direct plugin list rather than a manifest
-        if (path.endsWith('-plugins.json') ||
-            path.contains('/plugins/') ||
-            path.contains('plugin-list')) {
-          // This is just a warning hint, not a hard error
-          // The actual validation happens when fetching
-          return null;
-        }
-      }
-    }
-    return null;
-  }
-
   void _handleSave() {
     if (_formKey.currentState?.validate() ?? false) {
       final config = RepositoryConfig(
@@ -232,25 +170,6 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
         novelRepoUrl: _novelUrlController.text.isEmpty
             ? null
             : _novelUrlController.text.trim(),
-        // CloudStream-specific URLs (Requirements 12.1, 12.4)
-        movieRepoUrl: _movieUrlController.text.isEmpty
-            ? null
-            : _movieUrlController.text.trim(),
-        tvShowRepoUrl: _tvShowUrlController.text.isEmpty
-            ? null
-            : _tvShowUrlController.text.trim(),
-        cartoonRepoUrl: _cartoonUrlController.text.isEmpty
-            ? null
-            : _cartoonUrlController.text.trim(),
-        documentaryRepoUrl: _documentaryUrlController.text.isEmpty
-            ? null
-            : _documentaryUrlController.text.trim(),
-        livestreamRepoUrl: _livestreamUrlController.text.isEmpty
-            ? null
-            : _livestreamUrlController.text.trim(),
-        nsfwRepoUrl: _nsfwUrlController.text.isEmpty
-            ? null
-            : _nsfwUrlController.text.trim(),
       );
       widget.onSave?.call(_selectedType, config);
       Navigator.of(context).pop();
@@ -314,7 +233,6 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
                 ),
 
                 // Extension type tabs (Android only)
-                // Includes CloudStream tab (Requirements 12.1)
                 if (_isAndroid && _tabController != null) ...[
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -323,7 +241,7 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
                       tabs: const [
                         Tab(text: 'Mangayomi'),
                         Tab(text: 'Aniyomi'),
-                        Tab(text: 'CloudStream'),
+                        Tab(text: 'Aniya'),
                       ],
                     ),
                   ),
@@ -359,10 +277,7 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: Text(
-                                    _isCloudStream
-                                        ? 'Enter CloudStream manifest URLs (containing pluginLists). '
-                                              'These are repository index files, not direct plugin lists.'
-                                        : 'Enter repository URLs to fetch extensions. Leave empty to use default repositories.',
+                                    'Enter repository URLs to fetch extensions. Leave empty to use default repositories.',
                                     style: theme.textTheme.bodySmall?.copyWith(
                                       color: colorScheme.onSurface,
                                     ),
@@ -380,7 +295,6 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
                             label: 'Anime Repository URL',
                             hint: 'https://example.com/anime-repo.json',
                             icon: Icons.play_circle_outline,
-                            useCloudStreamValidator: _isCloudStream,
                           ),
 
                           const SizedBox(height: 16),
@@ -391,7 +305,6 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
                             label: 'Manga Repository URL',
                             hint: 'https://example.com/manga-repo.json',
                             icon: Icons.menu_book_outlined,
-                            useCloudStreamValidator: _isCloudStream,
                           ),
 
                           const SizedBox(height: 16),
@@ -402,78 +315,7 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
                             label: 'Novel Repository URL',
                             hint: 'https://example.com/novel-repo.json',
                             icon: Icons.auto_stories_outlined,
-                            useCloudStreamValidator: _isCloudStream,
                           ),
-
-                          // CloudStream-specific repository URLs (Requirements 12.1, 12.4)
-                          // All CloudStream URLs use manifest validator
-                          if (_isCloudStream) ...[
-                            const SizedBox(height: 16),
-
-                            // Movie Repository URL
-                            _buildUrlField(
-                              controller: _movieUrlController,
-                              label: 'Movie Repository URL',
-                              hint: 'https://example.com/movie-repo.json',
-                              icon: Icons.movie_outlined,
-                              useCloudStreamValidator: true,
-                            ),
-
-                            const SizedBox(height: 16),
-
-                            // TV Show Repository URL
-                            _buildUrlField(
-                              controller: _tvShowUrlController,
-                              label: 'TV Show Repository URL',
-                              hint: 'https://example.com/tvshow-repo.json',
-                              icon: Icons.tv_outlined,
-                              useCloudStreamValidator: true,
-                            ),
-
-                            const SizedBox(height: 16),
-
-                            // Cartoon Repository URL
-                            _buildUrlField(
-                              controller: _cartoonUrlController,
-                              label: 'Cartoon Repository URL',
-                              hint: 'https://example.com/cartoon-repo.json',
-                              icon: Icons.animation_outlined,
-                              useCloudStreamValidator: true,
-                            ),
-
-                            const SizedBox(height: 16),
-
-                            // Documentary Repository URL
-                            _buildUrlField(
-                              controller: _documentaryUrlController,
-                              label: 'Documentary Repository URL',
-                              hint: 'https://example.com/documentary-repo.json',
-                              icon: Icons.video_library_outlined,
-                              useCloudStreamValidator: true,
-                            ),
-
-                            const SizedBox(height: 16),
-
-                            // Livestream Repository URL
-                            _buildUrlField(
-                              controller: _livestreamUrlController,
-                              label: 'Livestream Repository URL',
-                              hint: 'https://example.com/livestream-repo.json',
-                              icon: Icons.live_tv_outlined,
-                              useCloudStreamValidator: true,
-                            ),
-
-                            const SizedBox(height: 16),
-
-                            // NSFW Repository URL
-                            _buildUrlField(
-                              controller: _nsfwUrlController,
-                              label: 'NSFW Repository URL',
-                              hint: 'https://example.com/nsfw-repo.json',
-                              icon: Icons.no_adult_content_outlined,
-                              useCloudStreamValidator: true,
-                            ),
-                          ],
 
                           const SizedBox(height: 32),
 
@@ -523,7 +365,6 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
     required String label,
     required String hint,
     required IconData icon,
-    bool useCloudStreamValidator = false,
   }) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
@@ -546,16 +387,11 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
         const SizedBox(height: 8),
         TextFormField(
           controller: controller,
-          validator: useCloudStreamValidator
-              ? _validateCloudStreamUrl
-              : _validateUrl,
+          validator: _validateUrl,
           keyboardType: TextInputType.url,
           autocorrect: false,
           decoration: InputDecoration(
             hintText: hint,
-            helperText: useCloudStreamValidator
-                ? 'Use manifest URL with pluginLists'
-                : null,
             helperMaxLines: 2,
             suffixIcon: controller.text.isNotEmpty
                 ? IconButton(

@@ -12,6 +12,8 @@ import '../../../../core/domain/usecases/add_to_library_usecase.dart';
 import '../../../../core/domain/usecases/remove_from_library_usecase.dart';
 import '../../../../core/services/watch_history_controller.dart';
 import '../../../../core/services/tracking/auth_state_manager.dart';
+import '../../../../core/domain/repositories/extension_search_repository.dart';
+import '../../../../core/domain/repositories/media_repository.dart';
 import '../../../../core/error/exceptions.dart';
 import '../../../../core/error/failures.dart';
 import '../../../../core/utils/logger.dart';
@@ -21,6 +23,7 @@ import '../../../../core/utils/provider_cache.dart';
 import '../../../../core/widgets/provider_attribution_dialog.dart';
 import '../../../../core/widgets/provider_badge.dart';
 import '../../../../core/widgets/tracking_dialog.dart';
+import '../../../../core/domain/repositories/selected_extension_repository.dart';
 import '../../../auth/presentation/viewmodels/auth_viewmodel.dart';
 import '../../../manga_reader/presentation/screens/manga_reader_screen.dart';
 import '../../../novel_reader/presentation/screens/novel_reader_screen.dart';
@@ -28,6 +31,7 @@ import '../../../media_details/presentation/models/source_selection_result.dart'
 import '../../../media_details/presentation/screens/episode_source_selection_sheet.dart';
 import '../../../settings/presentation/screens/settings_screen.dart';
 import '../../../video_player/presentation/screens/video_player_screen.dart';
+import '../../../extensions/controllers/extensions_controller.dart';
 
 /// Details screen for Anime and Manga from external sources
 class AnimeMangaDetailsScreen extends StatefulWidget {
@@ -55,9 +59,12 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
   late final AddToLibraryUseCase _addToLibraryUseCase;
   late final RemoveFromLibraryUseCase _removeFromLibraryUseCase;
   late final LibraryRepository _libraryRepository;
+  late final ExtensionSearchRepository _extensionSearchRepository;
+  late final MediaRepository _mediaRepository;
   late final WatchHistoryController _watchHistoryController;
   late final AuthStateManager _authStateManager;
   late TabController _tabController;
+  late final SelectedExtensionRepository _selectedExtensionRepository;
 
   MediaDetailsEntity? _fullDetails;
   bool _isLoading = true;
@@ -89,6 +96,12 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
   LibraryStatus? _libraryStatus;
   bool _isLibraryActionInProgress = false;
 
+  ExtensionEntity? _selectedExtension;
+  MediaEntity? _selectedExtensionMedia;
+  List<ExtensionEntity> _installedExtensions = [];
+  bool _isLoadingExtension = false;
+  bool _isEnhancingExtensionItems = false;
+
   @override
   void initState() {
     super.initState();
@@ -100,6 +113,8 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
     _addToLibraryUseCase = sl<AddToLibraryUseCase>();
     _removeFromLibraryUseCase = sl<RemoveFromLibraryUseCase>();
     _libraryRepository = sl<LibraryRepository>();
+    _extensionSearchRepository = sl<ExtensionSearchRepository>();
+    _mediaRepository = sl<MediaRepository>();
     _watchHistoryController = sl<WatchHistoryController>();
     _authStateManager = Get.find<AuthStateManager>();
 
@@ -109,10 +124,548 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
     _initializeAttributionFromMedia(widget.media);
     _fetchFullDetails();
     _loadLibraryEntry();
+    _loadInstalledExtensions();
+    _selectedExtensionRepository = sl<SelectedExtensionRepository>();
+    _loadPersistedSelectedExtension();
     if (isAnime) {
       _fetchEpisodes();
     } else {
       _fetchChapters();
+    }
+  }
+
+  void _loadInstalledExtensions() {
+    final controller = Get.find<ExtensionsController>();
+    final all = controller.installedEntities;
+    final desired = widget.media.type == MediaType.anime
+        ? <ItemType>{
+            ItemType.anime,
+            ItemType.tvShow,
+            ItemType.cartoon,
+            ItemType.movie,
+          }
+        : <ItemType>{ItemType.manga, ItemType.novel};
+    final filtered = all.where((e) => desired.contains(e.itemType)).toList();
+    final priority = widget.media.type == MediaType.anime
+        ? <ItemType>[
+            ItemType.anime,
+            ItemType.tvShow,
+            ItemType.cartoon,
+            ItemType.movie,
+          ]
+        : <ItemType>[ItemType.manga, ItemType.novel];
+    final byId = <String, ExtensionEntity>{};
+    for (final p in priority) {
+      for (final ext in filtered) {
+        if (ext.itemType == p) {
+          byId.putIfAbsent(ext.id, () => ext);
+        }
+      }
+    }
+    _installedExtensions = byId.values.toList();
+  }
+
+  String _selectedExtensionKey() {
+    return '${widget.media.sourceId}:${widget.media.id}';
+  }
+
+  Future<void> _loadPersistedSelectedExtension() async {
+    try {
+      final result = await _selectedExtensionRepository.getSelectedExtensionId(
+        _selectedExtensionKey(),
+      );
+      result.fold((_) {}, (id) {
+        if (id == null || id.isEmpty) return;
+        ExtensionEntity? matched;
+        for (final ext in _installedExtensions) {
+          if (ext.id == id) {
+            matched = ext;
+            break;
+          }
+        }
+        if (matched != null) {
+          _onExtensionSelected(matched);
+        }
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _onExtensionSelected(ExtensionEntity? extension) async {
+    if (extension == null) {
+      setState(() {
+        _selectedExtension = null;
+        _selectedExtensionMedia = null;
+        _isLoadingExtension = false;
+        _isEnhancingExtensionItems = false;
+      });
+      try {
+        await _selectedExtensionRepository.setSelectedExtensionId(
+          _selectedExtensionKey(),
+          null,
+        );
+      } catch (_) {}
+      if (widget.media.type == MediaType.anime) {
+        _fetchEpisodes();
+      } else {
+        _fetchChapters();
+      }
+      return;
+    }
+    setState(() {
+      _selectedExtension = extension;
+      _isLoadingExtension = true;
+      _isEnhancingExtensionItems = false;
+    });
+    try {
+      await _selectedExtensionRepository.setSelectedExtensionId(
+        _selectedExtensionKey(),
+        extension.id,
+      );
+    } catch (_) {}
+    try {
+      final search = await _extensionSearchRepository.searchMedia(
+        widget.media.title,
+        extension,
+        1,
+      );
+      MediaEntity? match;
+      search.fold((_) {}, (results) {
+        if (results.isNotEmpty) match = results.first;
+      });
+      if (match == null) {
+        setState(() {
+          _isLoadingExtension = false;
+        });
+        return;
+      }
+      await _applySelectedExtensionMedia(match!);
+    } catch (_) {
+      setState(() {
+        _isLoadingExtension = false;
+      });
+    }
+  }
+
+  Future<void> _applySelectedExtensionMedia(MediaEntity media) async {
+    final extension = _selectedExtension;
+    if (extension == null) return;
+
+    setState(() {
+      _selectedExtensionMedia = media;
+      _isLoadingExtension = true;
+      _isEnhancingExtensionItems = false;
+    });
+
+    try {
+      if (widget.media.type == MediaType.anime) {
+        final epsRes = await _mediaRepository.getEpisodes(
+          media.id,
+          extension.id,
+        );
+        List<EpisodeEntity> extEpisodes = [];
+        epsRes.fold((_) {}, (eps) {
+          extEpisodes = eps
+              .map((e) => e.copyWith(sourceProvider: extension.id))
+              .toList();
+        });
+        final sortedEpisodes = _sortedEpisodesAscending(extEpisodes);
+        setState(() {
+          _allEpisodes = sortedEpisodes;
+          _episodesBySeason = null;
+          _seasons = null;
+          _selectedSeason = null;
+          _seasonNames = null;
+          _episodes = List<EpisodeEntity>.from(sortedEpisodes);
+          _isLoadingExtension = false;
+        });
+        await _enhanceExtensionEpisodesWithAggregation();
+      } else {
+        final chRes = await _mediaRepository.getChapters(
+          media.id,
+          extension.id,
+        );
+        List<ChapterEntity> extChapters = [];
+        chRes.fold((_) {}, (chs) {
+          extChapters = chs
+              .map((c) => c.copyWith(sourceProvider: extension.id))
+              .toList();
+        });
+        final sortedChapters = _sortedChaptersAscending(extChapters);
+        setState(() {
+          _chapters = sortedChapters;
+          _isLoadingExtension = false;
+        });
+        await _enhanceExtensionChaptersWithAggregation();
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingExtension = false;
+      });
+    }
+  }
+
+  Future<void> _showWrongItemPicker() async {
+    final extension = _selectedExtension;
+    if (extension == null) return;
+
+    final picked = await _showExtensionMediaSearchSheet(
+      extension: extension,
+      initialQuery: _selectedExtensionMedia?.title ?? widget.media.title,
+    );
+    if (!mounted || picked == null) return;
+    await _applySelectedExtensionMedia(picked);
+  }
+
+  Future<MediaEntity?> _showExtensionMediaSearchSheet({
+    required ExtensionEntity extension,
+    required String initialQuery,
+  }) async {
+    final controller = TextEditingController(text: initialQuery);
+    final focusNode = FocusNode();
+
+    var isSearching = false;
+    String? error;
+    var results = <MediaEntity>[];
+    var didInitialSearch = false;
+
+    Future<void> runSearch(void Function(void Function()) setModalState) async {
+      final query = controller.text.trim();
+      if (query.isEmpty) return;
+
+      setModalState(() {
+        isSearching = true;
+        error = null;
+      });
+
+      try {
+        final res = await _extensionSearchRepository.searchMedia(
+          query,
+          extension,
+          1,
+        );
+        res.fold(
+          (failure) {
+            setModalState(() {
+              error = failure.message;
+              results = [];
+              isSearching = false;
+            });
+          },
+          (list) {
+            setModalState(() {
+              results = list;
+              isSearching = false;
+            });
+          },
+        );
+      } catch (_) {
+        setModalState(() {
+          error = 'Search failed';
+          results = [];
+          isSearching = false;
+        });
+      }
+    }
+
+    final picked = await showModalBottomSheet<MediaEntity>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) {
+        final theme = Theme.of(context);
+        final colorScheme = theme.colorScheme;
+
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            if (!didInitialSearch) {
+              didInitialSearch = true;
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (focusNode.canRequestFocus) {
+                  focusNode.requestFocus();
+                }
+                runSearch(setModalState);
+              });
+            }
+
+            return DraggableScrollableSheet(
+              expand: false,
+              initialChildSize: 0.9,
+              minChildSize: 0.5,
+              maxChildSize: 0.95,
+              builder: (context, scrollController) {
+                return Container(
+                  decoration: BoxDecoration(
+                    color: colorScheme.surface,
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(28),
+                    ),
+                  ),
+                  child: CustomScrollView(
+                    controller: scrollController,
+                    slivers: [
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  extension.name,
+                                  style: theme.textTheme.titleLarge?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              IconButton(
+                                onPressed: () => Navigator.of(context).pop(),
+                                icon: const Icon(Icons.close),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: controller,
+                                  focusNode: focusNode,
+                                  textInputAction: TextInputAction.search,
+                                  onSubmitted: (_) => runSearch(setModalState),
+                                  decoration: InputDecoration(
+                                    hintText: 'Search',
+                                    prefixIcon: const Icon(Icons.search),
+                                    suffixIcon: controller.text.isEmpty
+                                        ? null
+                                        : IconButton(
+                                            icon: const Icon(Icons.clear),
+                                            onPressed: () {
+                                              controller.clear();
+                                              setModalState(() {});
+                                            },
+                                          ),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(24),
+                                    ),
+                                  ),
+                                  onChanged: (_) => setModalState(() {}),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              FilledButton.tonal(
+                                onPressed: isSearching
+                                    ? null
+                                    : () => runSearch(setModalState),
+                                child: const Text('Search'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      if (error != null)
+                        SliverFillRemaining(
+                          hasScrollBody: false,
+                          child: Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: Text(
+                                error!,
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  color: colorScheme.error,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          ),
+                        )
+                      else if (isSearching && results.isEmpty)
+                        const SliverFillRemaining(
+                          child: Center(child: CircularProgressIndicator()),
+                        )
+                      else if (results.isEmpty)
+                        SliverFillRemaining(
+                          hasScrollBody: false,
+                          child: Center(
+                            child: Text(
+                              'No results found',
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                        )
+                      else
+                        SliverList(
+                          delegate: SliverChildBuilderDelegate((
+                            context,
+                            index,
+                          ) {
+                            final item = results[index];
+                            return ListTile(
+                              leading: ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: SizedBox(
+                                  width: 48,
+                                  height: 64,
+                                  child: item.coverImage == null
+                                      ? Container(
+                                          color: colorScheme
+                                              .surfaceContainerHighest,
+                                          child: Icon(
+                                            Icons.image,
+                                            color: colorScheme.onSurfaceVariant,
+                                          ),
+                                        )
+                                      : Image.network(
+                                          item.coverImage!,
+                                          fit: BoxFit.cover,
+                                          errorBuilder:
+                                              (context, error, stackTrace) {
+                                                return Container(
+                                                  color: colorScheme
+                                                      .surfaceContainerHighest,
+                                                  child: Icon(
+                                                    Icons.image_not_supported,
+                                                    color: colorScheme
+                                                        .onSurfaceVariant,
+                                                  ),
+                                                );
+                                              },
+                                        ),
+                                ),
+                              ),
+                              title: Text(
+                                item.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              subtitle: Text(
+                                item.type.displayName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              trailing: const Icon(Icons.chevron_right),
+                              onTap: () =>
+                                  Navigator.of(context).pop<MediaEntity>(item),
+                            );
+                          }, childCount: results.length),
+                        ),
+                      SliverToBoxAdapter(
+                        child: SizedBox(
+                          height: MediaQuery.of(context).viewInsets.bottom,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+
+    controller.dispose();
+    focusNode.dispose();
+    return picked;
+  }
+
+  Future<void> _enhanceExtensionEpisodesWithAggregation() async {
+    if (_selectedExtension == null ||
+        _selectedExtensionMedia == null ||
+        _episodes.isEmpty)
+      return;
+    setState(() {
+      _isEnhancingExtensionItems = true;
+    });
+    try {
+      final media = MediaEntity(
+        id: _selectedExtensionMedia!.id,
+        title: _selectedExtensionMedia!.title,
+        coverImage: _selectedExtensionMedia!.coverImage,
+        type: _selectedExtensionMedia!.type,
+        genres: _selectedExtensionMedia!.genres,
+        status: _selectedExtensionMedia!.status,
+        sourceId: _selectedExtension!.id,
+        sourceName: _selectedExtension!.name,
+      );
+      final aggregated = await _dataSource.getEpisodes(media);
+      if (aggregated.isNotEmpty) {
+        final byNumber = {for (final a in aggregated) a.number: a};
+        final enhanced = _episodes.map((ep) {
+          final agg = byNumber[ep.number];
+          if (agg == null ||
+              agg.alternativeData == null ||
+              agg.alternativeData!.isEmpty) {
+            return ep;
+          }
+          final mergedAlt = Map<String, EpisodeData>.from(agg.alternativeData!);
+          if (ep.alternativeData != null && ep.alternativeData!.isNotEmpty) {
+            mergedAlt.addAll(ep.alternativeData!);
+          }
+          return ep.copyWith(
+            thumbnail: ep.thumbnail ?? agg.thumbnail,
+            releaseDate: ep.releaseDate ?? agg.releaseDate,
+            alternativeData: mergedAlt,
+          );
+        }).toList();
+        final sortedEnhanced = _sortedEpisodesAscending(enhanced);
+        setState(() {
+          _episodes = sortedEnhanced;
+          _allEpisodes = sortedEnhanced;
+        });
+      }
+    } catch (_) {
+    } finally {
+      setState(() {
+        _isEnhancingExtensionItems = false;
+      });
+    }
+  }
+
+  Future<void> _enhanceExtensionChaptersWithAggregation() async {
+    if (_selectedExtension == null ||
+        _selectedExtensionMedia == null ||
+        _chapters.isEmpty)
+      return;
+    setState(() {
+      _isEnhancingExtensionItems = true;
+    });
+    try {
+      final media = MediaEntity(
+        id: _selectedExtensionMedia!.id,
+        title: _selectedExtensionMedia!.title,
+        coverImage: _selectedExtensionMedia!.coverImage,
+        type: _selectedExtensionMedia!.type,
+        genres: _selectedExtensionMedia!.genres,
+        status: _selectedExtensionMedia!.status,
+        sourceId: _selectedExtension!.id,
+        sourceName: _selectedExtension!.name,
+      );
+      final aggregated = await _dataSource.getChapters(media);
+      if (aggregated.isNotEmpty) {
+        final byNumber = {for (final a in aggregated) a.number: a};
+        final enhanced = _chapters.map((c) {
+          final agg = byNumber[c.number];
+          if (agg == null) return c;
+          return c.copyWith(releaseDate: c.releaseDate ?? agg.releaseDate);
+        }).toList();
+        final sortedEnhanced = _sortedChaptersAscending(enhanced);
+        setState(() {
+          _chapters = sortedEnhanced;
+        });
+      }
+    } catch (_) {
+    } finally {
+      setState(() {
+        _isEnhancingExtensionItems = false;
+      });
     }
   }
 
@@ -332,7 +885,9 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
     // First, get aggregated episodes to know the total count
     // This ensures we have the full episode list from all providers
     try {
-      final aggregatedEpisodes = await _dataSource.getEpisodes(widget.media);
+      final aggregatedEpisodes = _sortedEpisodesAscending(
+        await _dataSource.getEpisodes(widget.media),
+      );
       final aggregatedCount = aggregatedEpisodes.length;
 
       Logger.info(
@@ -367,7 +922,7 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
             _seasons = seasonGroups.keys.toList()..sort();
             final firstSeason = _seasons!.first;
             _selectedSeason = firstSeason;
-            _episodes = List<EpisodeEntity>.from(
+            _episodes = _sortedEpisodesAscending(
               seasonGroups[_selectedSeason] ?? const [],
             );
             _seasonNames = seasonNames;
@@ -402,7 +957,9 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
     });
 
     try {
-      final chapters = await _dataSource.getChapters(widget.media);
+      final chapters = _sortedChaptersAscending(
+        await _dataSource.getChapters(widget.media),
+      );
       if (!mounted) return;
       setState(() {
         _chapters = chapters;
@@ -430,6 +987,28 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
         ).showSnackBar(SnackBar(content: Text('Failed to load chapters: $e')));
       }
     }
+  }
+
+  List<EpisodeEntity> _sortedEpisodesAscending(
+    Iterable<EpisodeEntity> episodes,
+  ) {
+    final list = episodes.toList();
+    list.sort((a, b) {
+      final aSeason = a.seasonNumber ?? 0;
+      final bSeason = b.seasonNumber ?? 0;
+      final seasonCmp = aSeason.compareTo(bSeason);
+      if (seasonCmp != 0) return seasonCmp;
+      return a.number.compareTo(b.number);
+    });
+    return list;
+  }
+
+  List<ChapterEntity> _sortedChaptersAscending(
+    Iterable<ChapterEntity> chapters,
+  ) {
+    final list = chapters.toList();
+    list.sort((a, b) => a.number.compareTo(b.number));
+    return list;
   }
 
   Future<void> _promptForTrackingAuth(TrackingService service) async {
@@ -1094,6 +1673,58 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
         SliverToBoxAdapter(
           child: Column(
             children: [
+              Container(
+                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.source,
+                      size: 16,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: DropdownButton<ExtensionEntity>(
+                        isExpanded: true,
+                        value: _selectedExtension,
+                        hint: const Text('All Sources'),
+                        items: [
+                          DropdownMenuItem<ExtensionEntity>(
+                            value: null,
+                            child: const Text('All Sources'),
+                          ),
+                          ..._installedExtensions.map(
+                            (ext) => DropdownMenuItem<ExtensionEntity>(
+                              value: ext,
+                              child: Text(ext.name),
+                            ),
+                          ),
+                        ],
+                        onChanged: (val) => _onExtensionSelected(val),
+                      ),
+                    ),
+                    if (_isLoadingExtension || _isEnhancingExtensionItems)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 8),
+                        child: SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      ),
+                    if (_selectedExtension != null)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 8),
+                        child: TextButton(
+                          onPressed: _isLoadingExtension
+                              ? null
+                              : _showWrongItemPicker,
+                          child: const Text('Wrong Item?'),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
               if (hasSeasons)
                 // Season Selector
                 Container(
@@ -1498,6 +2129,61 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
     return CustomScrollView(
       key: const PageStorageKey<String>('chapters'),
       slivers: [
+        SliverToBoxAdapter(
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.source,
+                  size: 16,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: DropdownButton<ExtensionEntity>(
+                    isExpanded: true,
+                    value: _selectedExtension,
+                    hint: const Text('All Sources'),
+                    items: [
+                      DropdownMenuItem<ExtensionEntity>(
+                        value: null,
+                        child: const Text('All Sources'),
+                      ),
+                      ..._installedExtensions.map(
+                        (ext) => DropdownMenuItem<ExtensionEntity>(
+                          value: ext,
+                          child: Text(ext.name),
+                        ),
+                      ),
+                    ],
+                    onChanged: (val) => _onExtensionSelected(val),
+                  ),
+                ),
+                if (_isLoadingExtension || _isEnhancingExtensionItems)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 8),
+                    child: SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+                if (_selectedExtension != null)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 8),
+                    child: TextButton(
+                      onPressed:
+                          (_isLoadingExtension || _isEnhancingExtensionItems)
+                          ? null
+                          : _showWrongItemPicker,
+                      child: const Text('Wrong Item?'),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
         SliverPadding(
           padding: const EdgeInsets.all(16),
           sliver: SliverList(
@@ -2078,7 +2764,9 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
 
     setState(() {
       _selectedSeason = season;
-      _episodes = _episodesBySeason![season] ?? [];
+      _episodes = _sortedEpisodesAscending(
+        _episodesBySeason![season] ?? const [],
+      );
     });
   }
 

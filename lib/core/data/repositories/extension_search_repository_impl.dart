@@ -224,6 +224,8 @@ class ExtensionSearchRepositoryImpl implements ExtensionSearchRepository {
         return bridge.ExtensionType.mangayomi;
       case domain_ext.ExtensionType.lnreader:
         return bridge.ExtensionType.lnreader;
+      case domain_ext.ExtensionType.aniya:
+        return bridge.ExtensionType.aniya;
     }
   }
 

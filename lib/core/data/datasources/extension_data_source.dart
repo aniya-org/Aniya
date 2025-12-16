@@ -459,7 +459,7 @@ class ExtensionDataSourceImpl implements ExtensionDataSource {
     Source? source;
     try {
       final manager = await _getExtensionManager(extensionType);
-      source = await _findSourceById(manager, extensionId);
+      source = _findSourceById(manager, extensionId);
 
       if (source == null) {
         throw ServerException('Extension not found: $extensionId');

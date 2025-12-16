@@ -238,6 +238,8 @@ class ExtensionRepositoryImpl implements ExtensionRepository {
         return bridge.ExtensionType.mangayomi;
       case domain.ExtensionType.lnreader:
         return bridge.ExtensionType.lnreader;
+      case domain.ExtensionType.aniya:
+        return bridge.ExtensionType.aniya;
     }
   }
 

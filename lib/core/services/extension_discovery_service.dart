@@ -230,6 +230,8 @@ class ExtensionDiscoveryService {
         return domain.ExtensionType.mangayomi;
       case ExtensionType.lnreader:
         return domain.ExtensionType.lnreader;
+      case ExtensionType.aniya:
+        return domain.ExtensionType.aniya;
     }
   }
 

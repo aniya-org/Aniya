@@ -147,7 +147,7 @@ class RateLimiter {
         'RATE LIMIT WAIT: Waiting ${timeUntilReset.inSeconds}s for rate limit reset on $providerId',
         tag: 'RateLimiter',
       );
-      await Future.delayed(timeUntilReset);
+      await Future.delayed(timeUntilReset + const Duration(milliseconds: 5));
     }
 
     // Process all queued requests

@@ -209,7 +209,8 @@ class DeepLinkService {
     final scheme = uri.scheme.toLowerCase();
     final host = uri.host.toLowerCase();
 
-    return scheme == 'aniyomi' ||
+    return scheme == 'aniya' ||
+        scheme == 'aniyomi' ||
         scheme == 'tachiyomi' ||
         scheme == 'mangayomi' ||
         scheme == 'dar' ||

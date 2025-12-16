@@ -1091,6 +1091,8 @@ class ExtensionsController extends GetxController {
         return domain.ExtensionType.mangayomi;
       case ExtensionType.lnreader:
         return domain.ExtensionType.lnreader;
+      case ExtensionType.aniya:
+        return domain.ExtensionType.aniya;
       default:
         return null;
     }

@@ -101,8 +101,10 @@ import '../../features/manga_reader/presentation/viewmodels/manga_reader_viewmod
 import '../../features/auth/presentation/viewmodels/auth_viewmodel.dart';
 import '../domain/repositories/extension_search_repository.dart';
 import '../domain/repositories/recent_extensions_repository.dart';
+import '../domain/repositories/selected_extension_repository.dart';
 import '../data/repositories/extension_search_repository_impl.dart';
 import '../data/repositories/recent_extensions_repository_impl.dart';
+import '../data/repositories/selected_extension_repository_impl.dart';
 import '../utils/provider_cache.dart';
 import '../utils/cross_provider_matcher.dart';
 import '../utils/data_aggregator.dart';
@@ -342,6 +344,9 @@ Future<void> initializeDependencies() async {
     () => RecentExtensionsRepositoryImpl(
       sharedPreferences: sl<SharedPreferences>(),
     ),
+  );
+  sl.registerLazySingleton<SelectedExtensionRepository>(
+    () => SelectedExtensionRepositoryImpl(prefs: sl<SharedPreferences>()),
   );
 
   // RepositoryLocalDataSource requires async initialization

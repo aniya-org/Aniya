@@ -38,7 +38,7 @@ class _ExtensionScreenState extends State<ExtensionScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 8, vsync: this);
+    _tabController = TabController(length: 10, vsync: this);
     _extensionsController = Get.find<ExtensionsController>();
 
     // Check if running on Android
@@ -121,6 +121,8 @@ class _ExtensionScreenState extends State<ExtensionScreen>
                         ),
                         _buildCloudStreamExtensionList(installed: true),
                         _buildCloudStreamExtensionList(installed: false),
+                        _buildAniyaExtensionList(installed: true),
+                        _buildAniyaExtensionList(installed: false),
                       ],
                     ),
                   ),
@@ -206,6 +208,8 @@ class _ExtensionScreenState extends State<ExtensionScreen>
                   'CloudStream',
                   counts['availableCloudStream'] ?? 0,
                 ),
+                _buildTab('Installed', 'Aniya', counts['installedAniya'] ?? 0),
+                _buildTab('Available', 'Aniya', counts['availableAniya'] ?? 0),
               ],
             ),
           ],
@@ -279,6 +283,10 @@ class _ExtensionScreenState extends State<ExtensionScreen>
                   ButtonSegment<bridge.ExtensionType?>(
                     value: bridge.ExtensionType.cloudstream,
                     label: Text('CloudStream'),
+                  ),
+                  ButtonSegment<bridge.ExtensionType?>(
+                    value: bridge.ExtensionType.aniya,
+                    label: Text('Aniya'),
                   ),
                 ],
                 selected: <bridge.ExtensionType?>{_currentExtensionType},
@@ -1000,6 +1008,12 @@ class _ExtensionScreenState extends State<ExtensionScreen>
           .where((e) => e.type == domain.ExtensionType.cloudstream)
           .toList(),
     ).length;
+    final installedAniya = _extensionsController.installedEntities
+        .where((e) => e.type == domain.ExtensionType.aniya)
+        .length;
+    final availableAniya = _extensionsController.availableEntities
+        .where((e) => e.type == domain.ExtensionType.aniya)
+        .length;
 
     return {
       'installedAnime': installed[domain.ItemType.anime]?.length ?? 0,
@@ -1010,6 +1024,8 @@ class _ExtensionScreenState extends State<ExtensionScreen>
       'availableNovel': available[domain.ItemType.novel]?.length ?? 0,
       'installedCloudStream': installedCloud,
       'availableCloudStream': availableCloud,
+      'installedAniya': installedAniya,
+      'availableAniya': availableAniya,
     };
   }
 
@@ -1039,6 +1055,32 @@ class _ExtensionScreenState extends State<ExtensionScreen>
     return _CloudStreamCategoryMetrics(
       perTypeCounts: perTypeCounts,
       uniqueCount: allIdentifiers.length,
+    );
+  }
+
+  Widget _buildAniyaExtensionList({required bool installed}) {
+    final base = installed
+        ? _extensionsController.installedEntities
+        : _extensionsController.availableEntities;
+    final filtered = _getFilteredExtensions(
+      installed: installed,
+      base: base.where((e) => e.type == domain.ExtensionType.aniya).toList(),
+      extensionType: bridge.ExtensionType.aniya,
+    );
+    return ExtensionList(
+      extensions: filtered,
+      installed: installed,
+      isLoading: _extensionsController.isInitializing,
+      onInstall: (extension) =>
+          _extensionsController.installExtensionById(extension.id),
+      onUninstall: (extension) => _confirmUninstall(context, extension),
+      onUpdate: (extension) =>
+          _extensionsController.updateExtensionById(extension.id),
+      onTap: (extension) => _showExtensionDetails(context, extension),
+      isOperationInProgress:
+          _extensionsController.operationMessage.value != null,
+      installingExtensionId: _extensionsController.installingSourceId.value,
+      uninstallingExtensionId: _extensionsController.uninstallingSourceId.value,
     );
   }
 
@@ -1097,6 +1139,8 @@ class _ExtensionScreenState extends State<ExtensionScreen>
         return extensionType == domain.ExtensionType.cloudstream;
       case bridge.ExtensionType.lnreader:
         return extensionType == domain.ExtensionType.lnreader;
+      case bridge.ExtensionType.aniya:
+        return extensionType == domain.ExtensionType.aniya;
     }
   }
 
@@ -1114,6 +1158,8 @@ class _ExtensionScreenState extends State<ExtensionScreen>
         return domain.ExtensionType.cloudstream;
       case bridge.ExtensionType.lnreader:
         return domain.ExtensionType.lnreader;
+      case bridge.ExtensionType.aniya:
+        return domain.ExtensionType.aniya;
     }
   }
 
@@ -1127,6 +1173,8 @@ class _ExtensionScreenState extends State<ExtensionScreen>
         return bridge.ExtensionType.cloudstream;
       case domain.ExtensionType.lnreader:
         return bridge.ExtensionType.lnreader;
+      case domain.ExtensionType.aniya:
+        return bridge.ExtensionType.aniya;
     }
   }
 

@@ -1,7 +1,7 @@
 import 'package:equatable/equatable.dart';
 
 /// The type of extension ecosystem
-enum ExtensionType { cloudstream, aniyomi, mangayomi, lnreader }
+enum ExtensionType { cloudstream, aniyomi, mangayomi, lnreader, aniya }
 
 /// The media category type for an extension
 enum ItemType {

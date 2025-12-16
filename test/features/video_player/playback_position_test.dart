@@ -1,11 +1,12 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'dart:io';
 import 'package:hive/hive.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:aniya/core/data/datasources/library_local_data_source.dart';
 import 'package:aniya/core/data/repositories/library_repository_impl.dart';
 import 'package:aniya/core/domain/entities/library_item_entity.dart';
 import 'package:aniya/core/domain/entities/media_entity.dart';
 import 'package:aniya/core/data/models/library_item_model.dart';
+import 'package:aniya/core/data/models/media_model.dart';
 import 'package:aniya/core/enums/tracking_service.dart';
 
 void main() {
@@ -16,11 +17,12 @@ void main() {
     late Box<String> indexBox;
     late LibraryLocalDataSourceImpl dataSource;
     late LibraryRepositoryImpl repository;
+    late Directory hiveTempDir;
 
     setUp(() async {
       // Initialize Hive for testing
-      final tempDir = await getTemporaryDirectory();
-      Hive.init(tempDir.path);
+      hiveTempDir = await Directory.systemTemp.createTemp('aniya_hive_test_');
+      Hive.init(hiveTempDir.path);
 
       // Open test boxes
       libraryBox = await Hive.openBox<Map<dynamic, dynamic>>('test_library');
@@ -49,11 +51,12 @@ void main() {
       await readingBox.close();
       await indexBox.close();
       await Hive.deleteFromDisk();
+      await hiveTempDir.delete(recursive: true);
     });
 
     test('should save and retrieve playback position', () async {
       // Arrange
-      final testMedia = MediaEntity(
+      final testMedia = MediaModel(
         id: 'test_media_1',
         title: 'Test Anime',
         type: MediaType.anime,
@@ -77,10 +80,11 @@ void main() {
       await dataSource.addToLibrary(
         LibraryItemModel(
           id: libraryItem.id,
+          mediaId: libraryItem.mediaId,
+          userService: libraryItem.userService,
           media: libraryItem.media,
           status: libraryItem.status,
-          currentEpisode: libraryItem.currentEpisode,
-          currentChapter: libraryItem.currentChapter,
+          progress: libraryItem.progress ?? const WatchProgress(),
           addedAt: libraryItem.addedAt,
         ),
       );
@@ -114,7 +118,7 @@ void main() {
 
     test('should return 0 for non-existent playback position', () async {
       // Arrange
-      final testMedia = MediaEntity(
+      final testMedia = MediaModel(
         id: 'test_media_2',
         title: 'Test Anime 2',
         type: MediaType.anime,
@@ -138,10 +142,11 @@ void main() {
       await dataSource.addToLibrary(
         LibraryItemModel(
           id: libraryItem.id,
+          mediaId: libraryItem.mediaId,
+          userService: libraryItem.userService,
           media: libraryItem.media,
           status: libraryItem.status,
-          currentEpisode: libraryItem.currentEpisode,
-          currentChapter: libraryItem.currentChapter,
+          progress: libraryItem.progress ?? const WatchProgress(),
           addedAt: libraryItem.addedAt,
         ),
       );
@@ -164,7 +169,7 @@ void main() {
 
     test('should update playback position when saved multiple times', () async {
       // Arrange
-      final testMedia = MediaEntity(
+      final testMedia = MediaModel(
         id: 'test_media_3',
         title: 'Test Anime 3',
         type: MediaType.anime,
@@ -188,10 +193,11 @@ void main() {
       await dataSource.addToLibrary(
         LibraryItemModel(
           id: libraryItem.id,
+          mediaId: libraryItem.mediaId,
+          userService: libraryItem.userService,
           media: libraryItem.media,
           status: libraryItem.status,
-          currentEpisode: libraryItem.currentEpisode,
-          currentChapter: libraryItem.currentChapter,
+          progress: libraryItem.progress ?? const WatchProgress(),
           addedAt: libraryItem.addedAt,
         ),
       );

@@ -382,6 +382,8 @@ class ExtensionCard extends StatelessWidget {
         return 'Mangayomi';
       case ExtensionType.lnreader:
         return 'LnReader';
+      case ExtensionType.aniya:
+        return 'Aniya';
     }
   }
 
@@ -395,6 +397,8 @@ class ExtensionCard extends StatelessWidget {
         return colorScheme.tertiary;
       case ExtensionType.lnreader:
         return colorScheme.tertiary;
+      case ExtensionType.aniya:
+        return colorScheme.primary;
     }
   }
 }

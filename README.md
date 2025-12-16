@@ -13,7 +13,7 @@ A cross-platform Flutter application for discovering, reading manga, and streami
 - **Modular Architecture**: Feature-based organization with dependency injection.
 - **Clean Architecture**: Separation of concerns with domain, data, and presentation layers.
 - **Advanced Navigation**: Shell-based navigation with custom page transitions.
-- **CloudStream & Extension Bridge**: Built-in bridge for CloudStream, Aniyomi, Mangayomi, and LnReader plugins with safe plugin loading, extractor reuse, and JSON URL sanitization.
+- **Extensions & Plugin Bridge**: Built-in bridge for CloudStream, Aniyomi, Mangayomi, and LnReader plugins plus native Aniya eval extensions with safe plugin loading, extractor reuse, JSON URL sanitization, and script-based runtime.
 
 ## 🛠 Tech Stack
 
@@ -23,7 +23,7 @@ A cross-platform Flutter application for discovering, reading manga, and streami
 - **Networking**: Dio / HTTP (inferred from data layers)
 - **Caching**: Custom image cache manager
 - **Platform Services**: Responsive layout, desktop window utils, mobile integrations
-- **Extension Systems**: `dartotsu_extension_bridge` (CloudStream DexClassLoader loader, LnReader QuickJS runtime)
+- **Extension Systems**: `dartotsu_extension_bridge` (CloudStream DexClassLoader loader, LnReader QuickJS runtime) plus an in-app Aniya eval runtime for script-based extensions.
 
 ## 🚀 Getting Started
 
@@ -56,11 +56,12 @@ A cross-platform Flutter application for discovering, reading manga, and streami
 
    Edit `.env` with your API keys/services (e.g., for auth, tracking).
 
-4. (Optional) Install CloudStream/LnReader plugins
+4. (Optional) Install extensions (CloudStream / LnReader / Aniya)
 
    - Download extension bundles via the in-app Extension screen.
    - CloudStream `.cs3/.zip` bundles are stored under `app_cloudstream_plugins/` and loaded via DexClassLoader—APK install is no longer required.
    - LnReader plugins are JavaScript blobs downloaded from JSON repos; no Android package manager access needed.
+   - Aniya eval extensions are installed from script URLs or JSON manifests, typically via deep links (see “Deep Links” below).
 
 ### Running the App
 
@@ -120,6 +121,103 @@ Key supporting modules:
 ```
 flutter test
 ```
+
+## 🔗 Deep Links
+
+Aniya supports installing extension repositories and Aniya eval extensions via deep links on mobile and desktop (as URI arguments).
+
+### Repository links
+
+These schemes create or update repository settings for the selected extension type:
+
+- `aniyomi://add-repo?url={repo_url}`
+- `tachiyomi://add-repo?url={repo_url}`
+- `mangayomi://add-repo?url={anime_url}&manga_url={manga_url}&novel_url={novel_url}`
+- `dar://add-repo?url={anime_url}&manga_url={manga_url}&novel_url={novel_url}`
+- `cloudstreamrepo://{repo_url}`
+- `https://cs.repo/?{repo_url}`
+
+### Aniya eval extensions
+
+Aniya eval extensions can be installed from either a single source file URL or a JSON manifest that describes a group of plugins:
+
+- `aniya://add-extension?url={https://example.com/plugin.cs3}`  
+  Installs a single Aniya extension from a plaintext source code URL.
+- `aniya://add-extension-manifest?url={https://example.com/manifest.json}`  
+  Downloads a JSON manifest, resolves one or more plugin entries, fetches their source code, and installs each as an Aniya extension.
+
+#### Example plugin source
+
+The `url` should point to a plaintext file containing the plugin source code.
+
+```dart
+import 'dart:convert';
+
+// Functions passed from host:
+// httpGet(url, [headers])
+// soupParse(html)
+// sha256Hex(input)
+
+dynamic search(
+  String query,
+  int page,
+  List<dynamic> filters,
+  Function httpGet,
+  Function soupParse,
+  Function sha256Hex,
+) async {
+  final res = httpGet('https://example.com/search?q=$query');
+  final html = res is Future ? await res : res.toString();
+  final soup = soupParse(html).toString();
+
+  final items = <Map<String, dynamic>>[
+    {
+      'title': 'Example: ' + query,
+      'url': 'https://example.com/item/1',
+      'cover': '',
+      'description': '',
+      'episodes': [],
+    }
+  ];
+
+  final pages = {'list': items, 'hasNextPage': false};
+  return json.encode(pages);
+}
+```
+
+#### Example manifest
+
+Manifests can be either:
+
+- a JSON array of plugin objects, or
+- a JSON object containing a `plugins` (or `extensions` / `items`) array.
+
+Each plugin entry supports `id`, `name`, `url` (or `codeUrl` / `sourceUrl`), `version`, `lang` (or `language`), `type` (or `itemType`), and optionally inline `sourceCode` (or `code` / `source`).
+
+```json
+{
+  "plugins": [
+    {
+      "id": "example_one",
+      "name": "Example One",
+      "version": "0.1.0",
+      "lang": "en",
+      "type": "anime",
+      "url": "https://example.com/plugins/example_one.cs3"
+    },
+    {
+      "id": "example_inline",
+      "name": "Example Inline",
+      "version": "0.1.0",
+      "language": "en",
+      "itemType": "anime",
+      "sourceCode": "import 'dart:convert';\n\ndynamic search(String query, int page, List<dynamic> filters, Function httpGet, Function soupParse, Function sha256Hex) async {\n  final pages = {'list': [], 'hasNextPage': false};\n  return json.encode(pages);\n}\n"
+    }
+  ]
+}
+```
+
+On desktop (Windows/Linux), the same URIs can be passed as process arguments; the deep link service will detect and process them on startup.
 
 ## 🔧 Development Guides
 

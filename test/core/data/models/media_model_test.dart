@@ -39,6 +39,7 @@ void main() {
         'status': 'ongoing',
         'totalEpisodes': 24,
         'totalChapters': null,
+        'startDate': null,
         'sourceId': 'source1',
         'sourceName': 'Test Source',
       });

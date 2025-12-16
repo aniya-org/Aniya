@@ -41,6 +41,7 @@ void main() {
         'iconUrl': 'https://example.com/icon.png',
         'apkUrl': 'https://example.com/ext.apk',
         'description': 'A test extension',
+        'isExecutableOnDesktop': null,
       });
     });
 

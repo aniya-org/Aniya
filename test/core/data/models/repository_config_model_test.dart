@@ -114,6 +114,7 @@ void main() {
         'cartoonRepoUrl': null,
         'documentaryRepoUrl': null,
         'livestreamRepoUrl': null,
+        'nsfwRepoUrl': null,
       });
     });
 

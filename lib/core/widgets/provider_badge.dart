@@ -44,12 +44,17 @@ class ProviderBadge extends StatelessWidget {
               color: providerInfo.color,
             ),
             SizedBox(width: isSmall ? 3 : 4),
-            Text(
-              providerInfo.name,
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: providerInfo.color,
-                fontWeight: FontWeight.w600,
-                fontSize: isSmall ? 10 : 11,
+            Flexible(
+              child: Text(
+                providerInfo.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                softWrap: false,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: providerInfo.color,
+                  fontWeight: FontWeight.w600,
+                  fontSize: isSmall ? 10 : 11,
+                ),
               ),
             ),
           ],

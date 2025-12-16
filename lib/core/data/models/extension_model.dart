@@ -101,6 +101,8 @@ class ExtensionModel extends ExtensionEntity {
         return ExtensionType.mangayomi;
       case bridge.ExtensionType.lnreader:
         return ExtensionType.lnreader;
+      case bridge.ExtensionType.aniya:
+        return ExtensionType.aniya;
     }
   }
 
