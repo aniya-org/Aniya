@@ -1,6 +1,11 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:aniya/core/data/models/extension_model.dart';
 import 'package:aniya/core/domain/entities/extension_entity.dart';
+import 'package:dartotsu_extension_bridge/Lnreader/LnReaderExtensions.dart';
+import 'package:dartotsu_extension_bridge/Mangayomi/Models/Source.dart'
+    as bridge;
+import 'package:dartotsu_extension_bridge/dartotsu_extension_bridge.dart'
+    as bridge;
 
 void main() {
   group('ExtensionModel', () {
@@ -116,6 +121,71 @@ void main() {
       expect(entity.hasUpdate, tExtensionModel.hasUpdate);
       expect(entity.apkUrl, tExtensionModel.apkUrl);
       expect(entity.description, tExtensionModel.description);
+    });
+  });
+
+  group('LnReader Repo Parsing', () {
+    test('parsePlugins supports official LnReader url/iconUrl fields', () {
+      final pluginJson = <dynamic, dynamic>{
+        'id': 'arnovel',
+        'name': 'ArNovel',
+        'site': 'https://ar-no.com/',
+        'lang': '‎العربية',
+        'version': '1.0.10',
+        'url':
+            'https://raw.githubusercontent.com/lnreader/lnreader-plugins/plugins/v3.0.0/.js/src/plugins/arabic/ArNovel[madara].js',
+        'iconUrl':
+            'https://raw.githubusercontent.com/lnreader/lnreader-plugins/plugins/v3.0.0/public/static/multisrc/madara/arnovel/icon.png',
+      };
+
+      final sources = LnReaderExtensions.parsePlugins({
+        'pluginsJson': [pluginJson],
+        'repoUrl':
+            'https://raw.githubusercontent.com/LNReader/lnreader-plugins/plugins/v3.0.0/.dist/plugins.min.json',
+      });
+
+      expect(sources.length, equals(1));
+
+      final source = sources.single;
+      expect(source.id, equals('arnovel'));
+      expect(source.name, equals('ArNovel'));
+      expect(source.baseUrl, equals('https://ar-no.com/'));
+      expect(source.iconUrl, contains('/icon.png'));
+      expect(source.apkUrl, startsWith('https://'));
+      expect(source.itemType, equals(bridge.ItemType.novel));
+      expect(source.extensionType, equals(bridge.ExtensionType.lnreader));
+    });
+
+    test('parsePlugins supports map types other than Map<String, dynamic>', () {
+      final pluginJson = <dynamic, dynamic>{
+        'id': 'test',
+        'name': 'Test',
+        'site': 'https://example.com/',
+        'lang': 'en',
+        'version': '1.0.0',
+        'iconUrl': 'https://example.com/icon.png',
+        'url': 'https://example.com/plugin.js',
+      };
+
+      final sources = LnReaderExtensions.parsePlugins({
+        'pluginsJson': [pluginJson],
+        'repoUrl': 'https://example.com/plugins.min.json',
+      });
+
+      expect(sources.length, equals(1));
+
+      final source = sources.single;
+      expect(source.id, equals('test'));
+      expect(source.name, equals('Test'));
+      expect(source.version, equals('1.0.0'));
+      expect(source.lang, equals('en'));
+      expect(source.iconUrl, equals('https://example.com/icon.png'));
+      expect(source.baseUrl, equals('https://example.com/'));
+      expect(source.itemType, equals(bridge.ItemType.novel));
+      expect(source.extensionType, equals(bridge.ExtensionType.lnreader));
+      expect(source.repo, equals('https://example.com/plugins.min.json'));
+      expect(source.hasUpdate, equals(false));
+      expect(source.apkUrl, equals('https://example.com/plugin.js'));
     });
   });
 }

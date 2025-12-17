@@ -68,6 +68,7 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
   late final TextEditingController _nsfwUrlController;
 
   late ExtensionType _selectedType;
+  late final List<ExtensionType> _availableTypes;
   TabController? _tabController;
 
   final _formKey = GlobalKey<FormState>();
@@ -112,41 +113,23 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
       _isAndroid = false;
     }
 
-    // Initialize tab controller for Android (3 tabs: Mangayomi, Aniyomi, Aniya)
-    if (_isAndroid) {
-      _tabController = TabController(
-        length: 3,
-        vsync: this,
-        initialIndex: _getTabIndex(_selectedType),
-      );
-      _tabController!.addListener(_onTabChanged);
-    }
-  }
+    _availableTypes = [
+      ExtensionType.mangayomi,
+      if (_isAndroid) ExtensionType.aniyomi,
+      ExtensionType.lnreader,
+      ExtensionType.aniya,
+    ];
 
-  int _getTabIndex(ExtensionType type) {
-    switch (type) {
-      case ExtensionType.mangayomi:
-        return 0;
-      case ExtensionType.aniyomi:
-        return 1;
-      case ExtensionType.aniya:
-        return 2;
-      default:
-        return 0;
+    if (!_availableTypes.contains(_selectedType)) {
+      _selectedType = _availableTypes.first;
     }
-  }
 
-  ExtensionType _getTypeFromIndex(int index) {
-    switch (index) {
-      case 0:
-        return ExtensionType.mangayomi;
-      case 1:
-        return ExtensionType.aniyomi;
-      case 2:
-        return ExtensionType.aniya;
-      default:
-        return ExtensionType.mangayomi;
-    }
+    _tabController = TabController(
+      length: _availableTypes.length,
+      vsync: this,
+      initialIndex: _availableTypes.indexOf(_selectedType),
+    );
+    _tabController!.addListener(_onTabChanged);
   }
 
   @override
@@ -168,9 +151,24 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
   void _onTabChanged() {
     if (_tabController != null && !_tabController!.indexIsChanging) {
       setState(() {
-        _selectedType = _getTypeFromIndex(_tabController!.index);
+        _selectedType = _availableTypes[_tabController!.index];
       });
       widget.onExtensionTypeChanged?.call(_selectedType);
+    }
+  }
+
+  String _typeLabel(ExtensionType type) {
+    switch (type) {
+      case ExtensionType.mangayomi:
+        return 'Mangayomi';
+      case ExtensionType.aniyomi:
+        return 'Aniyomi';
+      case ExtensionType.lnreader:
+        return 'LnReader';
+      case ExtensionType.aniya:
+        return 'Aniya';
+      case ExtensionType.cloudstream:
+        return 'CloudStream';
     }
   }
 
@@ -302,16 +300,18 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
                 ),
 
                 // Extension type tabs (Android only)
-                if (_isAndroid && _tabController != null) ...[
+                if (_tabController != null) ...[
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     child: TabBar(
                       controller: _tabController,
-                      tabs: const [
-                        Tab(text: 'Mangayomi'),
-                        Tab(text: 'Aniyomi'),
-                        Tab(text: 'Aniya'),
-                      ],
+                      isScrollable: true,
+                      tabAlignment: TabAlignment.center,
+                      indicatorSize: TabBarIndicatorSize.label,
+                      labelPadding: const EdgeInsets.symmetric(horizontal: 12),
+                      tabs: _availableTypes
+                          .map((type) => Tab(text: _typeLabel(type)))
+                          .toList(),
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -358,31 +358,33 @@ class _RepoSettingsSheetState extends State<RepoSettingsSheet>
 
                           const SizedBox(height: 24),
 
-                          // Anime Repository URL
-                          _buildUrlField(
-                            controller: _animeUrlController,
-                            label: 'Anime Repository URL',
-                            hint: 'https://example.com/anime-repo.json',
-                            icon: Icons.play_circle_outline,
-                          ),
+                          if (_selectedType != ExtensionType.lnreader) ...[
+                            _buildUrlField(
+                              controller: _animeUrlController,
+                              label: 'Anime Repository URL',
+                              hint: 'https://example.com/anime-repo.json',
+                              icon: Icons.play_circle_outline,
+                            ),
 
-                          const SizedBox(height: 16),
+                            const SizedBox(height: 16),
 
-                          // Manga Repository URL
-                          _buildUrlField(
-                            controller: _mangaUrlController,
-                            label: 'Manga Repository URL',
-                            hint: 'https://example.com/manga-repo.json',
-                            icon: Icons.menu_book_outlined,
-                          ),
+                            _buildUrlField(
+                              controller: _mangaUrlController,
+                              label: 'Manga Repository URL',
+                              hint: 'https://example.com/manga-repo.json',
+                              icon: Icons.menu_book_outlined,
+                            ),
 
-                          const SizedBox(height: 16),
+                            const SizedBox(height: 16),
+                          ],
 
-                          // Novel Repository URL
-                          if (_selectedType != ExtensionType.aniyomi) ...[
+                          if (_selectedType == ExtensionType.lnreader ||
+                              _selectedType != ExtensionType.aniyomi) ...[
                             _buildUrlField(
                               controller: _novelUrlController,
-                              label: 'Novel Repository URL',
+                              label: _selectedType == ExtensionType.lnreader
+                                  ? 'LnReader Repository URL'
+                                  : 'Novel Repository URL',
                               hint: 'https://example.com/novel-repo.json',
                               icon: Icons.auto_stories_outlined,
                             ),

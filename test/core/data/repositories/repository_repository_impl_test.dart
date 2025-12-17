@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:dartz/dartz.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
@@ -8,7 +7,6 @@ import 'package:aniya/core/data/repositories/repository_repository_impl.dart';
 import 'package:aniya/core/data/datasources/repository_local_data_source.dart';
 import 'package:aniya/core/data/models/repository_config_model.dart';
 import 'package:aniya/core/domain/entities/extension_entity.dart';
-import 'package:aniya/core/error/exceptions.dart';
 
 /// Mock implementation of RepositoryLocalDataSource for testing
 class MockRepositoryLocalDataSource implements RepositoryLocalDataSource {
@@ -317,7 +315,6 @@ void main() {
         mockHttpClient = MockClient((request) async {
           // This should never be called for CloudStream
           fail('HTTP client should not be called for CloudStream extensions');
-          return http.Response('', 200);
         });
         repository = RepositoryRepositoryImpl(
           localDataSource: mockLocalDataSource,
@@ -352,7 +349,6 @@ void main() {
         fail(
           'HTTP client should not be called for deprecated CloudStream method',
         );
-        return http.Response('', 200);
       });
       repository = RepositoryRepositoryImpl(
         localDataSource: mockLocalDataSource,

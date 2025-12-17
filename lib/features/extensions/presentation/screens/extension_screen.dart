@@ -264,39 +264,49 @@ class _ExtensionScreenState extends State<ExtensionScreen>
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: SegmentedButton<bridge.ExtensionType?>(
-                segments: const [
-                  ButtonSegment<bridge.ExtensionType?>(
-                    value: null,
-                    label: Text('All'),
-                  ),
-                  ButtonSegment<bridge.ExtensionType?>(
-                    value: bridge.ExtensionType.mangayomi,
-                    label: Text('Mangayomi'),
-                  ),
-                  ButtonSegment<bridge.ExtensionType?>(
-                    value: bridge.ExtensionType.aniyomi,
-                    label: Text('Aniyomi'),
-                  ),
-                  ButtonSegment<bridge.ExtensionType?>(
-                    value: bridge.ExtensionType.cloudstream,
-                    label: Text('CloudStream'),
-                  ),
-                  ButtonSegment<bridge.ExtensionType?>(
-                    value: bridge.ExtensionType.aniya,
-                    label: Text('Aniya'),
-                  ),
-                ],
-                selected: <bridge.ExtensionType?>{_currentExtensionType},
-                onSelectionChanged: (selected) {
-                  setState(() {
-                    _currentExtensionType = selected.first;
-                  });
-                },
-                style: SegmentedButton.styleFrom(
-                  visualDensity: VisualDensity.compact,
+            child: Container(
+              height: 40,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<bridge.ExtensionType?>(
+                  value: _currentExtensionType,
+                  icon: const Icon(Icons.arrow_drop_down, size: 20),
+                  isExpanded: true,
+                  items: const [
+                    DropdownMenuItem<bridge.ExtensionType?>(
+                      value: null,
+                      child: Text('All'),
+                    ),
+                    DropdownMenuItem<bridge.ExtensionType?>(
+                      value: bridge.ExtensionType.mangayomi,
+                      child: Text('Mangayomi'),
+                    ),
+                    DropdownMenuItem<bridge.ExtensionType?>(
+                      value: bridge.ExtensionType.aniyomi,
+                      child: Text('Aniyomi'),
+                    ),
+                    DropdownMenuItem<bridge.ExtensionType?>(
+                      value: bridge.ExtensionType.lnreader,
+                      child: Text('LnReader'),
+                    ),
+                    DropdownMenuItem<bridge.ExtensionType?>(
+                      value: bridge.ExtensionType.cloudstream,
+                      child: Text('CloudStream'),
+                    ),
+                    DropdownMenuItem<bridge.ExtensionType?>(
+                      value: bridge.ExtensionType.aniya,
+                      child: Text('Aniya'),
+                    ),
+                  ],
+                  onChanged: (value) {
+                    setState(() {
+                      _currentExtensionType = value;
+                    });
+                  },
                 ),
               ),
             ),

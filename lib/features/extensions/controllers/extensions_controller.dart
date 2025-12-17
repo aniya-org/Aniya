@@ -70,6 +70,7 @@ class ExtensionsController extends GetxController {
   final RxString _activeAnimeRepo = ''.obs;
   final RxString _activeMangaRepo = ''.obs;
   final RxString _activeNovelRepo = ''.obs;
+  final RxString _activeLnReaderNovelRepo = ''.obs;
   final RxString _activeAniyomiAnimeRepo = ''.obs;
   final RxString _activeAniyomiMangaRepo = ''.obs;
   final RxString _activeAniyaAnimeRepo = ''.obs;
@@ -221,6 +222,10 @@ class ExtensionsController extends GetxController {
       _activeNovelRepo.value = DefaultRepositories.mangayomiNovelRepo;
       updated = true;
     }
+    if (_activeLnReaderNovelRepo.value.isEmpty) {
+      _activeLnReaderNovelRepo.value = DefaultRepositories.lnreaderNovelRepo;
+      updated = true;
+    }
     if (updated) {
       _persistRepoSettings();
     }
@@ -326,6 +331,7 @@ class ExtensionsController extends GetxController {
   String get activeAnimeRepo => _activeAnimeRepo.value;
   String get activeMangaRepo => _activeMangaRepo.value;
   String get activeNovelRepo => _activeNovelRepo.value;
+  String get activeLnReaderNovelRepo => _activeLnReaderNovelRepo.value;
   String get activeAniyomiAnimeRepo => _activeAniyomiAnimeRepo.value;
   String get activeAniyomiMangaRepo => _activeAniyomiMangaRepo.value;
 
@@ -339,6 +345,13 @@ class ExtensionsController extends GetxController {
           for (final domainType in _cloudStreamItemTypes) {
             await _fetchCloudStreamForType(manager, domainType);
           }
+          continue;
+        }
+
+        if (type == ExtensionType.lnreader) {
+          await manager.fetchAvailableNovelExtensions(
+            _repoList(_activeLnReaderNovelRepo.value),
+          );
           continue;
         }
 
@@ -474,6 +487,12 @@ class ExtensionsController extends GetxController {
         ),
         livestreamRepoUrl: _valueOrNull(_activeCloudStreamLivestreamRepo.value),
         nsfwRepoUrl: _valueOrNull(_activeCloudStreamNsfwRepo.value),
+      );
+    }
+
+    if (type == ExtensionType.lnreader) {
+      return RepositoryConfig(
+        novelRepoUrl: _valueOrNull(_activeLnReaderNovelRepo.value),
       );
     }
 
@@ -663,6 +682,8 @@ class ExtensionsController extends GetxController {
       );
       _setAniyaRepo(domain.ItemType.livestream, config.livestreamRepoUrl ?? '');
       _setAniyaRepo(domain.ItemType.nsfw, config.nsfwRepoUrl ?? '');
+    } else if (type == ExtensionType.lnreader) {
+      _setLnReaderNovelRepo(config.novelRepoUrl ?? '');
     } else {
       _setAnimeRepo(config.animeRepoUrl ?? '', type);
       _setMangaRepo(config.mangaRepoUrl ?? '', type);
@@ -700,6 +721,9 @@ class ExtensionsController extends GetxController {
   Iterable<ExtensionType> get _supportedExtensionTypes sync* {
     for (final type in ExtensionType.values) {
       if (!Platform.isAndroid && type == ExtensionType.aniyomi) continue;
+      if (!Platform.isAndroid && !Platform.isLinux && !Platform.isWindows) {
+        if (type == ExtensionType.cloudstream) continue;
+      }
       yield type;
     }
   }
@@ -887,6 +911,8 @@ class ExtensionsController extends GetxController {
         _themeBox.get('activeMangaRepo', defaultValue: '') as String;
     _activeNovelRepo.value =
         _themeBox.get('activeNovelRepo', defaultValue: '') as String;
+    _activeLnReaderNovelRepo.value =
+        _themeBox.get('activeLnReaderNovelRepo', defaultValue: '') as String;
     _activeAniyomiAnimeRepo.value =
         _themeBox.get('activeAniyomiAnimeRepo', defaultValue: '') as String;
     _activeAniyomiMangaRepo.value =
@@ -937,6 +963,7 @@ class ExtensionsController extends GetxController {
       ..put('activeAnimeRepo', _activeAnimeRepo.value)
       ..put('activeMangaRepo', _activeMangaRepo.value)
       ..put('activeNovelRepo', _activeNovelRepo.value)
+      ..put('activeLnReaderNovelRepo', _activeLnReaderNovelRepo.value)
       ..put('activeAniyomiAnimeRepo', _activeAniyomiAnimeRepo.value)
       ..put('activeAniyomiMangaRepo', _activeAniyomiMangaRepo.value)
       ..put('activeAniyaAnimeRepo', _activeAniyaAnimeRepo.value)
@@ -992,6 +1019,7 @@ class ExtensionsController extends GetxController {
       _activeAnimeRepo.value,
       _activeMangaRepo.value,
       _activeNovelRepo.value,
+      _activeLnReaderNovelRepo.value,
       _activeAniyomiAnimeRepo.value,
       _activeAniyomiMangaRepo.value,
       _activeAniyaAnimeRepo.value,
@@ -1076,6 +1104,11 @@ class ExtensionsController extends GetxController {
 
   void _setNovelRepo(String value) {
     _activeNovelRepo.value = value;
+    _persistRepoSettings();
+  }
+
+  void _setLnReaderNovelRepo(String value) {
+    _activeLnReaderNovelRepo.value = value;
     _persistRepoSettings();
   }
 

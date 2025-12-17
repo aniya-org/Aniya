@@ -2,7 +2,6 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:aniya/core/utils/retry_handler.dart';
-import 'package:aniya/core/error/exceptions.dart';
 
 void main() {
   group('RetryConfig', () {

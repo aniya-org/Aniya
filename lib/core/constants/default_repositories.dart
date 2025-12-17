@@ -19,4 +19,7 @@ class DefaultRepositories {
   /// Default Mangayomi novel repository (Kohi-den mirror)
   static const String mangayomiNovelRepo =
       'https://kohiden.xyz/Kohi-den/extensions/raw/branch/main/index.min.json';
+
+  static const String lnreaderNovelRepo =
+      'https://raw.githubusercontent.com/LNReader/lnreader-plugins/plugins/v3.0.0/.dist/plugins.min.json';
 }
