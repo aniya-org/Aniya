@@ -126,6 +126,9 @@ dependencies:
   beautiful_soup_dart: ^0.3.0
   http: ^1.6.0
 
+  # For extractorless embed videos
+  adblocker_webview: ^2.2.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

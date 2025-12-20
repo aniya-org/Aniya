@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:adblocker_webview/adblocker_webview.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
@@ -17,6 +18,7 @@ import '../../../../core/domain/usecases/update_progress_usecase.dart';
 import '../../../../core/services/watch_history_controller.dart';
 import '../../../../core/domain/entities/watch_history_entry.dart';
 import '../../../../core/services/hardware_acceleration_configurator.dart';
+import '../../../../core/utils/platform_utils.dart';
 import '../viewmodels/video_player_viewmodel.dart';
 
 /// Video player screen for playing episodes
@@ -105,6 +107,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   Duration? _pendingResumePosition;
   Timer? _hideControlsTimer;
   final List<StreamSubscription> _subscriptions = [];
+  String? _lastOpenedWebViewUrl;
 
   List<VideoSource> get _sources => _viewModel.sources;
   VideoSource? get _selectedSource => _viewModel.selectedSource;
@@ -987,6 +990,32 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     final url = _viewModel.videoUrl;
     if (url == null) return;
 
+    final urlUri = Uri.tryParse(url);
+    final isHttpUrl =
+        urlUri != null && (urlUri.scheme == 'http' || urlUri.scheme == 'https');
+    if (PlatformUtils.isMobile && isHttpUrl && !_isDirectVideoUrl(url)) {
+      if (_lastOpenedWebViewUrl != url) {
+        _lastOpenedWebViewUrl = url;
+        await _player.stop();
+        if (mounted && !_isDisposed) {
+          try {
+            await Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (context) => _AdBlockerWebviewScreen(url: urlUri),
+              ),
+            );
+          } catch (e) {
+            if (mounted && !_isDisposed) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Failed to open embed: $e')),
+              );
+            }
+          }
+        }
+      }
+      return;
+    }
+
     try {
       debugPrint('Opening video URL: $url');
       // Use merged headers from view model (includes extracted headers from extractor)
@@ -1022,5 +1051,107 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         ).showSnackBar(SnackBar(content: Text('Failed to play video: $e')));
       }
     }
+  }
+
+  bool _isDirectVideoUrl(String url) {
+    final lowerUrl = url.toLowerCase();
+    const videoExtensions = [
+      '.mp4',
+      '.m3u8',
+      '.mkv',
+      '.webm',
+      '.avi',
+      '.mov',
+      '.mpd',
+    ];
+    final hasVideoExtension = videoExtensions.any(lowerUrl.contains);
+    final containsQueryVideoParam =
+        lowerUrl.contains('mime=video') || lowerUrl.contains('type=video');
+    return hasVideoExtension || containsQueryVideoParam;
+  }
+}
+
+class _AdBlockerWebviewScreen extends StatefulWidget {
+  const _AdBlockerWebviewScreen({required this.url});
+
+  final Uri url;
+
+  @override
+  State<_AdBlockerWebviewScreen> createState() =>
+      _AdBlockerWebviewScreenState();
+}
+
+class _AdBlockerWebviewScreenState extends State<_AdBlockerWebviewScreen> {
+  final AdBlockerWebviewController _controller =
+      AdBlockerWebviewController.instance;
+  bool _canGoBack = false;
+  String _title = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _title = widget.url.host.isNotEmpty
+        ? widget.url.host
+        : widget.url.toString();
+    _controller.resetStatistics();
+  }
+
+  Future<void> _updateNavigationState(String? url) async {
+    if (!mounted) return;
+    final canGoBack = await _controller.canGoBack();
+    if (!mounted) return;
+    setState(() {
+      _canGoBack = canGoBack;
+      final host = Uri.tryParse(url ?? '')?.host ?? '';
+      _title = host.isNotEmpty ? host : (url ?? _title);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: !_canGoBack,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        if (await _controller.canGoBack()) {
+          _controller.goBack();
+          return;
+        }
+        if (context.mounted) {
+          Navigator.of(context).pop();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        appBar: AppBar(
+          title: Text(_title, maxLines: 1, overflow: TextOverflow.ellipsis),
+          leading: IconButton(
+            icon: const Icon(Icons.close),
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.arrow_back_ios),
+              onPressed: _canGoBack ? _controller.goBack : null,
+            ),
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              onPressed: _controller.reload,
+            ),
+          ],
+        ),
+        body: AdBlockerWebview(
+          url: widget.url,
+          shouldBlockAds: true,
+          adBlockerWebviewController: _controller,
+          onLoadFinished: (url) {
+            _updateNavigationState(url);
+          },
+          onUrlChanged: (url) {
+            _updateNavigationState(url);
+          },
+        ),
+      ),
+    );
   }
 }

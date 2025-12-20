@@ -1,6 +1,7 @@
 import 'package:aniya/core/data/datasources/tmdb_external_data_source.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:youtube_player_flutter/youtube_player_flutter.dart';
 import '../../../../core/services/tmdb_service.dart';
 import '../../../../core/di/injection_container.dart';
 import '../../../../core/utils/cross_provider_matcher.dart';
@@ -142,6 +143,17 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
   void dispose() {
     _tabController.dispose();
     super.dispose();
+  }
+
+  void _openYoutubeVideo(String videoId, {String? title}) {
+    final trimmed = videoId.trim();
+    if (trimmed.isEmpty) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) =>
+            _YoutubePlayerScreen(videoId: trimmed, title: title),
+      ),
+    );
   }
 
   Future<void> _fetchFullDetails() async {
@@ -2409,7 +2421,27 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
                             title: Text(video['name'] ?? 'Unknown'),
                             subtitle: Text(video['type'] ?? 'Video'),
                             onTap: () {
-                              // TODO: Play video
+                              final site = video['site']
+                                  ?.toString()
+                                  .toLowerCase();
+                              final key = video['key']?.toString();
+                              if (site == 'youtube' &&
+                                  key != null &&
+                                  key.isNotEmpty) {
+                                _openYoutubeVideo(
+                                  key,
+                                  title: video['name']?.toString(),
+                                );
+                                return;
+                              }
+
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'This video source is not supported.',
+                                  ),
+                                ),
+                              );
                             },
                           ),
                         ),
@@ -3093,15 +3125,64 @@ class _TmdbDetailsScreenState extends State<TmdbDetailsScreen>
   }
 }
 
+class _YoutubePlayerScreen extends StatefulWidget {
+  final String videoId;
+  final String? title;
+
+  const _YoutubePlayerScreen({required this.videoId, this.title});
+
+  @override
+  State<_YoutubePlayerScreen> createState() => _YoutubePlayerScreenState();
+}
+
+class _YoutubePlayerScreenState extends State<_YoutubePlayerScreen> {
+  late final YoutubePlayerController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = YoutubePlayerController(
+      initialVideoId: widget.videoId,
+      flags: const YoutubePlayerFlags(autoPlay: true),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final title = (widget.title?.trim().isNotEmpty == true)
+        ? widget.title!.trim()
+        : 'Trailer';
+
+    return YoutubePlayerBuilder(
+      player: YoutubePlayer(
+        controller: _controller,
+        showVideoProgressIndicator: true,
+      ),
+      builder: (context, player) {
+        return Scaffold(
+          appBar: AppBar(title: Text(title)),
+          body: Center(child: player),
+        );
+      },
+    );
+  }
+}
+
 class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
-  final TabBar _tabBar;
+  final TabBar tabBar;
 
-  _SliverAppBarDelegate(this._tabBar);
+  _SliverAppBarDelegate(this.tabBar);
 
   @override
-  double get minExtent => _tabBar.preferredSize.height;
+  double get minExtent => tabBar.preferredSize.height;
   @override
-  double get maxExtent => _tabBar.preferredSize.height;
+  double get maxExtent => tabBar.preferredSize.height;
 
   @override
   Widget build(
@@ -3111,7 +3192,7 @@ class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
   ) {
     return Container(
       color: Theme.of(context).colorScheme.surface,
-      child: _tabBar,
+      child: tabBar,
     );
   }
 

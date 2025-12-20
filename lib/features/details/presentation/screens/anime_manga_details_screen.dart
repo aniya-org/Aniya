@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:get/get.dart';
+import 'package:youtube_player_flutter/youtube_player_flutter.dart';
 
 import '../../../../core/data/datasources/external_remote_data_source.dart';
 import '../../../../core/data/datasources/tmdb_external_data_source.dart';
@@ -1484,6 +1485,9 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
     String? description,
   ) {
     final recommendations = details?.recommendations ?? [];
+    final trailer = details?.trailer;
+    final trailerVideoId =
+        trailer != null ? _youtubeVideoIdFromTrailer(trailer) : null;
 
     return Builder(
       builder: (context) {
@@ -1499,6 +1503,21 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
                     // Stats Grid
                     _buildStatsGrid(context, details),
                     const SizedBox(height: 24),
+
+                    if (trailerVideoId != null) ...[
+                      Card(
+                        child: ListTile(
+                          leading: const Icon(Icons.play_circle_outline),
+                          title: const Text('Trailer'),
+                          subtitle: const Text('YouTube'),
+                          onTap: () => _openYoutubeVideo(
+                            trailerVideoId,
+                            title: '${details?.title ?? widget.media.title} Trailer',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                    ],
 
                     // Synopsis
                     Text(
@@ -1618,6 +1637,58 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
           ],
         );
       },
+    );
+  }
+
+  String? _youtubeVideoIdFromTrailer(TrailerEntity trailer) {
+    final site = trailer.site.toLowerCase().trim();
+    if (!site.contains('youtube')) return null;
+    final value = trailer.id.trim();
+    if (value.isEmpty) return null;
+
+    final directId = RegExp(r'^[a-zA-Z0-9_-]{11}$');
+    if (directId.hasMatch(value)) return value;
+
+    final uri = Uri.tryParse(value);
+    if (uri == null) return null;
+
+    if (uri.host.contains('youtu.be')) {
+      final id = uri.pathSegments.isNotEmpty ? uri.pathSegments.last : null;
+      if (id != null && id.isNotEmpty) return id;
+      return null;
+    }
+
+    if (uri.host.contains('youtube.com')) {
+      final v = uri.queryParameters['v'];
+      if (v != null && v.isNotEmpty) return v;
+
+      final segments = uri.pathSegments;
+      final embedIndex = segments.indexOf('embed');
+      if (embedIndex != -1 && embedIndex + 1 < segments.length) {
+        final id = segments[embedIndex + 1];
+        if (id.isNotEmpty) return id;
+      }
+
+      final shortsIndex = segments.indexOf('shorts');
+      if (shortsIndex != -1 && shortsIndex + 1 < segments.length) {
+        final id = segments[shortsIndex + 1];
+        if (id.isNotEmpty) return id;
+      }
+    }
+
+    return null;
+  }
+
+  void _openYoutubeVideo(String videoId, {String? title}) {
+    final trimmed = videoId.trim();
+    if (trimmed.isEmpty) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => _YoutubePlayerScreen(
+          videoId: trimmed,
+          title: title,
+        ),
+      ),
     );
   }
 
@@ -3252,6 +3323,58 @@ class _AnimeMangaDetailsScreenState extends State<AnimeMangaDetailsScreen>
       }
       return false;
     }
+  }
+}
+
+class _YoutubePlayerScreen extends StatefulWidget {
+  final String videoId;
+  final String? title;
+
+  const _YoutubePlayerScreen({
+    required this.videoId,
+    this.title,
+  });
+
+  @override
+  State<_YoutubePlayerScreen> createState() => _YoutubePlayerScreenState();
+}
+
+class _YoutubePlayerScreenState extends State<_YoutubePlayerScreen> {
+  late final YoutubePlayerController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = YoutubePlayerController(
+      initialVideoId: widget.videoId,
+      flags: const YoutubePlayerFlags(autoPlay: true),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final title = (widget.title?.trim().isNotEmpty == true)
+        ? widget.title!.trim()
+        : 'Trailer';
+
+    return YoutubePlayerBuilder(
+      player: YoutubePlayer(
+        controller: _controller,
+        showVideoProgressIndicator: true,
+      ),
+      builder: (context, player) {
+        return Scaffold(
+          appBar: AppBar(title: Text(title)),
+          body: Center(child: player),
+        );
+      },
+    );
   }
 }
 

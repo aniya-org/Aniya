@@ -115,10 +115,6 @@ Map<String, dynamic> _episode({
   };
 }
 
-Map<String, dynamic> _track({required String file, String? label}) {
-  return {'file': file, 'label': label};
-}
-
 Map<String, dynamic> _video({
   String? title,
   required String url,
@@ -152,6 +148,15 @@ Map<String, dynamic> _pages(
 }
 
 const String _baseUrl = 'https://himovies.sx';
+
+String _normalizeUrl(String raw) {
+  final s = raw.trim();
+  if (s.isEmpty) return '';
+  if (s.startsWith('//')) return 'https:$s';
+  if (s.startsWith('http://') || s.startsWith('https://')) return s;
+  if (s.startsWith('/')) return '$_baseUrl$s';
+  return '$_baseUrl/$s';
+}
 
 dynamic search(
   dynamic query,
@@ -228,13 +233,7 @@ dynamic search(
       title = _asString(a?.text).trim();
     }
     final href = _asString(a?.attr('href')).trim();
-    final url = href.startsWith('http')
-        ? href
-        : href.isEmpty
-        ? ''
-        : href.startsWith('/')
-        ? '$_baseUrl$href'
-        : '$_baseUrl/$href';
+    final url = _normalizeUrl(href);
 
     final img = item.find('img');
     var cover = _asString(img?.attr('data-src')).trim();
@@ -306,35 +305,153 @@ dynamic getDetail(
   Function sha256Hex,
 ) async {
   final base = _asStringKeyedMap(media);
-  final baseUrl = _asString(base['url']);
+  final baseUrl = _normalizeUrl(_asString(base['url']));
+  if (baseUrl.isEmpty) {
+    return json.encode(base);
+  }
 
-  base['description'] = _asString(base['description']).isEmpty
-      ? 'Populated by getDetail().'
-      : base['description'];
-  base['author'] = base['author'] ?? 'Sample author';
-  base['artist'] = base['artist'] ?? 'Sample artist';
-  base['genre'] = base['genre'] ?? <String>['Demo', 'Detail'];
+  final html = await _httpGetText(
+    httpGet,
+    baseUrl,
+    headers: <String, String>{
+      'User-Agent': 'Aniya',
+      'Accept': 'text/html',
+      'Referer': baseUrl,
+    },
+  );
 
-  base['episodes'] = <Map<String, dynamic>>[
-    _episode(
-      url: '$baseUrl/ep-1',
-      name: 'Episode 1',
-      episodeNumber: '1',
-      dateUpload: '2025-01-01',
-      thumbnail: '$baseUrl/thumb-1.jpg',
-      description: 'First episode.',
-      filler: false,
-    ),
-    _episode(
-      url: '$baseUrl/ep-2',
-      name: 'Episode 2',
-      episodeNumber: '2',
-      dateUpload: '2025-01-02',
-      thumbnail: '$baseUrl/thumb-2.jpg',
-      description: 'Second episode.',
-      filler: false,
-    ),
-  ];
+  final soup = soupParse(html);
+  base['description'] = _asString(
+    soup.find('div', {'class_': 'description'})?.text,
+  ).trim();
+  final authorRegex = RegExp(r'Production:[\s\S]*?<a[\s\S]*?>([\s\S]*?)</a>');
+  final authorMatch = authorRegex.firstMatch(base['description']);
+  base['author'] = authorMatch?.group(1)?.trim() ?? 'Sample author';
+  base['artist'] = base['author'];
+  final genresRegex = RegExp(
+    r'<a[\s\S]*?href="/genre/([\s\S]*?)/"[\s\S]*?>([\s\S]*?)</a>',
+  );
+  final genres = <String>[];
+  for (final m in genresRegex.allMatches(_asString(base['description']))) {
+    final g = m.group(2)?.trim();
+    if (g != null && g.isNotEmpty) {
+      genres.add(g);
+    }
+  }
+  base['genre'] = genres;
+
+  final itemId = baseUrl.split('-').last;
+
+  if (baseUrl.contains('/tv/')) {
+    final episodes = <Map<String, dynamic>>[];
+    final seasonIds = <String>[];
+
+    final seasonRegex = RegExp(
+      r'<a[\s\S]*?data-id="([\s\S]*?)"[\s\S]*?>([\s\S]*?)</a>',
+    );
+    final seasonsHtml = await _httpGetText(
+      httpGet,
+      '$_baseUrl/ajax/season/list/$itemId',
+      headers: <String, String>{
+        'User-Agent': 'Aniya',
+        'Accept': 'text/html',
+        'Referer': baseUrl,
+      },
+    );
+    for (final m in seasonRegex.allMatches(seasonsHtml)) {
+      final id = m.group(1)?.trim() ?? '';
+      if (id.isNotEmpty) {
+        seasonIds.add(id);
+      }
+    }
+
+    for (final seasonId in seasonIds) {
+      final seasonUrl = '$_baseUrl/ajax/season/episodes/$seasonId';
+      final seasonHtml = await _httpGetText(
+        httpGet,
+        seasonUrl,
+        headers: <String, String>{
+          'User-Agent': 'Aniya',
+          'Accept': 'text/html',
+          'Referer': baseUrl,
+        },
+      );
+      final episodeRegex = RegExp(
+        r'<a[\s\S]*?data-id="([\s\S]*?)"[\s\S]*?title="(Eps\s*([\s\S]*?):[\s\S]*?)"[\s\S]*?>[\s\S]*?</a>',
+      );
+      for (final m in episodeRegex.allMatches(seasonHtml)) {
+        final episodeId = m.group(1)?.trim() ?? '';
+        if (episodeId.isNotEmpty) {
+          episodes.add(
+            _episode(
+              url: '$_baseUrl/ajax/episode/servers/$episodeId',
+              name: m.group(2)?.trim() ?? '',
+              episodeNumber: m.group(3)?.trim() ?? '',
+              dateUpload: '',
+              thumbnail: '',
+              description: '',
+              filler: false,
+            ),
+          );
+        }
+      }
+    }
+    base['episodes'] = episodes;
+  } else {
+    final listHtml = await _httpGetText(
+      httpGet,
+      '$_baseUrl/ajax/episode/list/$itemId',
+      headers: <String, String>{
+        'User-Agent': 'Aniya',
+        'Accept': 'text/html',
+        'Referer': baseUrl,
+      },
+    );
+    final idMatch = RegExp(r'data-id="([^"]+)"').firstMatch(listHtml);
+    final episodeId = idMatch?.group(1)?.trim() ?? '';
+    final episodeUrl = episodeId.isEmpty
+        ? '$_baseUrl/ajax/episode/list/$itemId'
+        : '$_baseUrl/ajax/episode/servers/$episodeId';
+    base['episodes'] = <Map<String, dynamic>>[
+      _episode(
+        url: episodeUrl,
+        name: 'Watch ${base['title']}',
+        episodeNumber: '1',
+        dateUpload: '',
+        thumbnail: '',
+        description: '',
+        filler: false,
+      ),
+    ];
+  }
+
+  // base['description'] = _asString(base['description']).isEmpty
+  //     ? 'Populated by getDetail().'
+  //     : base['description'];
+  // base['author'] = base['author'] ?? 'Sample author';
+  // base['artist'] = base['artist'] ?? 'Sample artist';
+  // base['genre'] = base['genre'] ?? <String>['Demo', 'Detail'];
+
+  // base['episodes'] = <Map<String, dynamic>>[
+  //   _episode(
+  //     url: '$baseUrl/ep-1',
+  //     name: 'Episode 1',
+  //     episodeNumber: '1',
+  //     dateUpload: '2025-01-01',
+  //     thumbnail: '$baseUrl/thumb-1.jpg',
+  //     description: 'First episode.',
+  //     filler: false,
+  //   ),
+  //   _episode(
+  //     url: '$baseUrl/ep-2',
+  //     name: 'Episode 2',
+  //     episodeNumber: '2',
+  //     dateUpload: '2025-01-02',
+  //     thumbnail: '$baseUrl/thumb-2.jpg',
+  //     description: 'Second episode.',
+  //     filler: false,
+  //   ),
+  // ];
 
   return json.encode(base);
 }
@@ -346,7 +463,7 @@ dynamic getPageList(
   Function sha256Hex,
 ) async {
   final ep = _asStringKeyedMap(episode);
-  final epUrl = _asString(ep['url']);
+  final epUrl = _normalizeUrl(_asString(ep['url']));
 
   final headers = <String, String>{'Referer': epUrl};
 
@@ -365,27 +482,81 @@ dynamic getVideoList(
   Function sha256Hex,
 ) async {
   final ep = _asStringKeyedMap(episode);
-  final epUrl = _asString(ep['url']);
+  final epUrl = _normalizeUrl(_asString(ep['url']));
+  if (epUrl.isEmpty) return json.encode(const <Map<String, dynamic>>[]);
 
-  final headers = <String, String>{'Referer': epUrl};
+  final serverRegex = RegExp(
+    r'<a[\s\S]*?data-id="([\s\S]*?)"[\s\S]*?Server\s*([\s\S]*?)"',
+  );
+  final serversHtml = await _httpGetText(
+    httpGet,
+    epUrl,
+    headers: <String, String>{
+      'User-Agent': 'Aniya',
+      'Accept': 'text/html',
+      'Referer': epUrl,
+    },
+  );
 
-  final videos = <Map<String, dynamic>>[
-    _video(
-      title: 'Sample 1080p',
-      url: '$epUrl/stream-1080p.m3u8',
-      quality: '1080p',
-      headers: headers,
-      subtitles: <Map<String, dynamic>>[
-        _track(file: '$epUrl/sub-en.vtt', label: 'English'),
-      ],
-    ),
-    _video(
-      title: 'Sample 720p',
-      url: '$epUrl/stream-720p.m3u8',
-      quality: '720p',
-      headers: headers,
-    ),
-  ];
+  final videos = <Map<String, dynamic>>[];
+  for (final match in serverRegex.allMatches(serversHtml)) {
+    final serverId = match.group(1)?.trim() ?? '';
+    final serverName = match.group(2)?.trim() ?? '';
+    if (serverId.isNotEmpty) {
+      final sourceJson = await _httpGetText(
+        httpGet,
+        '$_baseUrl/ajax/episode/sources/$serverId',
+        headers: <String, String>{
+          'User-Agent': 'Aniya',
+          'Accept': 'text/html',
+          'Referer': epUrl,
+        },
+      );
+      final decoded = json.decode(sourceJson);
+      if (decoded is Map) {
+        final link = _asString(decoded['link']).trim();
+        if (link.isNotEmpty) {
+          final videoUrl = _normalizeUrl(link);
+          final uri = Uri.tryParse(videoUrl);
+          if (uri != null &&
+              uri.host.isNotEmpty &&
+              (uri.scheme == 'http' || uri.scheme == 'https')) {
+            videos.add(
+              _video(
+                title: serverName,
+                url: videoUrl,
+                quality: 'Unknown Quality',
+                headers: <String, String>{
+                  'Referer': epUrl,
+                  'User-Agent': 'Mozilla/5.0',
+                },
+              ),
+            );
+          }
+        }
+      }
+    }
+  }
+
+  // final headers = <String, String>{'Referer': epUrl};
+
+  // final videos = <Map<String, dynamic>>[
+  //   _video(
+  //     title: 'Sample 1080p',
+  //     url: '$epUrl/stream-1080p.m3u8',
+  //     quality: '1080p',
+  //     headers: headers,
+  //     subtitles: <Map<String, dynamic>>[
+  //       _track(file: '$epUrl/sub-en.vtt', label: 'English'),
+  //     ],
+  //   ),
+  //   _video(
+  //     title: 'Sample 720p',
+  //     url: '$epUrl/stream-720p.m3u8',
+  //     quality: '720p',
+  //     headers: headers,
+  //   ),
+  // ];
 
   return json.encode(videos);
 }

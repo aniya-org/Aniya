@@ -9,6 +9,30 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "85.0.0"
+  adblocker_core:
+    dependency: transitive
+    description:
+      name: adblocker_core
+      sha256: "9a082b9769241ff9932ef597d01ef36c38165655dcefe391a08899f339c2686f"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.1.0"
+  adblocker_manager:
+    dependency: transitive
+    description:
+      name: adblocker_manager
+      sha256: "14f55f9e9d7ca9baca69768fc188d3d509ac1934e90bcb08d7d5f2ccbc2e3b99"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.1.0"
+  adblocker_webview:
+    dependency: "direct main"
+    description:
+      name: adblocker_webview
+      sha256: "4816c72c93bc4a1de243f56a3b0e2acef6df6c1b57896e78055fabfa099dcc9a"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.2.0"
   analyzer:
     dependency: transitive
     description:
@@ -1566,6 +1590,38 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.0.3"
+  webview_flutter:
+    dependency: transitive
+    description:
+      name: webview_flutter
+      sha256: c3e4fe614b1c814950ad07186007eff2f2e5dd2935eba7b9a9a1af8e5885f1ba
+      url: "https://pub.dev"
+    source: hosted
+    version: "4.13.0"
+  webview_flutter_android:
+    dependency: transitive
+    description:
+      name: webview_flutter_android
+      sha256: eeeb3fcd5f0ff9f8446c9f4bbc18a99b809e40297528a3395597d03aafb9f510
+      url: "https://pub.dev"
+    source: hosted
+    version: "4.10.11"
+  webview_flutter_platform_interface:
+    dependency: transitive
+    description:
+      name: webview_flutter_platform_interface
+      sha256: "63d26ee3aca7256a83ccb576a50272edd7cfc80573a4305caa98985feb493ee0"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.14.0"
+  webview_flutter_wkwebview:
+    dependency: transitive
+    description:
+      name: webview_flutter_wkwebview
+      sha256: e49f378ed066efb13fc36186bbe0bd2425630d4ea0dbc71a18fdd0e4d8ed8ebc
+      url: "https://pub.dev"
+    source: hosted
+    version: "3.23.5"
   win32:
     dependency: transitive
     description:
@@ -1631,5 +1687,5 @@ packages:
     source: hosted
     version: "9.1.3"
 sdks:
-  dart: ">=3.10.0 <4.0.0"
+  dart: ">=3.10.1 <4.0.0"
   flutter: ">=3.35.0"

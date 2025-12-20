@@ -18,7 +18,11 @@ class MegacloudExtractor extends BaseExtractor {
 
   static final ExtractorInfo info = ExtractorInfo(
     id: 'megacloud',
-    patterns: [RegExp(r'megacloud\.'), RegExp(r'megacloud\.blog')],
+    patterns: [
+      RegExp(r'megacloud\.'),
+      RegExp(r'megacloud\.blog'),
+      RegExp(r'videostr\.net'),
+    ],
     category: ExtractorCategory.video,
     extractors: [MegacloudExtractor()],
   );

@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:adblocker_webview/adblocker_webview.dart';
 import 'package:dartotsu_extension_bridge/dartotsu_extension_bridge.dart';
 import 'package:dartotsu_extension_bridge/Aniyomi/desktop/aniyomi_desktop.dart';
 import 'package:dartotsu_extension_bridge/CloudStream/desktop/desktop.dart';
@@ -79,6 +80,23 @@ void main() async {
   try {
     // Initialize media_kit
     MediaKit.ensureInitialized();
+
+    if (PlatformUtils.isMobile) {
+      try {
+        await AdBlockerWebviewController.instance.initialize(
+          FilterConfig(filterTypes: [FilterType.easyList, FilterType.adGuard]),
+        );
+      } catch (e, stackTrace) {
+        Logger.warning(
+          'AdBlocker WebView initialization failed: $e',
+          tag: 'Main',
+        );
+        Logger.debug(
+          'AdBlocker WebView init error stack: $stackTrace',
+          tag: 'Main',
+        );
+      }
+    }
 
     // Initialize DartotsuExtensionBridge to register extension managers with GetX
     // This is required for extension discovery and management (Requirements: 10.1, 10.2, 10.3, 12.1)
