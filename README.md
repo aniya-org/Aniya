@@ -18,12 +18,12 @@ A cross-platform Flutter application for discovering, reading manga, and streami
 ## 🛠 Tech Stack
 
 - **Framework**: Flutter (Dart)
-- **Architecture**: Clean Architecture / Domain-Driven Design
-- **State Management**: Provider / Riverpod via DI container
-- **Networking**: Dio / HTTP (inferred from data layers)
-- **Caching**: Custom image cache manager
-- **Platform Services**: Responsive layout, desktop window utils, mobile integrations
-- **Extension Systems**: `dartotsu_extension_bridge` (CloudStream DexClassLoader loader, LnReader QuickJS runtime) plus an in-app Aniya eval runtime for script-based extensions.
+- **Architecture**: Clean Architecture (domain / data / presentation)
+- **DI**: GetIt
+- **State Management**: GetX + Provider
+- **Networking**: Dio + http + GraphQL (AniList)
+- **Storage**: Hive + Isar + SharedPreferences
+- **Extension Systems**: `dartotsu_extension_bridge` + in-app `dart_eval` runtime (Aniya eval extensions)
 
 ## 🚀 Getting Started
 
@@ -108,13 +108,13 @@ lib/
 │   ├── search/
 │   ├── settings/
 │   └── video_player/
+├── eval_extensions/    # Script-based Aniya eval extensions (dart_eval runtime)
 └── main.dart          # App entrypoint
 ```
 
 Key supporting modules:
 
-- `ref/DartotsuExtensionBridge/` – Native/Dart bridge for CloudStream, LnReader, Aniyomi, Mangayomi plugins. Includes the rewritten CloudStream loader, extractor service, AppCompat shims, and sync-provider stubs.
-- `ref/cloudstream/` – Upstream CloudStream reference sources used for shims and manifests.
+- `deps/DartotsuExtensionBridge/` – Native/Dart bridge for CloudStream, LnReader, Aniyomi, Mangayomi plugins (included as a path dependency).
 
 ## 🧪 Testing
 
@@ -139,26 +139,30 @@ These schemes create or update repository settings for the selected extension ty
 
 ### Aniya eval extensions
 
-Aniya eval extensions are Dart scripts executed in-app using `dart_eval`. Extensions expose a set of top-level functions (by name) that the host calls to search/browse, load details, and resolve pages/streams.
+Aniya eval extensions are plaintext Dart scripts executed in-app using `dart_eval`. Extensions expose a set of top-level functions (by name) that the host calls to search/browse, load details, and resolve pages/streams.
 
 Aniya eval extensions can be installed from either a single source file URL or a JSON manifest that describes a group of plugins:
 
-- `aniya://add-extension?url={https://example.com/plugin.cs3}`  
-  Installs a single Aniya extension from a plaintext source code URL.
+- `aniya://add-extension?url={https://example.com/plugin.dart}`  
+  Installs a single Aniya extension from a plaintext Dart source code URL.
 - `aniya://add-extension-manifest?url={https://example.com/manifest.json}`  
   Downloads a JSON manifest, resolves one or more plugin entries, fetches their source code, and installs each as an Aniya extension.
 
 #### Host-provided helpers
 
-Every function receives 3 helper functions as the final arguments:
+The host can provide these helper functions as trailing arguments (you can accept only the ones you need):
 
 - `httpGet(url, [headers])` → `Future<String>` response body
-- `soupParse(html)` → `String` (normalized HTML; currently stringified BeautifulSoup)
+- `soupParse(html)` → `dynamic` (BeautifulSoup-like object; supports `find`, `findAll`, `text`, `toString`)
 - `sha256Hex(input)` → `String`
+- `soupFind(node, tag, [options])` → `dynamic` (element or `null`)
+- `soupFindAll(node, tag, [options])` → `List<dynamic>`
+
+Because `dart_eval` wraps values at runtime, prefer `dynamic` parameters and coerce types inside your plugin.
 
 #### Supported functions
 
-The host calls these functions by name if they exist in the plugin source:
+The host calls these functions by name. Implement every function your UI can reach (recommended: implement all):
 
 - `search(query, page, filters, httpGet, soupParse, sha256Hex)` → `Pages`
 - `getPopular(page, httpGet, soupParse, sha256Hex)` → `Pages`
@@ -198,7 +202,7 @@ For `aniya://add-extension`, you can optionally attach metadata as query paramet
 
 Example:
 
-- `aniya://add-extension?url={https://example.com/plugin.cs3}&id=example&name=Example%20Source&version=0.1.0&lang=en&type=anime`
+- `aniya://add-extension?url={https://example.com/plugin.dart}&id=example&name=Example%20Source&version=0.1.0&lang=en&type=anime`
 
 #### Example plugin source
 
@@ -206,6 +210,26 @@ The `url` should point to a plaintext file containing the plugin source code. Be
 
 ```dart
 import 'dart:convert';
+
+String _asString(dynamic value) => value?.toString() ?? '';
+
+int _asInt(dynamic value, {int fallback = 0}) {
+  if (value is int) return value;
+  return int.tryParse(_asString(value)) ?? fallback;
+}
+
+bool _asBool(dynamic value, {bool fallback = false}) {
+  if (value is bool) return value;
+  final s = _asString(value).toLowerCase().trim();
+  if (s == 'true' || s == '1' || s == 'yes') return true;
+  if (s == 'false' || s == '0' || s == 'no') return false;
+  return fallback;
+}
+
+List<dynamic> _asList(dynamic value) {
+  if (value is List) return value;
+  return const <dynamic>[];
+}
 
 Map<String, dynamic> _asStringKeyedMap(dynamic value) {
   if (value is Map) {
@@ -218,26 +242,43 @@ Map<String, dynamic> _asStringKeyedMap(dynamic value) {
   return <String, dynamic>{};
 }
 
-int _asInt(dynamic value, {int fallback = 0}) {
-  if (value is int) return value;
-  return int.tryParse(value?.toString() ?? '') ?? fallback;
+Future<String> _httpGetText(
+  Function httpGet,
+  String url, {
+  Map<String, String>? headers,
+}) async {
+  final res = headers == null ? httpGet(url) : httpGet(url, headers);
+  final body = res is Future ? await res : res;
+  return body.toString();
 }
 
-String _asString(dynamic value) => value?.toString() ?? '';
+String _extractFirstHtmlTitle(String htmlOrSoup) {
+  final match = RegExp(
+    r'<title[^>]*>([^<]+)</title>',
+    caseSensitive: false,
+  ).firstMatch(htmlOrSoup);
+  return match?.group(1)?.trim() ?? '';
+}
 
 Map<String, dynamic> _media({
   required String title,
   required String url,
   String? cover,
   String? description,
+  String? author,
+  String? artist,
+  List<String>? genre,
+  List<Map<String, dynamic>>? episodes,
 }) {
   return {
     'title': title,
     'url': url,
     'cover': cover ?? '',
     'description': description ?? '',
-    'genre': <String>[],
-    'episodes': <Map<String, dynamic>>[],
+    'author': author,
+    'artist': artist,
+    'genre': genre ?? <String>[],
+    'episodes': episodes ?? <Map<String, dynamic>>[],
   };
 }
 
@@ -245,11 +286,31 @@ Map<String, dynamic> _episode({
   required String url,
   required String name,
   required String episodeNumber,
+  String? dateUpload,
+  String? thumbnail,
+  String? description,
+  String? scanlator,
+  bool? filler,
 }) {
   return {
     'url': url,
     'name': name,
+    'dateUpload': dateUpload,
+    'thumbnail': thumbnail,
+    'description': description,
+    'scanlator': scanlator,
+    'filler': filler,
     'episodeNumber': episodeNumber,
+  };
+}
+
+Map<String, dynamic> _track({
+  required String file,
+  String? label,
+}) {
+  return {
+    'file': file,
+    'label': label,
   };
 }
 
@@ -257,23 +318,27 @@ Map<String, dynamic> _video({
   String? title,
   required String url,
   required String quality,
+  Map<String, String>? headers,
+  List<Map<String, dynamic>>? subtitles,
+  List<Map<String, dynamic>>? audios,
 }) {
   return {
-    'title': title ?? quality,
+    'title': (title ?? quality).trim(),
     'url': url,
     'quality': quality,
-    'headers': <String, String>{},
-    'subtitles': <Map<String, dynamic>>[],
-    'audios': <Map<String, dynamic>>[],
+    'headers': headers ?? <String, String>{},
+    'subtitles': subtitles ?? <Map<String, dynamic>>[],
+    'audios': audios ?? <Map<String, dynamic>>[],
   };
 }
 
 Map<String, dynamic> _pageUrl({
   required String url,
+  Map<String, String>? headers,
 }) {
   return {
     'url': url,
-    'headers': <String, String>{},
+    'headers': headers ?? <String, String>{},
   };
 }
 
@@ -297,12 +362,48 @@ dynamic search(
 ) async {
   final queryStr = _asString(query);
   final pageNum = _asInt(page, fallback: 1);
+  var filterCount = 0;
+  for (final _ in _asList(filters)) {
+    filterCount++;
+  }
+
+  if (queryStr == '__demo__') {
+    try {
+      final html = await _httpGetText(
+        httpGet,
+        'https://example.com/',
+        headers: <String, String>{
+          'User-Agent': 'AniyaEval/0.1',
+          'Accept': 'text/html',
+        },
+      );
+
+      final soup = soupParse(html);
+      final titleEl = soup.find('title');
+      final titleFromSoup = _asString(titleEl?.string).trim();
+      final title =
+          titleFromSoup.isNotEmpty ? titleFromSoup : _extractFirstHtmlTitle(html);
+      final signature = sha256Hex('$title:$pageNum').toString();
+
+      final items = <Map<String, dynamic>>[
+        _media(
+          title: title.isEmpty ? 'Example Domain' : title,
+          url: 'https://example.com/#$signature',
+          description: 'Demo result from httpGet + soupParse + sha256Hex.',
+        ),
+      ];
+
+      return json.encode(_pages(items, hasNextPage: false));
+    } catch (_) {}
+  }
 
   final items = <Map<String, dynamic>>[
     _media(
-      title: 'Search result for "$queryStr" (page $pageNum)',
+      title: 'Search "$queryStr" (page $pageNum)',
       url: 'https://example.com/search/$pageNum?q=${Uri.encodeQueryComponent(queryStr)}',
-      description: 'Returned by the sample search() method.',
+      description: 'filters=$filterCount',
+      author: 'Sample author',
+      genre: <String>['Demo'],
     ),
   ];
 
@@ -322,6 +423,7 @@ dynamic getPopular(
       title: 'Popular item #$pageNum',
       url: 'https://example.com/popular/$pageNum',
       description: 'Example popular media on page $pageNum.',
+      genre: <String>['Popular'],
     ),
   ];
 
@@ -341,6 +443,7 @@ dynamic getLatestUpdates(
       title: 'Latest update #$pageNum',
       url: 'https://example.com/latest/$pageNum',
       description: 'Example latest-updated media on page $pageNum.',
+      genre: <String>['Latest'],
     ),
   ];
 
@@ -354,19 +457,33 @@ dynamic getDetail(
   Function sha256Hex,
 ) async {
   final base = _asStringKeyedMap(media);
-  base['description'] = base['description'] ?? 'Populated by getDetail().';
-
   final baseUrl = _asString(base['url']);
+
+  base['description'] = _asString(base['description']).isEmpty
+      ? 'Populated by getDetail().'
+      : base['description'];
+  base['author'] = base['author'] ?? 'Sample author';
+  base['artist'] = base['artist'] ?? 'Sample artist';
+  base['genre'] = base['genre'] ?? <String>['Demo', 'Detail'];
+
   base['episodes'] = <Map<String, dynamic>>[
     _episode(
       url: '$baseUrl/ep-1',
       name: 'Episode 1',
       episodeNumber: '1',
+      dateUpload: '2025-01-01',
+      thumbnail: '$baseUrl/thumb-1.jpg',
+      description: 'First episode.',
+      filler: false,
     ),
     _episode(
       url: '$baseUrl/ep-2',
       name: 'Episode 2',
       episodeNumber: '2',
+      dateUpload: '2025-01-02',
+      thumbnail: '$baseUrl/thumb-2.jpg',
+      description: 'Second episode.',
+      filler: false,
     ),
   ];
 
@@ -382,9 +499,13 @@ dynamic getPageList(
   final ep = _asStringKeyedMap(episode);
   final epUrl = _asString(ep['url']);
 
+  final headers = <String, String>{
+    'Referer': epUrl,
+  };
+
   final pages = <Map<String, dynamic>>[
-    _pageUrl(url: '$epUrl/page-1.jpg'),
-    _pageUrl(url: '$epUrl/page-2.jpg'),
+    _pageUrl(url: '$epUrl/page-1.jpg', headers: headers),
+    _pageUrl(url: '$epUrl/page-2.jpg', headers: headers),
   ];
 
   return json.encode(pages);
@@ -399,16 +520,25 @@ dynamic getVideoList(
   final ep = _asStringKeyedMap(episode);
   final epUrl = _asString(ep['url']);
 
+  final headers = <String, String>{
+    'Referer': epUrl,
+  };
+
   final videos = <Map<String, dynamic>>[
     _video(
       title: 'Sample 1080p',
       url: '$epUrl/stream-1080p.m3u8',
       quality: '1080p',
+      headers: headers,
+      subtitles: <Map<String, dynamic>>[
+        _track(file: '$epUrl/sub-en.vtt', label: 'English'),
+      ],
     ),
     _video(
       title: 'Sample 720p',
       url: '$epUrl/stream-720p.m3u8',
       quality: '720p',
+      headers: headers,
     ),
   ];
 
@@ -439,8 +569,55 @@ dynamic getPreference(
       'type': 'checkbox',
       'checkBoxPreference': {
         'title': 'Enable experimental mode',
-        'summary': 'Turns on extra logging and debug behaviour.',
+        'summary': 'Toggles extra debug behaviour.',
         'value': false,
+      },
+    },
+    {
+      'id': 2,
+      'key': 'use_mirror',
+      'type': 'switch',
+      'switchPreferenceCompat': {
+        'title': 'Use mirror',
+        'summary': 'Switch to an alternate base URL.',
+        'value': true,
+      },
+    },
+    {
+      'id': 3,
+      'key': 'quality',
+      'type': 'list',
+      'listPreference': {
+        'title': 'Preferred quality',
+        'summary': 'Pick your default stream quality.',
+        'valueIndex': 0,
+        'entries': ['1080p', '720p', '480p'],
+        'entryValues': ['1080p', '720p', '480p'],
+      },
+    },
+    {
+      'id': 4,
+      'key': 'languages',
+      'type': 'multi_select',
+      'multiSelectListPreference': {
+        'title': 'Audio languages',
+        'summary': 'Preferred audio languages.',
+        'entries': ['English', 'Japanese'],
+        'entryValues': ['en', 'ja'],
+        'values': ['en'],
+      },
+    },
+    {
+      'id': 5,
+      'key': 'base_url',
+      'type': 'edit_text',
+      'editTextPreference': {
+        'title': 'Base URL',
+        'summary': 'Override the site base URL.',
+        'value': 'https://example.com',
+        'dialogTitle': 'Base URL',
+        'dialogMessage': 'Enter a new base URL.',
+        'text': 'https://example.com',
       },
     },
   ];
@@ -455,10 +632,12 @@ dynamic setPreference(
   Function soupParse,
   Function sha256Hex,
 ) {
+  final prefMap = _asStringKeyedMap(pref);
+  final key = _asString(prefMap['key']).trim();
+  if (key.isEmpty) return false;
   return true;
 }
 ```
-
 
 #### Example manifest
 
@@ -478,7 +657,7 @@ Each plugin entry supports `id`, `name`, `url` (or `codeUrl` / `sourceUrl`), `ve
       "version": "0.1.0",
       "lang": "en",
       "type": "anime",
-      "url": "https://example.com/plugins/example_one.cs3"
+      "url": "https://example.com/plugins/example_one.dart"
     },
     {
       "id": "example_inline",
@@ -496,30 +675,16 @@ On desktop (Windows/Linux), the same URIs can be passed as process arguments; th
 
 ## 🔧 Development Guides
 
-See `lib/core/` docs:
+Bridge docs (path dependency):
 
-- [ANIMATIONS_GUIDE.md](lib/core/ANIMATIONS_GUIDE.md)
-- [QUICK_ANIMATION_REFERENCE.md](lib/core/QUICK_ANIMATION_REFERENCE.md)
-- [UI_COMPONENTS_SUMMARY.md](lib/core/UI_COMPONENTS_SUMMARY.md)
-- [SETUP_SUMMARY.md](lib/core/SETUP_SUMMARY.md)
-- [Extension Bridge README](ref/DartotsuExtensionBridge/README.md) – Architecture, plugin APIs, and bridge-specific troubleshooting.
+- [Extension Bridge README](deps/DartotsuExtensionBridge/README.md)
+- [CloudStream Setup](deps/DartotsuExtensionBridge/CLOUDSTREAM_SETUP.md)
+- [CloudStream Desktop](deps/DartotsuExtensionBridge/CLOUDSTREAM_DESKTOP.md)
+- [Aniyomi Desktop](deps/DartotsuExtensionBridge/ANIYOMI_DESKTOP.md)
 
 ## 🔌 CloudStream / Extension Bridge Notes
 
-- **Plugin Loading**: CloudStream plugins are instantiated as `Plugin` subclasses (not `MainAPI`), mirroring upstream PluginManager.
-- **AppCompatActivity Requirement**: Plugins that expect an `AppCompatActivity` (e.g., SuperStream Beta) are run on the Android main thread with a headless activity fallback to avoid `ClassCastException`/`Looper.prepare()` errors.
-- **Sync Provider Shims**: Local Kotlin stubs expose `AccountManager.getSimklApi()` and related sync APIs so CineStream and similar plugins can initialize.
-- **Extractor Service**: CloudStream extractors are exposed through `ExtractorService` and used automatically when playback sources aren’t direct links.
-- **URL Sanitization**: JSON payloads are encoded as `csjson://<base64>` in Flutter to keep media_kit happy; the native bridge automatically decodes before calling plugins or extractors.
-
-### Current Limitations / Tips
-
-1. **StremioX / CineStream**: If the extractor can’t produce a direct link, playback falls back to the bridge’s embed URL (still sanitized). Some sources may still require manual server selection inside the plugin UI.
-2. **Plugin Storage**: Clear `/app_cloudstream_plugins` if you suspect a corrupted bundle—plugins are re-initialized on next launch.
-3. **LnReader JS Errors**: Logs are surfaced through `ExtensionSearchRepository`; enable verbose logging when developing new JS plugins.
-4. **Testing CloudStream**: Use `initializePlugins()` after installing new bundles to load them before issuing search/getDetail requests.
-
-For a deeper dive into the bridge internals, extractor usage, or adding new extension systems, see [`ref/DartotsuExtensionBridge/README.md`](ref/DartotsuExtensionBridge/README.md).
+For bridge internals, setup, and troubleshooting, use the docs in `deps/DartotsuExtensionBridge/` (linked above).
 
 ## 🤝 Contributing
 

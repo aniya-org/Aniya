@@ -93,7 +93,7 @@ class ProviderBadge extends StatelessWidget {
         return _ProviderInfo(
           name: 'Simkl',
           icon: Icons.tv,
-          color: const Color(0xFF0B0F10),
+          color: const Color(0xFF00D474),
         );
       default:
         return _ProviderInfo(

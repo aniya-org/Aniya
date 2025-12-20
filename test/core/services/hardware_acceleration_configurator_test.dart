@@ -3,6 +3,7 @@ import 'package:aniya/core/services/hardware_acceleration_configurator.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   group('HardwareAccelerationConfigurator', () {
     setUp(() {
       // Clear cache before each test

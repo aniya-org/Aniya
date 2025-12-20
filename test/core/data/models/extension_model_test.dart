@@ -2,8 +2,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:aniya/core/data/models/extension_model.dart';
 import 'package:aniya/core/domain/entities/extension_entity.dart';
 import 'package:dartotsu_extension_bridge/Lnreader/LnReaderExtensions.dart';
-import 'package:dartotsu_extension_bridge/Mangayomi/Models/Source.dart'
-    as bridge;
 import 'package:dartotsu_extension_bridge/dartotsu_extension_bridge.dart'
     as bridge;
 

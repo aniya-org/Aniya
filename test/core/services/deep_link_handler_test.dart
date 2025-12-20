@@ -380,18 +380,52 @@ void main() {
         });
       });
 
-      test('returns failure when Aniya store is not provided', () async {
+      test('installs plugin when Aniya store is not provided', () async {
         final client = _MockHttpClient();
         final handlerWithoutStore = DeepLinkHandler(httpClient: client);
 
+        final sourceUrl = Uri.parse('https://example.com/extension.cs3');
+        when(
+          () => client.get(sourceUrl),
+        ).thenAnswer((_) async => http.Response('print("hello")', 200));
+
         final uri = Uri.parse(
-          'aniya://add-extension?url=https://example.com/extension.cs3',
+          'aniya://add-extension?url=https://example.com/extension.cs3&id=test_plugin&name=Test%20Plugin',
         );
 
         final result = await handlerWithoutStore.handleDeepLink(uri);
 
-        expect(result.success, isFalse);
-        expect(result.message, contains('store'));
+        expect(result.success, isTrue);
+
+        final store = AniyaEvalPluginStore();
+        await store.init();
+        final installed = store.all();
+        expect(installed.length, 1);
+        expect(installed.first.id, 'test_plugin');
+        expect(installed.first.name, 'Test Plugin');
+      });
+
+      test('installs plugin from path-based aniya link', () async {
+        final client = _MockHttpClient();
+        final handlerWithoutStore = DeepLinkHandler(httpClient: client);
+
+        final sourceUrl = Uri.parse('https://example.com/extension.cs3');
+        when(
+          () => client.get(sourceUrl),
+        ).thenAnswer((_) async => http.Response('print("hello")', 200));
+
+        final uri = Uri.parse(
+          'aniya:add-extension?url=https://example.com/extension.cs3&id=test_plugin_2&name=Test%20Plugin%202',
+        );
+
+        final result = await handlerWithoutStore.handleDeepLink(uri);
+
+        expect(result.success, isTrue);
+
+        final store = AniyaEvalPluginStore();
+        await store.init();
+        final installed = store.all();
+        expect(installed.map((e) => e.id).toSet(), contains('test_plugin_2'));
       });
     });
   });

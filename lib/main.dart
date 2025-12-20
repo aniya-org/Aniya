@@ -28,9 +28,23 @@ import 'package:aniya/features/extensions/controllers/extensions_controller.dart
 import 'package:aniya/core/domain/entities/media_entity.dart';
 import 'package:aniya/core/domain/entities/extension_entity.dart' as domain;
 
+class MyHttpOverrides extends HttpOverrides {
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    return super.createHttpClient(context)
+      ..userAgent = null
+      // Allow self-signed certificates (for development purposes)
+      ..badCertificateCallback =
+          (X509Certificate cert, String host, int port) => true;
+  }
+}
+
 void main() async {
   // Initialize Flutter bindings BEFORE creating zones
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Set custom HTTP overrides to disable user-agent
+  HttpOverrides.global = MyHttpOverrides();
 
   // Load environment variables (optional - .env file may not exist)
   try {

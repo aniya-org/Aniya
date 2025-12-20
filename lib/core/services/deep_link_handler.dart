@@ -68,9 +68,10 @@ class DeepLinkHandler {
     final host = uri.host.toLowerCase();
 
     if (scheme == 'aniya') {
-      if (host != 'add-extension' && host != 'add-extension-manifest') {
+      final action = _aniyaAction(uri);
+      if (action != 'add-extension' && action != 'add-extension-manifest') {
         throw DeepLinkParseException(
-          'Invalid aniya deep link: expected host "add-extension" or "add-extension-manifest", got "${uri.host}"',
+          'Invalid aniya deep link: expected "add-extension" or "add-extension-manifest", got "${uri.host.isNotEmpty ? uri.host : uri.path}"',
         );
       }
       final url = uri.queryParameters['url'];
@@ -108,22 +109,32 @@ class DeepLinkHandler {
     throw DeepLinkParseException('Unsupported link format: $scheme://$host');
   }
 
+  String _aniyaAction(Uri uri) {
+    final host = uri.host.trim();
+    if (host.isNotEmpty) {
+      return host.toLowerCase();
+    }
+    if (uri.pathSegments.isNotEmpty) {
+      return uri.pathSegments.first.toLowerCase();
+    }
+    return uri.path.toLowerCase();
+  }
+
   Future<DeepLinkResult> _handleAniyaDeepLink(Uri uri) async {
-    final host = uri.host.toLowerCase();
-    if (host != 'add-extension' && host != 'add-extension-manifest') {
+    final action = _aniyaAction(uri);
+    if (action != 'add-extension' && action != 'add-extension-manifest') {
       return DeepLinkResult.failure(
-        message: 'Invalid aniya deep link host: ${uri.host}',
+        message:
+            'Invalid aniya deep link: expected "add-extension" or "add-extension-manifest"',
       );
     }
 
-    final store = _aniyaStore;
-    if (store == null) {
-      return DeepLinkResult.failure(
-        message: 'Aniya extension store is not available',
-      );
+    final store = _aniyaStore ?? AniyaEvalPluginStore();
+    try {
+      await store.init();
+    } catch (e) {
+      return DeepLinkResult.failure(message: 'Failed to open Aniya store: $e');
     }
-
-    await store.init();
 
     final url = uri.queryParameters['url'];
     if (url == null || url.trim().isEmpty) {
@@ -140,7 +151,7 @@ class DeepLinkHandler {
     }
 
     try {
-      if (host == 'add-extension') {
+      if (action == 'add-extension') {
         final sourceCode = await _fetchText(urlUri);
         final plugin = _buildPluginFromParams(
           uri,

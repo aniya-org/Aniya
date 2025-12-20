@@ -83,6 +83,20 @@
                 <data android:scheme="https" android:host="cs.repo" />
                 <data android:scheme="http" android:host="cs.repo" />
             </intent-filter>
+
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="aniya" android:host="add-extension" />
+            </intent-filter>
+
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="aniya" android:host="add-extension-manifest" />
+            </intent-filter>
         </activity>
 
         <!-- CallbackActivity for OAuth redirects -->
